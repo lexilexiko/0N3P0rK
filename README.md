@@ -1,20 +1,30 @@
-# 0N3P0rK
+# 0N3P0rK — Full project guide & history
 
-**v1.2.8** — M5Cardputer / Cardputer ADV firmware: a living pig on the farm, plus a Wi‑Fi lab for handshake capture, spectrum, PigPass crack, BLE toys, IR, loot sync.
+**Current version: 1.2.8**  
+Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
-Think Tamagotchi first. The radio is in the barn.
+**Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
-### What’s new in 1.2.8
-- **Scene split:** `sky` / `ground` / `trees` / FX modules — easier seasons and themes
-- **Seasons:** **CITY** (lv 25) and **DESERT** (lv 30) — urban props, palms, cactus, sandstorm
-- **Seasonal props** (lv 35+): hive + bees, snowman, sleeping fox, storm campfire, city cat, desert skull — once per game-day, spawn off-screen
-- **Friend pig** (lv 40): companion on the farm, own AI, wolf can bite her too · toggle **FRIEND**
-- **Cards table** (lv 45): table on the map · jump at table → stub “cards not ready”
-- **Credits** (lv 50): unskippable ~10s thank-you roll
-- **PigPass:** PCAP / 22000 tabs, larger file list, scene suspend while open
-- **Web site:** cleaner public pages · gallery loads images from `docs/gallery/` automatically
+> Think Tamagotchi first. The radio is in the barn.
 
-*(Secret menu codes are not listed here — set them in your private notes / game.)*
+This document is the **full** project picture: what the device is, how to flash it, what every major area does, and **what changed from early builds through 1.2.8**.  
+Secret menu codes are **not** listed here (keep them private).
+
+---
+
+## Table of contents
+
+1. [Hardware](#hardware)
+2. [Flash & build](#flash--build)
+3. [First minutes](#first-minutes)
+4. [Farm & pig](#farm--pig)
+5. [Seasons & unlock roadmap](#seasons--unlock-roadmap)
+6. [Radio & tools](#radio--tools)
+7. [PigPass](#pigpass)
+8. [SD layout](#sd-layout)
+9. [Web site](#web-site)
+10. [Version history](#version-history)
+11. [Legal & credits](#legal--credits)
 
 ---
 
@@ -24,100 +34,257 @@ Think Tamagotchi first. The radio is in the barn.
 | --- | --- |
 | Boards | **M5Cardputer** (original) and **M5Cardputer ADV** |
 | MCU | ESP32-S3 (StampS3), 240 MHz |
-| Flash | 8 MB — large app partition, **512 KB** internal LittleFS (not used for loot) |
-| Screen | 240 × 135 ST7789 |
-| SD | SPI: CS 12, MOSI 14, MISO 39, SCK 40 — **all user files on SD** |
+| Flash | 8 MB — large app partition; internal LittleFS **512 KB** (not used for user loot) |
+| Display | 240 × 135 ST7789 — top bar + farm field + bottom bar |
+| Keyboard | Original: 74HC138 matrix · ADV: TCA8418 |
+| USB | CDC serial — pick COM yourself (VID `303A`) |
+| SD | SPI: CS **12**, MOSI **14**, MISO **39**, SCK **40** |
 
-Same `.bin` for original and ADV. Full flash erase once when changing partitions from older builds.
+Same firmware `.bin` for original and ADV.  
+After changing partition tables from older builds: **erase flash once**, then flash.
+
+All handshakes, wordlists, talk files, and the file manager live on **SD** (not internal flash).
 
 ---
 
-## Flash
+## Flash & build
+
+### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.8_m5cardputer.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.8_*_Full.bin
 ```
 
-or PlatformIO:
+Or **M5Launcher** with a `*Launcher*.bin`.
 
-```text
-pio run -t upload --upload-port COMx
-```
+### Web installer
 
-or **M5Launcher** with a `*Launcher*.bin`.
+[lexilexiko.github.io/0N3P0rK](https://lexilexiko.github.io/0N3P0rK/) — Chrome / Edge / Opera (Web Serial).  
+Lists `.bin` under `docs/firmware/` (Direct/Full vs Launcher labels).
 
-**Web installer:** [lexilexiko.github.io/0N3P0rK](https://lexilexiko.github.io/0N3P0rK/) — Chrome / Edge / Opera.
-
-Build:
+### From source (PlatformIO)
 
 ```text
 pio run
+pio run -t upload --upload-port COMx
 ```
 
-Release names: `0N3P0rK_v1.2.8_*_Full.bin` · `0N3P0rK_v1.2.8_*_M5Launcher.bin`
+- Platform: `espressif32@6.12.0`  
+- Artifact: `.pio/build/m5cardputer/firmware.bin`  
+- Version injected from `platformio.ini` → `custom_version`
 
 ---
 
 ## First minutes
 
-1. FAT32 SD in the slot before boot (loot / talk / wordlists).
-2. Farm boots with the pig. **SETTINGS** from the menu.
-3. **RADIO** for capture · **PIGPASS** for offline crack · **LOOT** for files on SD.
-4. Level the pig: skins, seasons, props, friend, table unlock as you play.
+1. Insert a **FAT32** microSD before boot (loot / talk / wordlists).
+2. Device boots to the **farm** with the pig.
+3. Open **SETTINGS** from the menu.
+4. Use **RADIO** for capture, **PIGPASS** for offline crack, **LOOT** / file manager for SD files.
+5. Play on the farm: walk, jump, seasons, wolf, XP — features unlock as the level grows.
 
 ---
 
 ## Farm & pig
 
-- Day / night sky, weather, seasons, trees / produce, wolf visitor
-- Mood monologues, **TALK SEC** interval, **LIFE** while tools run
-- **SCENE** layers, **ANIM TEST** lab, **PROPS** / **FRIEND** toggles (when unlocked)
-- XP to **level 50** (flat late-game curve after early levels)
+### Scene (how the picture is built)
 
-### Unlock roadmap (by level)
-| Level | Unlock |
+Z-order (back → front), modular files under `src/piglet/`:
+
+| Module | Role |
+| --- | --- |
+| **sky** | Day/night gradient, moon, stars |
+| **weather** | Clouds, rain, snow precip |
+| **seasonal_fx** | Leaves, snow/sand banks, sandstorm, lightning FX |
+| **ground** | Grass / pavement / sand dunes + treadmill scroll |
+| **trees** | Trees, bushes, CITY stall/trash/lamp, DESERT palms/cactus |
+| **props** | Seasonal daily objects (hive, snowman, fox, fire, …) |
+| **avatar** | Player pig + movement |
+| **friend_pig** | Companion pig (lv 40+) |
+| **cards_table** | Farm table for future card game (lv 45+) |
+| **wolf** | Visitor; can target player or friend |
+| **mood** | Stats, speech bubbles, monologues |
+| **credits** | Level-50 thank-you roll |
+
+### Controls (farm, typical)
+
+- Walk / edge scroll, jump, attack-hop, sit, play-dead  
+- **ANIM TEST** (SCENE): cycle demos with `-` / `=` on the farm  
+- **G0**: screen/sound off while some radio work can continue (as designed for capture)
+
+### Personality / SCENE menu (highlights)
+
+- Name, skin, season, sky mode, scroll speed  
+- **LIFE** — pig keeps living while tools run  
+- Layer toggles (grass, trees, weather, mood, wolf…)  
+- **TALK SEC** — monologue interval  
+- **PROPS** / **FRIEND** on/off (when unlocked)  
+- **CODE** — private unlock strings (not documented publicly)
+
+### XP
+
+- Soft early ramp; from mid-levels a **flat** cost so late levels stay reachable  
+- **Max level 50**
+
+---
+
+## Seasons & unlock roadmap
+
+### Seasons
+
+| Season | Feel |
+| --- | --- |
+| Spring / Summer / Autumn / Winter | Classic farm + FX |
+| **RETRO** | Old-film mono look |
+| **NOIR** | Night alley mood |
+| **CITY** (lv 25) | Urban ground, stall, trash, lamp, dirty skin option |
+| **DESERT** (lv 30) | Sand dunes, palms, cactus, sandstorm, coyote palette, no rain, bright sky |
+
+### Level roadmap
+
+| Level | Unlocks |
 | ---: | --- |
-| 5+ | skins / gold apples (as before) |
-| 15 / 18 | RETRO / NOIR seasons |
-| 25 | **CITY** |
-| 30 | **DESERT** |
-| 35 | seasonal **props** |
-| 40 | **friend** pig |
-| 45 | **cards table** (stub) |
-| 50 | **credits** |
+| Early | Skins, gold apples, core farm |
+| 15 / 18 | RETRO / NOIR |
+| **25** | **CITY** |
+| **30** | **DESERT** |
+| **35** | Seasonal **props** system |
+| **40** | **Friend** pig |
+| **45** | **Cards table** (jump → stub: cards not ready) |
+| **50** | **Credits** (~10 s, cannot skip) |
+
+### Seasonal props (once per **game-day** ≈ 360 s)
+
+Spawn **off-screen** ahead of walk; toast only when visible.
+
+| Season | Object |
+| --- | --- |
+| Summer | Hive + bees (chase when near) |
+| Winter | Snowman (jump to break) |
+| Autumn | Sleeping fox + Zzz (leaves when you leave) |
+| Spring | Campfire after storm lightning (burns ~½ game-day) |
+| City | Box + stray cat |
+| Desert | Sand skull |
+
+**ANIM TEST** can force prop demos without spending the daily slot.
 
 ---
 
 ## Radio & tools
 
-- Handshake capture (methods / packs), spectrum, deauth lab options
-- PigPass: PCAP + hashcat **22000** tabs, wordlists on SD
-- Loot browser, file manager (**SD only**), BLE / IR / USB SD modes as in 1.2.x
+### Handshake capture (Cap)
+
+- Main goal: catch handshakes (PCAP / hashcat **22000** material)  
+- Methods + packs (including dedicated tuning paths for PCAP vs 22000)  
+- Modes such as aggressive / pinned targeting  
+- Skip network (e.g. **Z**) — ignore for the current session  
+- Bottom bar status while capturing  
+- Loot on **SD** under the project tree  
+
+### Other modes
+
+| Mode | Role |
+| --- | --- |
+| **Spectrum** | Channel / air view; scene can suspend to save CPU |
+| **PigPass** | Offline PSK try from captures + wordlist |
+| **EvilPig** | Portal-style lab tool |
+| **BLE / IR / USB SD** | Extra toys as implemented |
+| **Loot / File manager** | Browse SD; manager is SD-only |
+
+---
+
+## PigPass
+
+- Tabs: **PCAP** and **22000**  
+- Larger file lists for wordlists / captures  
+- While open: farm **scene suspended** (like Spectrum minimize idea); resume when closed / minimized as designed  
+- Results / checkpoints on SD under `pigpass/`
 
 ---
 
 ## SD layout (typical)
 
 ```text
-/handshakes/   captures
-/wordlists/    for PigPass
-/talk/         monologue lines (optional)
+/0N3P0rK/
+  handshakes/     captures
+  pigpass/        crack state / results
+  Passworld/      wordlists
+  talk/           optional monologue lines
+  evilpig/        portal-related files
+  wolf/           wolf loot stash (if used)
+  …
 ```
 
+Exact folder names follow `src/core/sd_layout.h`.
+
 ---
 
-## Legal
+## Web site (`docs/`)
 
-For education and authorized testing only. You are responsible for how you use the radio tools.
+Public pages (English):
 
-License: see `LICENSE`.
+- **Information** — what it is, requirements, links  
+- **Installation** — web flasher (no internal “how the repo is laid out” noise for visitors)  
+- **Gallery** — images from `docs/gallery/` (png/jpg/gif/webp), discovered via folder listing or GitHub API  
+- **Donate** — placeholder  
 
+Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh Pages.
+
+---
+
+## Version history
+
+Approximate product line from early Methodik / handshake-first builds to current.  
+Patch numbers may match tags you used in git; the **story** is what matters.
+
+### Early line (pre–1.2 / Methodik roots)
+
+- Pig farm UI on Cardputer  
+- Wi‑Fi sniffer focused on **handshake** catch  
+- Loot on storage, basic menus  
+- Influence / parallel ideas from the wider Cardputer & handshake scene (including **Oct0sec / M5PORKCHOP**-class projects as reference for “catch HS first”)
+
+### 1.2.x radio focus
+
+- Handshake-first radio kept and tightened  
+- Methods / packs for different capture styles  
+- Hashcat **22000** path alongside classic PCAP  
+- Focus on **not deleting good captures**, less junk files  
+- Skip-network behavior, status bar clarity  
+
+### ~1.2.5–1.2.6
+
+- Stability passes on sniffer write path  
+- Settings / radio menu polish  
+- Pack & method pairs aimed at PCAP vs 22000  
+
+### 1.2.7
+
+- **SD-only** user storage (internal flash not a loot FS)  
+- LittleFS partition shrunk (~512 KB)  
+- Pig monologues refresh  
+- Web installer site: discover `.bin` by extension, tabs Information / Installation / Gallery / Donate  
+- Mood / scene quality-of-life  
+
+### 1.2.8 (current)
+
+- **Scene modularization:** `sky`, `ground`, trees, FX  
+- **CITY** & **DESERT** seasons  
+- **Seasonal props** + game-day / off-screen rules  
+- **Friend pig**, **cards table** stub, **lv50 credits**  
+- PigPass tabs + scene suspend  
+- Cleaner public site + automatic gallery loading  
+- README without public secret codes  
+
+---
+
+## Legal & credits
+
+For **education and authorized testing** only. You are responsible for how you use radio features.
+
+License: see `LICENSE`.  
 Not affiliated with M5Stack.
 
----
-
-## Credits
-
-Thanks to the community, **Oct0sec** inspiration on the handshake path, and everyone who tested builds.
+**Thanks** to everyone who tested builds, to the Cardputer community, and to **Oct0sec** for handshake-path inspiration.
 
 **0N3P0rK** — oink responsibly.
