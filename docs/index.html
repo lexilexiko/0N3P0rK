@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="0N3P0rK for M5Cardputer — web installer, docs, gallery.">
+  <title>0N3P0rK</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      --bg: #0b0e14; --card: #12171f; --text: #e8ecf4; --muted: #8b93a7;
+      --accent: #7cfc9a; --border: #1e2633; --pink: #ff7eb9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.5;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    header { text-align: center; margin-bottom: 0.5rem; }
+    header h1 { margin: 0; font-size: 1.75rem; letter-spacing: 0.04em; }
+    header p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.95rem; }
+    nav.tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin: 1.25rem 0 1.5rem; }
+    nav.tabs button {
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      border-radius: 999px; padding: 0.45rem 0.95rem; cursor: pointer; font-size: 0.9rem;
+    }
+    nav.tabs button:hover { border-color: #3a4458; color: var(--text); }
+    nav.tabs button.active {
+      border-color: var(--accent); color: var(--accent); background: #0f1a14;
+    }
+    section.panel { display: none; }
+    section.panel.active { display: block; }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.1rem 1.2rem; margin-bottom: 1rem;
+    }
+    .card h2 { margin: 0 0 0.65rem; font-size: 1.1rem; }
+    .card p, .card li { color: var(--muted); font-size: 0.95rem; }
+    .card ul { padding-left: 1.2rem; margin: 0.4rem 0 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
+    .btn {
+      display: inline-block; text-decoration: none; border-radius: 8px;
+      padding: 0.5rem 0.9rem; border: 1px solid var(--border); color: var(--text);
+      background: #1a2030; font-size: 0.9rem;
+    }
+    .btn.primary { border-color: var(--accent); color: #0b0e14; background: var(--accent); font-weight: 600; }
+    .btn.donate { border-color: var(--pink); color: var(--pink); }
+    label.field { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.35rem; }
+    select {
+      width: 100%; max-width: 100%; padding: 0.55rem 0.65rem; border-radius: 8px;
+      border: 1px solid var(--border); background: #0b0e14; color: var(--text); margin-bottom: 0.75rem;
+    }
+    .status { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.75rem; min-height: 1.2em; }
+    .status.ok { color: var(--accent); }
+    .status.err { color: #ff8a8a; }
+    esp-web-install-button { display: block; margin-top: 0.5rem; }
+    esp-web-install-button button {
+      background: var(--accent); color: #0b0e14; border: none; border-radius: 8px;
+      padding: 0.65rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.95rem;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.65rem; }
+    .shot {
+      aspect-ratio: 16/10; background: #0b0e14; border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 0.8rem; text-align: center; padding: 0.4rem;
+    }
+    .shot img { width: 100%; height: 100%; object-fit: cover; }
+    footer.site { text-align: center; margin-top: 2rem; color: var(--muted); font-size: 0.85rem; }
+    footer.site .donate-wrap { margin: 1rem 0 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>0N3P0rK</h1>
+      <p>v1.2.8 · M5Cardputer companion + radio lab</p>
+    </header>
+
+    <nav class="tabs" id="tabs" role="tablist">
+      <button type="button" data-tab="info" class="active">Information</button>
+      <button type="button" data-tab="install">Installation</button>
+      <button type="button" data-tab="gallery">Gallery</button>
+      <button type="button" data-tab="donate">Donate</button>
+    </nav>
+
+    <section class="panel active" id="tab-info">
+      <div class="card">
+        <h2>What is 0N3P0rK?</h2>
+        <p>
+          Firmware for <b>M5Stack Cardputer</b> / Cardputer ADV: a living pig companion
+          plus Wi‑Fi lab tools (handshake capture, spectrum, PigPass, loot browser).
+        </p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/lexilexiko/0N3P0rK" target="_blank" rel="noopener">GitHub</a>
+          <a class="btn" href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank" rel="noopener">Releases</a>
+          <a class="btn" href="https://github.com/lexilexiko/0N3P0rK#readme" target="_blank" rel="noopener">README</a>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Requirements</h2>
+        <ul>
+          <li>M5Cardputer or Cardputer ADV (ESP32-S3)</li>
+          <li>USB-C + <b>Chrome / Edge / Opera</b> (Web Serial)</li>
+          <li>microSD for captures, talk lines, and the file manager</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="panel" id="tab-install">
+      <div class="card">
+        <h2>Web Installer</h2>
+        <p style="margin-bottom:0.9rem">Pick a firmware image and flash over USB.</p>
+        <label class="field" for="fileSelect">Firmware image</label>
+        <select id="fileSelect"><option value="">Scanning…</option></select>
+        <div class="status" id="status">Looking for firmware…</div>
+        <esp-web-install-button id="installBtn">
+          <button slot="activate">Install Firmware</button>
+        </esp-web-install-button>
+      </div>
+    </section>
+
+    <section class="panel" id="tab-gallery">
+      <div class="card">
+        <h2>Gallery</h2>
+        <div class="grid" id="galleryGrid">
+          <div class="shot"><small>Loading…</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="tab-donate">
+      <div class="card">
+        <h2>Support the project</h2>
+        <p>Payment link will be added here later.</p>
+        <div class="actions" style="margin-top:1rem">
+          <a class="btn donate" href="#donate">Donate (coming soon)</a>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site">
+      <div class="donate-wrap">
+        <a class="btn donate" href="#donate" data-goto="donate">♥ Donate</a>
+      </div>
+      <div>0N3P0rK · not affiliated with M5Stack</div>
+    </footer>
+  </div>
+
+  <script>
+    const tabs = document.getElementById('tabs');
+    function showTab(id) {
+      document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+      document.querySelectorAll('section.panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + id));
+    }
+    tabs.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-tab]');
+      if (btn) showTab(btn.dataset.tab);
+    });
+    document.querySelectorAll('[data-goto]').forEach(a => {
+      a.addEventListener('click', e => { e.preventDefault(); showTab(a.dataset.goto); });
+    });
+    if (location.hash === '#donate') showTab('donate');
+
+    const select = document.getElementById('fileSelect');
+    const status = document.getElementById('status');
+    const installBtn = document.getElementById('installBtn');
+    const GH_FW = 'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/firmware';
+    const GH_GAL = 'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/gallery';
+
+    function isBinName(name) {
+      return typeof name === 'string' && /\.bin$/i.test(name) && !name.includes('..');
+    }
+    function isImgName(name) {
+      return typeof name === 'string' && /\.(png|jpe?g|gif|webp)$/i.test(name) && !name.includes('..');
+    }
+    function baseName(path) {
+      return decodeURIComponent(String(path).split('?')[0].split('#')[0].split('/').pop());
+    }
+    function uniqueNames(list, pred) {
+      const out = [], seen = new Set();
+      for (const raw of list) {
+        const name = baseName(raw);
+        if (!pred(name)) continue;
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(name);
+      }
+      return out;
+    }
+    function kindOf(name) {
+      const n = name.toLowerCase();
+      if (n.includes('launcher')) return 'launcher';
+      if (n.includes('full')) return 'full';
+      return 'direct';
+    }
+    function labelOf(name) {
+      const k = kindOf(name);
+      if (k === 'launcher') return '[Launcher] ' + name;
+      if (k === 'full') return '[Full / Direct] ' + name;
+      return '[Direct] ' + name;
+    }
+
+    async function listFromDir(url, pred) {
+      try {
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) return [];
+        const text = await r.text();
+        const matches = text.match(/href\s*=\s*["']([^"']+)["']/gi) || [];
+        return uniqueNames(matches.map(m => m.replace(/^href\s*=\s*["']/i, '').replace(/["']$/, '')), pred);
+      } catch { return []; }
+    }
+    async function listFromGitHub(apiUrl, pred) {
+      try {
+        const r = await fetch(apiUrl, {
+          headers: { 'Accept': 'application/vnd.github+json' }, cache: 'no-store'
+        });
+        if (!r.ok) return [];
+        const data = await r.json();
+        if (!Array.isArray(data)) return [];
+        return uniqueNames(data.filter(x => x && x.type === 'file').map(x => x.name), pred);
+      } catch { return []; }
+    }
+    async function listFromJson(url, pred) {
+      try {
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) return [];
+        const data = await r.json();
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.files) ? data.files : []);
+        return uniqueNames(arr, pred);
+      } catch { return []; }
+    }
+
+    async function findBins() {
+      let files = await listFromDir('./firmware/', isBinName);
+      if (files.length) return files;
+      files = await listFromGitHub(GH_FW, isBinName);
+      if (files.length) return files;
+      return listFromJson('./firmware/files.json', isBinName);
+    }
+
+    async function findImages() {
+      let files = await listFromDir('./gallery/', isImgName);
+      if (files.length) return files;
+      files = await listFromGitHub(GH_GAL, isImgName);
+      if (files.length) return files;
+      return listFromJson('./gallery/files.json', isImgName);
+    }
+
+    function setManifest(filename) {
+      if (!filename) {
+        installBtn.removeAttribute('manifest');
+        status.textContent = 'Select a firmware image';
+        status.className = 'status';
+        return;
+      }
+      const manifest = {
+        name: '0N3P0rK',
+        version: filename.replace(/\.bin$/i, ''),
+        new_install_prompt_erase: true,
+        builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: './firmware/' + filename, offset: 0 }] }]
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+      installBtn.setAttribute('manifest', URL.createObjectURL(blob));
+      status.textContent = 'Ready: ' + filename;
+      status.className = 'status ok';
+    }
+
+    async function initInstaller() {
+      const files = await findBins();
+      select.innerHTML = '';
+      if (!files.length) {
+        select.innerHTML = '<option value="">No firmware found</option>';
+        status.textContent = 'No firmware images available';
+        status.className = 'status err';
+        return;
+      }
+      files.sort((a, b) => {
+        const rank = n => kindOf(n) === 'launcher' ? 1 : 0;
+        const d = rank(a) - rank(b);
+        return d !== 0 ? d : a.localeCompare(b, undefined, { sensitivity: 'base' });
+      });
+      files.forEach((name, i) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = labelOf(name) + (i === 0 ? '  · selected' : '');
+        select.appendChild(opt);
+      });
+      setManifest(files[0]);
+      select.addEventListener('change', () => setManifest(select.value));
+    }
+
+    async function initGallery() {
+      const grid = document.getElementById('galleryGrid');
+      const imgs = await findImages();
+      grid.innerHTML = '';
+      if (!imgs.length) {
+        const d = document.createElement('div');
+        d.className = 'shot';
+        d.innerHTML = '<small>No photos yet</small>';
+        grid.appendChild(d);
+        return;
+      }
+      imgs.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      imgs.forEach(name => {
+        const div = document.createElement('div');
+        div.className = 'shot';
+        const img = document.createElement('img');
+        img.src = './gallery/' + name;
+        img.alt = name;
+        img.loading = 'lazy';
+        img.onerror = () => { div.innerHTML = '<small>' + name + '</small>'; };
+        div.appendChild(img);
+        grid.appendChild(div);
+      });
+    }
+
+    initInstaller();
+    initGallery();
+  </script>
+</body>
+</html>
