@@ -1,24 +1,80 @@
-// Cards table on the farm (lv 45+). Game stub: monologue only.
+// «Дуэль» — full card game at the farm table (lv 45+).
 #include "cards_table.h"
 #include "avatar.h"
 #include "mood.h"
 #include "../core/xp.h"
 #include "../core/config.h"
 #include "../audio/sfx.h"
+#include "../ui/keys.h"
+#include "../ui/display.h"
 #include <esp_random.h>
+#include <M5Cardputer.h>
+#include <string.h>
 
 namespace CardsTable {
 
 static constexpr int16_t GROUND_Y = 106;
+static constexpr uint8_t MAX_HP   = 10;
+static constexpr uint8_t HAND_N   = 5;
+static constexpr uint8_t PICK_N   = 2;
+
 static int16_t s_worldX = 200;
 static int16_t s_scroll = 0;
-static uint32_t s_cool = 0;
-static bool s_ready = false;
+static uint32_t s_cool  = 0;
+static bool s_ready     = false;
+static bool s_active    = false;
+static bool s_escLatch  = false;
+static bool s_entLatch  = false;
+static bool s_keyLatch[5] = {};
+
+enum class CType : uint8_t { ATK = 0, DEF = 1, HEAL = 2 };
+
+struct Effect {
+    CType   type;
+    uint8_t pow;
+};
+
+struct Card {
+    Effect e0;
+    Effect e1;
+    bool   combo;
+    bool   empty;
+};
+
+struct PlaySum {
+    uint8_t atk, def, heal;
+};
+
+enum class Phase : uint8_t {
+    SELECT,
+    RESOLVE,
+    ROUND_OVER,
+    MATCH_OVER
+};
+
+static Phase   s_phase;
+static uint8_t s_youHp, s_aiHp;
+static uint8_t s_youWins, s_aiWins;
+static uint8_t s_round;
+static bool    s_youFirst;
+static bool    s_firstWasYou;
+static bool    s_youWonLastRound;
+static Card    s_hand[HAND_N];
+static Card    s_aiHand[HAND_N];
+static bool    s_sel[HAND_N];
+static uint8_t s_selCount;
+static Card    s_youPlay[PICK_N];
+static Card    s_aiPlay[PICK_N];
+static PlaySum s_youSum, s_aiSum;
+static int8_t  s_dmgYou, s_dmgAi;
+static int8_t  s_healYou, s_healAi;
+static uint32_t s_phaseUntil;
+static char    s_msg[28];
 
 bool unlocked() {
-    // Level gate + SCENE toggle (CARDS knobs in settings)
     return XP::getLevel() >= 45 && Config::personality().cardsEnabled;
 }
+bool isActive() { return s_active; }
 
 static int16_t screenX() {
     int16_t x = (int16_t)(s_worldX + s_scroll);
@@ -27,59 +83,619 @@ static int16_t screenX() {
     return x;
 }
 
+static uint8_t rndPow() { return (uint8_t)(1 + (esp_random() % 3)); }
+static CType   rndType() { return (CType)(esp_random() % 3); }
+
+static Card makeBasic() {
+    Card c{};
+    c.e0.type = rndType();
+    c.e0.pow  = rndPow();
+    c.e1      = {CType::ATK, 0};
+    c.combo   = false;
+    c.empty   = false;
+    return c;
+}
+
+static Card makeCombo() {
+    Card c{};
+    c.e0.type = rndType();
+    c.e0.pow  = rndPow();
+    do { c.e1.type = rndType(); } while (c.e1.type == c.e0.type);
+    c.e1.pow = rndPow();
+    c.combo  = true;
+    c.empty  = false;
+    return c;
+}
+
+static Card makeOf(CType t) {
+    Card c{};
+    c.e0.type = t;
+    c.e0.pow  = rndPow();
+    c.e1      = {CType::ATK, 0};
+    c.combo   = false;
+    c.empty   = false;
+    return c;
+}
+
+// Hand of 5:
+//  [0]=ATK  [1]=DEF  [2]=HEAL  (always one of each)
+//  [3]=random basic (A/D/H)
+//  [4]=20% combo, else random basic
+static void dealHand(Card* hand) {
+    hand[0] = makeOf(CType::ATK);
+    hand[1] = makeOf(CType::DEF);
+    hand[2] = makeOf(CType::HEAL);
+    hand[3] = makeBasic();
+    hand[4] = ((esp_random() % 100) < 20) ? makeCombo() : makeBasic();
+    // Shuffle so fixed types are not always in same slots
+    for (int i = 4; i > 0; i--) {
+        int j = (int)(esp_random() % (uint32_t)(i + 1));
+        Card tmp = hand[i];
+        hand[i] = hand[j];
+        hand[j] = tmp;
+    }
+}
+
+static PlaySum sumPlay(const Card* play, uint8_t n) {
+    PlaySum s{0, 0, 0};
+    for (uint8_t i = 0; i < n; i++) {
+        if (play[i].empty) continue;
+        auto add = [&](const Effect& e) {
+            if (e.pow == 0) return;
+            if (e.type == CType::ATK)  s.atk  = (uint8_t)(s.atk  + e.pow);
+            if (e.type == CType::DEF)  s.def  = (uint8_t)(s.def  + e.pow);
+            if (e.type == CType::HEAL) s.heal = (uint8_t)(s.heal + e.pow);
+        };
+        add(play[i].e0);
+        if (play[i].combo) add(play[i].e1);
+    }
+    return s;
+}
+
+static void applyAttack(uint8_t atk, uint8_t def,
+                        uint8_t& hpTarget, uint8_t& hpAttacker,
+                        int8_t& dmgT, int8_t& dmgA) {
+    if (atk == 0) { dmgT = 0; dmgA = 0; return; }
+    if (def >= atk) {
+        dmgA = (int8_t)atk;
+        dmgT = 0;
+        if (hpAttacker > atk) hpAttacker = (uint8_t)(hpAttacker - atk);
+        else hpAttacker = 0;
+    } else {
+        uint8_t pass = (uint8_t)(atk - def);
+        dmgT = (int8_t)pass;
+        dmgA = (int8_t)def;
+        if (hpTarget > pass) hpTarget = (uint8_t)(hpTarget - pass);
+        else hpTarget = 0;
+        if (def > 0) {
+            if (hpAttacker > def) hpAttacker = (uint8_t)(hpAttacker - def);
+            else hpAttacker = 0;
+        }
+    }
+}
+
+static void applyHeal(uint8_t heal, uint8_t& hp, int8_t& shown) {
+    if (heal == 0) { shown = 0; return; }
+    uint8_t before = hp;
+    uint16_t n = (uint16_t)hp + heal;
+    if (n > MAX_HP) n = MAX_HP;
+    hp = (uint8_t)n;
+    shown = (int8_t)(hp - before);
+}
+
+static int scoreCard(const Card& c, uint8_t myHp, uint8_t oppHp) {
+    if (c.empty) return -999;
+    int s = 0;
+    auto val = [&](const Effect& e) {
+        if (e.pow == 0) return;
+        if (e.type == CType::ATK)  s += (int)e.pow * (oppHp <= 4 ? 3 : 2);
+        if (e.type == CType::DEF)  s += (int)e.pow * (myHp <= 4 ? 3 : 1);
+        if (e.type == CType::HEAL) s += (int)e.pow * (myHp <= 5 ? 4 : 1);
+    };
+    val(c.e0);
+    if (c.combo) { val(c.e1); s += 2; }
+    return s;
+}
+
+static void aiPick() {
+    int best = -999999;
+    int bi = 0, bj = 1;
+    for (int i = 0; i < HAND_N; i++) {
+        for (int j = i + 1; j < HAND_N; j++) {
+            int sc = scoreCard(s_aiHand[i], s_aiHp, s_youHp)
+                   + scoreCard(s_aiHand[j], s_aiHp, s_youHp);
+            if (sc > best) { best = sc; bi = i; bj = j; }
+        }
+    }
+    s_aiPlay[0] = s_aiHand[bi];
+    s_aiPlay[1] = s_aiHand[bj];
+}
+
+static void beginTurn() {
+    dealHand(s_hand);
+    dealHand(s_aiHand);
+    memset(s_sel, 0, sizeof(s_sel));
+    s_selCount = 0;
+    s_phase = Phase::SELECT;
+    s_msg[0] = 0;
+    s_dmgYou = s_dmgAi = s_healYou = s_healAi = 0;
+}
+
+static void beginRound(bool youFirst) {
+    s_youHp = MAX_HP;
+    s_aiHp  = MAX_HP;
+    s_youFirst = youFirst;
+    beginTurn();
+}
+
+static void startMatch() {
+    s_youWins = s_aiWins = 0;
+    s_round = 1;
+    s_youWonLastRound = false;
+    s_firstWasYou = (esp_random() & 1) != 0;
+    beginRound(s_firstWasYou);
+    snprintf(s_msg, sizeof(s_msg), "R%d GO", s_round);
+}
+
+static void resolveTurn() {
+    uint8_t p = 0;
+    for (uint8_t i = 0; i < HAND_N && p < PICK_N; i++) {
+        if (s_sel[i]) s_youPlay[p++] = s_hand[i];
+    }
+    while (p < PICK_N) { s_youPlay[p].empty = true; p++; }
+
+    aiPick();
+    s_youSum = sumPlay(s_youPlay, PICK_N);
+    s_aiSum  = sumPlay(s_aiPlay, PICK_N);
+    s_dmgYou = s_dmgAi = s_healYou = s_healAi = 0;
+
+    auto actFirst = [&](bool youAreFirst) {
+        if (youAreFirst) {
+            int8_t dT = 0, dA = 0;
+            applyAttack(s_youSum.atk, s_aiSum.def, s_aiHp, s_youHp, dT, dA);
+            s_dmgAi  = (int8_t)(s_dmgAi + dT);
+            s_dmgYou = (int8_t)(s_dmgYou + dA);
+            int8_t h = 0;
+            applyHeal(s_youSum.heal, s_youHp, h);
+            s_healYou = (int8_t)(s_healYou + h);
+        } else {
+            int8_t dT = 0, dA = 0;
+            applyAttack(s_aiSum.atk, s_youSum.def, s_youHp, s_aiHp, dT, dA);
+            s_dmgYou = (int8_t)(s_dmgYou + dT);
+            s_dmgAi  = (int8_t)(s_dmgAi + dA);
+            int8_t h = 0;
+            applyHeal(s_aiSum.heal, s_aiHp, h);
+            s_healAi = (int8_t)(s_healAi + h);
+        }
+    };
+
+    auto actSecond = [&](bool youAreFirst) {
+        // Second's DEF already spent vs first attack
+        if (youAreFirst) {
+            int8_t dT = 0, dA = 0;
+            applyAttack(s_aiSum.atk, s_youSum.def, s_youHp, s_aiHp, dT, dA);
+            s_dmgYou = (int8_t)(s_dmgYou + dT);
+            s_dmgAi  = (int8_t)(s_dmgAi + dA);
+            int8_t h = 0;
+            applyHeal(s_aiSum.heal, s_aiHp, h);
+            s_healAi = (int8_t)(s_healAi + h);
+        } else {
+            int8_t dT = 0, dA = 0;
+            applyAttack(s_youSum.atk, s_aiSum.def, s_aiHp, s_youHp, dT, dA);
+            s_dmgAi  = (int8_t)(s_dmgAi + dT);
+            s_dmgYou = (int8_t)(s_dmgYou + dA);
+            int8_t h = 0;
+            applyHeal(s_youSum.heal, s_youHp, h);
+            s_healYou = (int8_t)(s_healYou + h);
+        }
+    };
+
+    actFirst(s_youFirst);
+    if (s_youHp > 0 && s_aiHp > 0) actSecond(s_youFirst);
+
+    s_youFirst = !s_youFirst;
+
+    if (s_youHp == 0 || s_aiHp == 0) {
+        s_phase = Phase::ROUND_OVER;
+        s_phaseUntil = millis() + 2200;
+        if (s_youHp == 0 && s_aiHp == 0) {
+            s_youWonLastRound = false;
+            snprintf(s_msg, sizeof(s_msg), "DRAW R%d", s_round);
+        } else if (s_aiHp == 0) {
+            s_youWins++;
+            s_youWonLastRound = true;
+            snprintf(s_msg, sizeof(s_msg), "YOU WIN R%d", s_round);
+            SFX::play(SFX::MENU_CLICK);
+        } else {
+            s_aiWins++;
+            s_youWonLastRound = false;
+            snprintf(s_msg, sizeof(s_msg), "AI WIN R%d", s_round);
+        }
+        if (s_youWins >= 2 || s_aiWins >= 2) {
+            s_phase = Phase::MATCH_OVER;
+            s_phaseUntil = millis() + 3500;
+            if (s_youWins >= 2) {
+                snprintf(s_msg, sizeof(s_msg), "YOU WIN MATCH");
+                Mood::say("WIN!");
+                Avatar::setState(AvatarState::HAPPY);
+            } else {
+                snprintf(s_msg, sizeof(s_msg), "AI WINS MATCH");
+                Mood::say("LOST...");
+                Avatar::setState(AvatarState::SAD);
+            }
+        }
+    } else {
+        s_phase = Phase::RESOLVE;
+        s_phaseUntil = millis() + 1400;
+        snprintf(s_msg, sizeof(s_msg), "A%d/D%d/H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
+    }
+}
+
+void end(); // fwd
+
+static void advanceAfterPause() {
+    if (s_phase == Phase::MATCH_OVER) {
+        end();
+        return;
+    }
+    if (s_phase == Phase::ROUND_OVER) {
+        if (s_youWins >= 2 || s_aiWins >= 2) {
+            s_phase = Phase::MATCH_OVER;
+            s_phaseUntil = millis() + 2000;
+            return;
+        }
+        s_round++;
+        if (s_round > 3) {
+            s_phase = Phase::MATCH_OVER;
+            s_phaseUntil = millis() + 2000;
+            if (s_youWins > s_aiWins) {
+                snprintf(s_msg, sizeof(s_msg), "YOU WIN MATCH");
+            } else if (s_aiWins > s_youWins) {
+                snprintf(s_msg, sizeof(s_msg), "AI WINS MATCH");
+            } else {
+                snprintf(s_msg, sizeof(s_msg), "DRAW MATCH");
+            }
+            return;
+        }
+        bool youFirst;
+        if (s_round == 2) youFirst = !s_firstWasYou;
+        else youFirst = !s_youWonLastRound; // loser of R2 starts R3
+        beginRound(youFirst);
+        snprintf(s_msg, sizeof(s_msg), "R%d GO", s_round);
+        return;
+    }
+    if (s_phase == Phase::RESOLVE) beginTurn();
+}
+
 void begin() {
-    // Park slightly off to the side so you walk into it
     s_worldX = 200;
     s_scroll = 0;
     s_cool = 0;
     s_ready = true;
+    s_active = false;
+    s_escLatch = s_entLatch = false;
+    memset(s_keyLatch, 0, sizeof(s_keyLatch));
+}
+
+void end() {
+    if (!s_active) return;
+    s_active = false;
+    s_escLatch = s_entLatch = false;
+    Avatar::resumeScene();
+    Display::showToast("CARDS OUT", 900);
+    SFX::play(SFX::MENU_CLICK);
 }
 
 void scroll(int8_t dx) {
-    if (!unlocked()) return;
+    if (!unlocked() || s_active) return;
     s_scroll = (int16_t)(s_scroll + dx);
 }
 
+static void startDuel() {
+    if (s_active) return;
+    s_active = true;
+    s_escLatch = s_entLatch = false;
+    memset(s_keyLatch, 0, sizeof(s_keyLatch));
+    Avatar::suspendScene();
+    startMatch();
+    Display::showToast("DUEL", 1000);
+    SFX::play(SFX::MENU_CLICK);
+    Avatar::setState(AvatarState::HAPPY);
+}
+
+static bool keyEnter() {
+    // Cardputer Enter / Return / Space (confirm)
+    if (M5Cardputer.Keyboard.isKeyPressed('\n')) return true;
+    if (M5Cardputer.Keyboard.isKeyPressed('\r')) return true;
+    if (M5Cardputer.Keyboard.isKeyPressed(' ')) return true;
+    if (M5Cardputer.Keyboard.isKeyPressed(0x28)) return true; // HID Enter
+    return false;
+}
+
 void update() {
-    if (!unlocked()) return;
+    if (!unlocked()) {
+        if (s_active) end();
+        return;
+    }
     if (!s_ready) begin();
+
+    if (s_active) {
+        if (keyNewPress(s_escLatch) && keyEsc()) {
+            end();
+            return;
+        }
+
+        uint32_t now = millis();
+
+        if (s_phase == Phase::RESOLVE || s_phase == Phase::ROUND_OVER ||
+            s_phase == Phase::MATCH_OVER) {
+            if (now >= s_phaseUntil) advanceAfterPause();
+            if (keyNewPress(s_entLatch) && keyEnter()) {
+                s_phaseUntil = 0;
+                advanceAfterPause();
+            }
+            return;
+        }
+
+        if (s_phase == Phase::SELECT) {
+            for (int k = 0; k < 5; k++) {
+                char ch = (char)('1' + k);
+                if (!keyNewPress(s_keyLatch[k])) continue;
+                if (!M5Cardputer.Keyboard.isKeyPressed(ch)) continue;
+                if (s_sel[k]) {
+                    s_sel[k] = false;
+                    if (s_selCount) s_selCount--;
+                    SFX::play(SFX::MENU_CLICK);
+                } else if (s_selCount < PICK_N) {
+                    s_sel[k] = true;
+                    s_selCount++;
+                    SFX::play(SFX::MENU_CLICK);
+                }
+            }
+            if (s_selCount == PICK_N && keyNewPress(s_entLatch) && keyEnter()) {
+                resolveTurn();
+            }
+        }
+        return;
+    }
 
     int16_t sx = screenX();
     int pig = Avatar::getCurrentX() + 20;
-    int dist = abs(pig - (int)sx);
-    bool atTable = dist < 36;
+    bool atTable = abs(pig - (int)sx) < 36;
     bool jump = Avatar::isJumping() && Avatar::getJumpLiftPx() > 2;
-
     if (atTable && jump && millis() > s_cool) {
-        s_cool = millis() + 5000;
-        // Stub until card game ships
-        Mood::say("CARDS NOT READY");
-        SFX::play(SFX::MENU_CLICK);
-        Avatar::setState(AvatarState::SAD);
+        s_cool = millis() + 800;
+        startDuel();
     }
 }
 
+static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
+    canvas.fillRect(cx - 14, cy - 16, 4, 16, 0x8200);
+    canvas.fillRect(cx + 11, cy - 16, 4, 16, 0x8200);
+    canvas.fillRect(cx - 18, cy - 22, 38, 7, 0x9A40);
+    canvas.drawRect(cx - 18, cy - 22, 38, 7, 0x7200);
+    canvas.fillRect(cx - 18, cy - 22, 38, 2, 0xC408);
+    canvas.fillRect(cx - 6, cy - 28, 12, 8, 0xF800);
+    canvas.fillRect(cx - 5, cy - 27, 10, 6, 0xFFFF);
+    canvas.fillRect(cx - 4, cy - 26, 3, 3, 0xF800);
+    canvas.fillRect(cx + 8, cy - 26, 6, 5, 0x001F);
+    canvas.drawRect(cx + 8, cy - 26, 6, 5, 0x0000);
+}
+
 void draw(M5Canvas& canvas, int16_t yOffset) {
-    if (!unlocked()) return;
-    int16_t x = screenX();
-    int16_t y = GROUND_Y + yOffset;
-    // Bigger pixel table (~1.5x)
-    // legs
-    canvas.fillRect(x - 14, y - 16, 4, 16, 0x8200);
-    canvas.fillRect(x + 11, y - 16, 4, 16, 0x8200);
-    // top board
-    canvas.fillRect(x - 18, y - 22, 38, 7, 0x9A40);
-    canvas.drawRect(x - 18, y - 22, 38, 7, 0x7200);
-    canvas.fillRect(x - 18, y - 22, 38, 2, 0xC408); // edge highlight
-    // deck of cards
-    canvas.fillRect(x - 6, y - 28, 12, 8, 0xF800);
-    canvas.fillRect(x - 5, y - 27, 10, 6, 0xFFFF);
-    canvas.fillRect(x - 4, y - 26, 3, 3, 0xF800); // pip
-    // side stack
-    canvas.fillRect(x + 8, y - 26, 6, 5, 0x001F);
-    canvas.drawRect(x + 8, y - 26, 6, 5, 0x0000);
+    if (!unlocked() || s_active) return;
+    drawTableAt(canvas, screenX(), (int16_t)(GROUND_Y + yOffset));
 }
 
 
+// Classic RPG pixel icons 10x10 (readable at scale 2–3)
+// A=sword vertical  D=heater shield  H=potion flask
+
+static const char* const ICON_SWORD[] = {
+    "....##....",
+    "...####...",
+    "...#++#...",
+    "...#++#...",
+    "...#++#...",
+    ".########.",
+    "....##....",
+    "....##....",
+    "...####...",
+    "....##....",
+    nullptr
+};
+static const char* const ICON_SHIELD[] = {
+    ".########.",
+    "##++++++##",
+    "##+####+##",
+    "##+#++#+##",
+    "##+#++#+##",
+    "##+####+##",
+    ".##++++##.",
+    "..##++##..",
+    "...####...",
+    "....##....",
+    nullptr
+};
+static const char* const ICON_POTION[] = {
+    "...####...",
+    "....##....",
+    "...####...",
+    "..#++++#..",
+    ".#++++++#.",
+    "#+++##+++#",
+    "#++++++++#",
+    "#++++++++#",
+    ".#++++++#.",
+    "..######..",
+    nullptr
+};
+
+static uint16_t colMain(CType t) {
+    if (t == CType::ATK) return 0x9CF3;   // sword steel
+    if (t == CType::DEF) return 0x3A9F;   // shield blue
+    return 0xC180;                        // potion glass rim (dark red-brown)
+}
+static uint16_t colLite(CType t) {
+    if (t == CType::ATK) return 0xFFFF;   // blade shine
+    if (t == CType::DEF) return 0x8E7F;   // shield face
+    return 0xF800;                        // red heal liquid
+}
+static uint16_t colOut() { return 0x4208; }
+
+static void blitIcon(M5Canvas& canvas, int16_t ox, int16_t oy,
+                     const char* const* rows, CType t, int scale) {
+    uint16_t cm = colMain(t);
+    uint16_t cl = colLite(t);
+    uint16_t co = colOut();
+    for (int r = 0; rows[r]; r++) {
+        const char* line = rows[r];
+        for (int c = 0; line[c]; c++) {
+            char ch = line[c];
+            if (ch == '.') continue;
+            uint16_t col = (ch == '#') ? cm : (ch == '+') ? cl : co;
+            if (scale <= 1) {
+                canvas.drawPixel(ox + c, oy + r, col);
+            } else {
+                canvas.fillRect(ox + c * scale, oy + r * scale, scale, scale, col);
+            }
+        }
+    }
+}
+
+static const char* const* iconFor(CType t) {
+    if (t == CType::ATK) return ICON_SWORD;
+    if (t == CType::DEF) return ICON_SHIELD;
+    return ICON_POTION;
+}
+
+static char typeLetter(CType t) {
+    if (t == CType::ATK) return 'A';
+    if (t == CType::DEF) return 'D';
+    return 'H';
+}
+
+// Card face: 36x44 — icon + letter so type is obvious
+static void drawCardFace(M5Canvas& canvas, int16_t x, int16_t y,
+                         const Card& c, bool selected) {
+    const int16_t W = 36, H = 44;
+    uint16_t bg = selected ? 0xFFE0 : 0xFFFF;
+    uint16_t bd = selected ? 0xFD20 : 0x4A49;
+    canvas.fillRect(x, y, W, H, bg);
+    canvas.drawRect(x, y, W, H, bd);
+    canvas.drawRect(x + 1, y + 1, W - 2, H - 2, selected ? 0xC480 : 0xC618);
+    if (c.empty) return;
+
+    canvas.setTextSize(1);
+
+    if (c.combo) {
+        // top: letter+pow + icon scale1
+        canvas.setTextColor(colMain(c.e0.type), bg);
+        canvas.setCursor(x + 2, y + 2);
+        canvas.printf("%c%d", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        blitIcon(canvas, x + 16, y + 1, iconFor(c.e0.type), c.e0.type, 1);
+
+        canvas.drawFastHLine(x + 2, y + H / 2, W - 4, 0x8410);
+
+        canvas.setTextColor(colMain(c.e1.type), bg);
+        canvas.setCursor(x + 2, y + H / 2 + 2);
+        canvas.printf("%c%d", typeLetter(c.e1.type), (unsigned)c.e1.pow);
+        blitIcon(canvas, x + 16, y + H / 2 + 1, iconFor(c.e1.type), c.e1.type, 1);
+
+        canvas.fillRect(x + W - 7, y + H / 2 - 2, 5, 5, 0xF81F);
+    } else {
+        // Letter top-left, big icon centered
+        canvas.setTextColor(colMain(c.e0.type), bg);
+        canvas.setCursor(x + 3, y + 3);
+        canvas.printf("%c%d", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        // 10px * scale2 = 20 → center in 36-wide card
+        blitIcon(canvas, x + 8, y + 14, iconFor(c.e0.type), c.e0.type, 2);
+    }
+}
+
+static void drawHpBar(M5Canvas& canvas, int16_t x, int16_t y,
+                      uint8_t hp, uint16_t fill, const char* label) {
+    canvas.setTextSize(1);
+    canvas.setTextColor(0xC618, 0x0841);
+    canvas.setCursor(x, y);
+    canvas.print(label);
+    canvas.fillRect(x, y + 10, 60, 8, 0x2104);
+    int w = (int)hp * 60 / MAX_HP;
+    if (w > 0) canvas.fillRect(x, y + 10, w, 8, fill);
+    canvas.drawRect(x, y + 10, 60, 8, 0x8410);
+    canvas.setCursor(x + 62, y + 10);
+    canvas.printf("%u", (unsigned)hp);
+}
+
+void drawActive(M5Canvas& canvas) {
+    canvas.fillSprite(0x0841);
+    canvas.fillRect(0, 108, 240, 27, 0x1082);
+    canvas.fillRect(0, 108, 240, 1, 0x2104);
+    drawTableAt(canvas, 120, 100);
+
+    drawHpBar(canvas, 4, 2, s_youHp, 0x07E0, "YOU");
+    drawHpBar(canvas, 176, 2, s_aiHp, 0xF800, "AI");
+    canvas.setTextColor(0xFFE0, 0x0841);
+    canvas.setCursor(88, 2);
+    canvas.printf("R%d", s_round);
+    canvas.setCursor(88, 12);
+    canvas.printf("%u-%u", (unsigned)s_youWins, (unsigned)s_aiWins);
+
+    canvas.setTextColor(0x8410, 0x0841);
+    canvas.setCursor(88, 22);
+    if (s_phase == Phase::SELECT)
+        canvas.print(s_youFirst ? "YOU 1st" : "AI 1st");
+
+    if (s_msg[0]) {
+        canvas.setTextColor(0xFFFF, 0x0841);
+        canvas.setCursor(4, 28);
+        canvas.print(s_msg);
+    }
+
+    if (s_phase == Phase::RESOLVE || s_phase == Phase::ROUND_OVER ||
+        s_phase == Phase::MATCH_OVER) {
+        canvas.setTextColor(0x07E0, 0x0841);
+        canvas.setCursor(4, 40);
+        canvas.printf("YOU A%d D%d H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
+        canvas.setTextColor(0xF800, 0x0841);
+        canvas.setCursor(4, 50);
+        canvas.printf("AI  A%d D%d H%d", s_aiSum.atk, s_aiSum.def, s_aiSum.heal);
+        if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
+            canvas.setTextColor(0xC618, 0x0841);
+            canvas.setCursor(4, 60);
+            canvas.printf("dmg Y%d/A%d  +Y%d/+A%d",
+                          (int)s_dmgYou, (int)s_dmgAi, (int)s_healYou, (int)s_healAi);
+        }
+        for (uint8_t i = 0; i < PICK_N; i++) {
+            drawCardFace(canvas, 8 + (int16_t)i * 40, 62, s_youPlay[i], false);
+            drawCardFace(canvas, 132 + (int16_t)i * 40, 62, s_aiPlay[i], false);
+        }
+        canvas.setTextColor(0x8410, 0x0841);
+        canvas.setCursor(4, 112);
+        canvas.print(s_phase == Phase::MATCH_OVER ? "` EXIT  ENT OK" : "ENT next");
+        return;
+    }
+
+    canvas.setTextColor(0xC618, 0x0841);
+    canvas.setCursor(4, 40);
+    canvas.printf("PICK %u/2  1-5  ENT", (unsigned)s_selCount);
+
+    for (uint8_t i = 0; i < HAND_N; i++) {
+        int16_t x = 2 + (int16_t)i * 47;
+        drawCardFace(canvas, x, 48, s_hand[i], s_sel[i]);
+        canvas.setTextColor(0x8410, 0x0841);
+        canvas.setCursor(x + 14, 100);
+        canvas.printf("%u", (unsigned)(i + 1));
+    }
+
+    canvas.setTextColor(0x8410, 0x0841);
+    canvas.setCursor(4, 112);
+    canvas.print("` EXIT");
+    if (s_selCount == PICK_N) {
+        canvas.setTextColor(0xFFE0, 0x0841);
+        canvas.setCursor(80, 112);
+        canvas.print("ENT PLAY");
+    }
+}
 
 }  // namespace CardsTable

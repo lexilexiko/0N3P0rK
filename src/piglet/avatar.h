@@ -146,7 +146,7 @@ public:
     // Same pixel pig silhouette (friend / NPC). feet = ground contact.
     static void drawCompanion(M5Canvas& canvas, int16_t feetX, int16_t feetY,
                              bool faceRight, bool walking, bool sitting,
-                             bool sniffing = false);
+                             bool sniffing = false, bool fallen = false);
     static bool isSitting();
     static void setPlayDead(bool on);    // flat on back (X_X)
     static bool isPlayDead();

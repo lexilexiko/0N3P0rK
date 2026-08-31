@@ -247,20 +247,29 @@ static void updateActor(Actor& w, uint32_t now) {
     w.lastStepMs = now;
     w.legPhase++;
 
-    int pigFeet = Avatar::getCurrentX() + 14 * PX;
+    int playerFeet = Avatar::getCurrentX() + 14 * PX;
+    int pigFeet = playerFeet;
+    bool targetingFriend = false;
     // Chase nearest of player or friend pig
-    if (FriendPig::isActive()) {
+    if (FriendPig::isActive() && !FriendPig::isFallen()) {
         int fx = FriendPig::getFeetX();
-        int dP = pigFeet - (int)w.x; if (dP < 0) dP = -dP;
+        int dP = playerFeet - (int)w.x; if (dP < 0) dP = -dP;
         int dF = fx - (int)w.x; if (dF < 0) dF = -dF;
-        if (dF < dP) pigFeet = fx;
+        if (dF < dP) {
+            pigFeet = fx;
+            targetingFriend = true;
+        }
     }
     float target = (float)pigFeet;
 
     switch (w.phase) {
         case Phase::ENTER:
         case Phase::CHASE: {
-            const bool pigSitting = Avatar::isSitting();
+            // Sitting/zombie immunity only when the TARGET is the player
+            const bool pigSitting = !targetingFriend && Avatar::isSitting();
+            const bool zombiePig =
+                !targetingFriend &&
+                (Config::personality().pigSkin == (uint8_t)PigSkin::ZOMBIE);
             float dx = target - w.x;
             if (pigSitting) {
                 if (w.vx == 0.0f) {
@@ -283,11 +292,8 @@ static void updateActor(Actor& w, uint32_t now) {
 
             float adx = dx < 0 ? -dx : dx;
             if (adx < (float)SCARE_DIST) {
-                // ZOMBIE pig — undead; wolf will not bite (walks past)
-                const bool zombiePig =
-                    (Config::personality().pigSkin == (uint8_t)PigSkin::ZOMBIE);
                 if (pigSitting || zombiePig) {
-                    // Hide / freeze / undead — wolf loses interest and walks past
+                    // Player hide / undead — wolf walks past (friend still biteable)
                     w.phase = Phase::LEAVE;
                     w.phaseStartMs = now;
                     if (w.faceRight) w.vx = LEAVE_SPEED * 0.95f;
@@ -304,11 +310,13 @@ static void updateActor(Actor& w, uint32_t now) {
                         w.howled = true;
                         SFX::play(SFX::WOLF);
                         biteEvent = true;
-                        if (FriendPig::isActive()) {
+                        // Bite ONLY the nearest target — never both
+                        if (targetingFriend) {
+                            FriendPig::onWolfBitten();
+                        } else if (FriendPig::isActive()) {
                             int fx = FriendPig::getFeetX();
                             int adF = (int)w.x - fx; if (adF < 0) adF = -adF;
-                            int adP = (int)w.x - (Avatar::getCurrentX() + 14 * PX);
-                            if (adP < 0) adP = -adP;
+                            int adP = (int)w.x - playerFeet; if (adP < 0) adP = -adP;
                             if (adF <= adP) FriendPig::onWolfBitten();
                             else Avatar::onWolfBitten();
                         } else {

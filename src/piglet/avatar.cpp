@@ -1272,24 +1272,38 @@ void Avatar::draw(M5Canvas& canvas) {
 
 void Avatar::drawCompanion(M5Canvas& canvas, int16_t feetX, int16_t feetY,
                            bool faceRight, bool walking, bool sitting,
-                           bool sniffing) {
-    // Exact same drawPixelPig path as the player (clone silhouette).
+                           bool sniffing, bool fallen) {
+    // Same silhouette as player, but OWN pose — never borrow player's
+    // s_deadBlend / s_sitBlend (that made friend fall when YOU were bitten).
     int16_t y = feetY;
-    if (sitting) y = (int16_t)(feetY + 6);  // mild sit sink
-    bool tail = walking && (((millis() / 110) & 1) != 0);
-    bool ear = (((millis() / 180) & 1) != 0);
-    bool blink = ((millis() / 2400) % 17) == 0;
+    if (sitting && !fallen) y = (int16_t)(feetY + 6);
+    bool tail = walking && !fallen && (((millis() / 110) & 1) != 0);
+    bool ear = !fallen && (((millis() / 180) & 1) != 0);
+    bool blink = fallen || (((millis() / 2400) % 17) == 0);
     uint8_t sniffPhase = (uint8_t)((millis() / 90) % 3);
-    AvatarState st = sitting ? AvatarState::SLEEPY
-                   : (sniffing ? AvatarState::NEUTRAL : AvatarState::HAPPY);
+    AvatarState st = fallen ? AvatarState::SLEEPY
+                   : (sitting ? AvatarState::SLEEPY
+                   : (sniffing ? AvatarState::NEUTRAL : AvatarState::HAPPY));
     bool prevKick = s_walkKick;
-    s_walkKick = walking && !sitting;
-    drawPixelPig(canvas, feetX, y, st, faceRight, blink, sniffing && !walking,
+    uint16_t prevDead = s_deadBlend;
+    uint16_t prevSit = s_sitBlend;
+    s_walkKick = walking && !sitting && !fallen;
+    s_deadBlend = fallen ? 256 : 0;
+    s_sitBlend  = (sitting && !fallen) ? 256 : 0;
+    drawPixelPig(canvas, feetX, y, st, faceRight, blink, sniffing && !walking && !fallen,
                  sniffPhase, ear, tail, false, getDrawColor(), getBGColor());
     s_walkKick = prevKick;
+    s_deadBlend = prevDead;
+    s_sitBlend = prevSit;
 }
 
 void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff) {
+    // Card duel: update first (ESC etc.), then dim farm to table-only room
+    CardsTable::update();
+    if (CardsTable::isActive()) {
+        CardsTable::drawActive(canvas);
+        return;
+    }
     // Z-order (back → front):
     //   sky → stars/moon → clouds → season backdrop (lightning) → tree → pig → grass
     // Clouds MUST be before the tree (were drawn after Avatar in Display → tree behind clouds).
@@ -1625,7 +1639,7 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
     // Friend lives behind the player (you are in front of her)
     FriendPig::update();
     FriendPig::draw(canvas, 0);
-    CardsTable::update();
+    // CardsTable::update already ran at top of drawFrame
     CardsTable::draw(canvas, 0);
 
     // Pig BETWEEN grass layers — in front of friend

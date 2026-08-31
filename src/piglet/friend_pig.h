@@ -8,16 +8,17 @@
 namespace FriendPig {
 
 void begin();
-bool unlocked();          // XP level >= 40 (or unlockAll)
-bool enabled();           // unlocked && config toggle
-void setEnabled(bool on); // not stored here — use Config
+bool unlocked();
+bool enabled();
+void setEnabled(bool on);
 
 void update();
 void draw(M5Canvas& canvas, int16_t yOffset);
-void scroll(int8_t dx);   // world treadmill (optional)
+void scroll(int8_t dx);
 
-int getFeetX();           // for wolf targeting
+int getFeetX();
 bool isActive();
-void onWolfBitten();      // flinch + short flee
+bool isFallen();              // on ground after wolf bite (own state)
+void onWolfBitten();          // flinch + fall + flee — does NOT stun player
 
 }  // namespace FriendPig
