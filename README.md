@@ -273,8 +273,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - **Seasonal props** + game-day / off-screen rules  
 - **Friend pig**, **cards table** stub, **lv50 credits**  
 - PigPass tabs + scene suspend  
-- Cleaner public site + automatic gallery loading  
-- README without public secret codes  
+- Cleaner public site + automatic gallery loading   
 
 ---
 
