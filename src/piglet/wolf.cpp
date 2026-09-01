@@ -251,7 +251,7 @@ static void updateActor(Actor& w, uint32_t now) {
     int pigFeet = playerFeet;
     bool targetingFriend = false;
     // Chase nearest of player or friend pig
-    if (FriendPig::isActive() && !FriendPig::isFallen()) {
+    if (FriendPig::isActive() && !FriendPig::isFallen() && !FriendPig::isZombie()) {
         int fx = FriendPig::getFeetX();
         int dP = playerFeet - (int)w.x; if (dP < 0) dP = -dP;
         int dF = fx - (int)w.x; if (dF < 0) dF = -dF;
@@ -313,7 +313,7 @@ static void updateActor(Actor& w, uint32_t now) {
                         // Bite ONLY the nearest target — never both
                         if (targetingFriend) {
                             FriendPig::onWolfBitten();
-                        } else if (FriendPig::isActive()) {
+                        } else if (FriendPig::isActive() && !FriendPig::isZombie()) {
                             int fx = FriendPig::getFeetX();
                             int adF = (int)w.x - fx; if (adF < 0) adF = -adF;
                             int adP = (int)w.x - playerFeet; if (adP < 0) adP = -adP;

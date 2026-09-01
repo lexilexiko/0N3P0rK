@@ -5,6 +5,7 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../piglet/avatar.h"
+#include "../piglet/cards_table.h"
 #include "../piglet/credits.h"
 #include "../piglet/mood.h"
 #include "../piglet/weather.h"
@@ -389,6 +390,10 @@ void Display::drawFarm() {
         }
         if (SceneLayers::seasonFx) SeasonalFx::draw(mainCanvas);
         if (SceneLayers::mood) Mood::draw(mainCanvas);
+    } else if (CardsTable::isActive()) {
+        // Duel UI while farm scene is parked (same idea as PigPass suspend)
+        CardsTable::update();
+        CardsTable::drawActive(mainCanvas);
     }
 
     Credits::update();
@@ -556,7 +561,10 @@ void Display::drawBottomBar() {
     rightName[0] = '\0';
     bool capLive = Cap::isRunning();
 
-    if (App::mode() == AppMode::SPECTRUM && SpectrumMode::isRunning()) {
+    if (CardsTable::isActive()) {
+        CardsTable::getStatusLine(left, sizeof(left));
+        snprintf(rightName, sizeof(rightName), "DUEL");
+    } else if (App::mode() == AppMode::SPECTRUM && SpectrumMode::isRunning()) {
         SpectrumMode::getStatusLine(left, sizeof(left));
     } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();

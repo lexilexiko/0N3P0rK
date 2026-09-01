@@ -315,8 +315,11 @@ static const PigPalette kPigPalettes[PIG_SKIN_COUNT] = {
     // DIRTY — alley / dumpster pig (mud, soot, sad iris)
     { 0x5140, 0x9A85, 0xC548, 0x6B23, 0x8B43, 0x7A22, 0x4208, 0x2104, 0xC618, 0x5180, 0x4208, 0x6B4D },
 };
+static int8_t s_skinOverride = -1;  // -1 = player config; companion can force skin
+
 static const PigPalette& activePigPalette() {
-    uint8_t s = Config::personality().pigSkin;
+    uint8_t s = (s_skinOverride >= 0) ? (uint8_t)s_skinOverride
+               : Config::personality().pigSkin;
     if (s >= PIG_SKIN_COUNT) s = 0;
     return kPigPalettes[s];
 }
@@ -374,7 +377,8 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     const int sniffDy   = sniff ? ((sniffPhase % 3 == 2) ? -1 : 0) : 0;
 
     const PigPalette& pal = activePigPalette();
-    const uint8_t skin = Config::personality().pigSkin;
+    const uint8_t skin = (s_skinOverride >= 0) ? (uint8_t)s_skinOverride
+                       : Config::personality().pigSkin;
     const bool zombie = (skin == (uint8_t)PigSkin::ZOMBIE);
 
     const uint16_t O  = pal.out;
@@ -1272,9 +1276,8 @@ void Avatar::draw(M5Canvas& canvas) {
 
 void Avatar::drawCompanion(M5Canvas& canvas, int16_t feetX, int16_t feetY,
                            bool faceRight, bool walking, bool sitting,
-                           bool sniffing, bool fallen) {
-    // Same silhouette as player, but OWN pose — never borrow player's
-    // s_deadBlend / s_sitBlend (that made friend fall when YOU were bitten).
+                           bool sniffing, bool fallen, bool asZombie) {
+    // Own pose + optional ZOMBIE palette (independent of player skin).
     int16_t y = feetY;
     if (sitting && !fallen) y = (int16_t)(feetY + 6);
     bool tail = walking && !fallen && (((millis() / 110) & 1) != 0);
@@ -1282,19 +1285,24 @@ void Avatar::drawCompanion(M5Canvas& canvas, int16_t feetX, int16_t feetY,
     bool blink = fallen || (((millis() / 2400) % 17) == 0);
     uint8_t sniffPhase = (uint8_t)((millis() / 90) % 3);
     AvatarState st = fallen ? AvatarState::SLEEPY
+                   : (asZombie ? AvatarState::ANGRY
                    : (sitting ? AvatarState::SLEEPY
-                   : (sniffing ? AvatarState::NEUTRAL : AvatarState::HAPPY));
+                   : (sniffing ? AvatarState::NEUTRAL : AvatarState::HAPPY)));
     bool prevKick = s_walkKick;
     uint16_t prevDead = s_deadBlend;
     uint16_t prevSit = s_sitBlend;
+    int8_t prevSkin = s_skinOverride;
     s_walkKick = walking && !sitting && !fallen;
     s_deadBlend = fallen ? 256 : 0;
     s_sitBlend  = (sitting && !fallen) ? 256 : 0;
+    // Friend always uses CLASSIC unless she is undead — never mirrors player ZOMBIE
+    s_skinOverride = asZombie ? (int8_t)PigSkin::ZOMBIE : (int8_t)PigSkin::CLASSIC;
     drawPixelPig(canvas, feetX, y, st, faceRight, blink, sniffing && !walking && !fallen,
                  sniffPhase, ear, tail, false, getDrawColor(), getBGColor());
     s_walkKick = prevKick;
     s_deadBlend = prevDead;
     s_sitBlend = prevSit;
+    s_skinOverride = prevSkin;
 }
 
 void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff) {

@@ -12,6 +12,7 @@
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
 #include "../piglet/avatar.h"
+#include "../piglet/cards_table.h"
 #include "../piglet/props.h"
 #include "../piglet/credits.h"
 #include "../piglet/mood.h"
@@ -207,6 +208,7 @@ static void animTestPoll() {
 //   ANIM TEST: - previous  = next
 static void farmPoll() {
     if (Credits::isPlaying()) return;  // unskippable credits
+    if (CardsTable::isActive()) return;  // duel owns keys + draw
     animTestPoll();
     bool left  = M5Cardputer.Keyboard.isKeyPressed(',');
     bool right = M5Cardputer.Keyboard.isKeyPressed('/');

@@ -13,6 +13,7 @@ void end();
 void update();
 void draw(M5Canvas& canvas, int16_t yOffset);
 void drawActive(M5Canvas& canvas);
+void getStatusLine(char* buf, size_t n);
 void scroll(int8_t dx);
 
 }  // namespace CardsTable

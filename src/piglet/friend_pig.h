@@ -1,6 +1,5 @@
 #pragma once
-// Second pig on the farm (unlock lv 40). Own AI; wolf can bite her too.
-// Toggle: SCENE → FRIEND
+// Second pig (lv 40+). Own hearts / zombie / dialogue — not tied to player skin.
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <stdint.h>
@@ -18,7 +17,8 @@ void scroll(int8_t dx);
 
 int getFeetX();
 bool isActive();
-bool isFallen();              // on ground after wolf bite (own state)
-void onWolfBitten();          // flinch + fall + flee — does NOT stun player
+bool isFallen();
+bool isZombie();              // friend undead — independent of player
+void onWolfBitten();          // own damage; 0 hearts → she becomes zombie
 
 }  // namespace FriendPig

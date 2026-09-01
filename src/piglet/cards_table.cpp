@@ -291,7 +291,12 @@ static void resolveTurn() {
     };
 
     actFirst(s_youFirst);
-    if (s_youHp > 0 && s_aiHp > 0) actSecond(s_youFirst);
+    // Defender's DEF was spent on the first exchange — second hit faces 0 DEF
+    if (s_youHp > 0 && s_aiHp > 0) {
+        if (s_youFirst) s_aiSum.def = 0;
+        else             s_youSum.def = 0;
+        actSecond(s_youFirst);
+    }
 
     s_youFirst = !s_youFirst;
 
@@ -341,7 +346,13 @@ static void advanceAfterPause() {
     if (s_phase == Phase::ROUND_OVER) {
         if (s_youWins >= 2 || s_aiWins >= 2) {
             s_phase = Phase::MATCH_OVER;
-            s_phaseUntil = millis() + 2000;
+            s_phaseUntil = millis() + 2500;
+            if (s_youWins > s_aiWins)
+                snprintf(s_msg, sizeof(s_msg), "YOU WIN MATCH");
+            else if (s_aiWins > s_youWins)
+                snprintf(s_msg, sizeof(s_msg), "AI WINS MATCH");
+            else
+                snprintf(s_msg, sizeof(s_msg), "DRAW MATCH");
             return;
         }
         s_round++;
@@ -429,8 +440,10 @@ void update() {
 
         if (s_phase == Phase::RESOLVE || s_phase == Phase::ROUND_OVER ||
             s_phase == Phase::MATCH_OVER) {
-            if (now >= s_phaseUntil) advanceAfterPause();
-            if (keyNewPress(s_entLatch) && keyEnter()) {
+            // Timer OR Enter — never both in one frame (would skip a phase)
+            if (now >= s_phaseUntil) {
+                advanceAfterPause();
+            } else if (keyNewPress(s_entLatch) && keyEnter()) {
                 s_phaseUntil = 0;
                 advanceAfterPause();
             }
@@ -627,75 +640,170 @@ static void drawHpBar(M5Canvas& canvas, int16_t x, int16_t y,
     canvas.printf("%u", (unsigned)hp);
 }
 
-void drawActive(M5Canvas& canvas) {
-    canvas.fillSprite(0x0841);
-    canvas.fillRect(0, 108, 240, 27, 0x1082);
-    canvas.fillRect(0, 108, 240, 1, 0x2104);
-    drawTableAt(canvas, 120, 100);
 
-    drawHpBar(canvas, 4, 2, s_youHp, 0x07E0, "YOU");
-    drawHpBar(canvas, 176, 2, s_aiHp, 0xF800, "AI");
-    canvas.setTextColor(0xFFE0, 0x0841);
-    canvas.setCursor(88, 2);
-    canvas.printf("R%d", s_round);
-    canvas.setCursor(88, 12);
+// Sized card face for duel UI (fits MAIN_H)
+static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
+                              int16_t W, int16_t H,
+                              const Card& c, bool selected) {
+    uint16_t bg = selected ? 0xFFE0 : 0xFFFF;
+    uint16_t bd = selected ? 0xFD20 : 0x4A49;
+    canvas.fillRect(x, y, W, H, bg);
+    canvas.drawRect(x, y, W, H, bd);
+    if (selected) canvas.drawRect(x + 1, y + 1, W - 2, H - 2, 0xC480);
+    if (c.empty) return;
+    canvas.setTextSize(1);
+    if (c.combo) {
+        canvas.setTextColor(colMain(c.e0.type), bg);
+        canvas.setCursor(x + 2, y + 2);
+        canvas.printf("%c%d", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        blitIcon(canvas, x + W - 12, y + 1, iconFor(c.e0.type), c.e0.type, 1);
+        canvas.drawFastHLine(x + 2, y + H / 2, W - 4, 0x8410);
+        canvas.setTextColor(colMain(c.e1.type), bg);
+        canvas.setCursor(x + 2, y + H / 2 + 2);
+        canvas.printf("%c%d", typeLetter(c.e1.type), (unsigned)c.e1.pow);
+        blitIcon(canvas, x + W - 12, y + H / 2 + 1, iconFor(c.e1.type), c.e1.type, 1);
+    } else {
+        canvas.setTextColor(colMain(c.e0.type), bg);
+        canvas.setCursor(x + 2, y + 2);
+        canvas.printf("%c%d", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        int scale = (H >= 40) ? 2 : 1;
+        int iw = 10 * scale;
+        blitIcon(canvas, x + (W - iw) / 2, y + 12, iconFor(c.e0.type), c.e0.type, scale);
+    }
+}
+
+void drawActive(M5Canvas& canvas) {
+    // MAIN_H = 105 (135 - top16 - bottom14). Layout must stay inside 0..104.
+    // ┌─────────────────────────────────────────┐ 0
+    // │ YOU ####  R1 1-0  AI ####               │ 0–17 header
+    // │ status / message                        │ 18–27
+    // │ [1] [2] [3] [4] [5]  hand  OR resolve   │ 28–78
+    // │ footer hints                            │ 90–104
+    // └─────────────────────────────────────────┘
+    const int16_t W = 240;
+    const int16_t H = 105;  // MAIN_H
+
+    canvas.fillSprite(0x0841);
+    canvas.fillRect(0, 0, W, 18, 0x1082);
+    canvas.fillRect(0, 17, W, 1, 0x2104);
+    canvas.fillRect(0, 89, W, 1, 0x2104);
+    canvas.fillRect(0, 90, W, H - 90, 0x1082);
+
+    // --- HP header (one band, no overlap) ---
+    drawHpBar(canvas, 2, 1, s_youHp, 0x07E0, "YOU");
+    drawHpBar(canvas, 168, 1, s_aiHp, 0xF800, "AI");
+    canvas.setTextSize(1);
+    canvas.setTextColor(0xFFE0, 0x1082);
+    canvas.setCursor(96, 2);
+    canvas.printf("R%u", (unsigned)s_round);
+    canvas.setTextColor(0xC618, 0x1082);
+    canvas.setCursor(92, 11);
     canvas.printf("%u-%u", (unsigned)s_youWins, (unsigned)s_aiWins);
 
-    canvas.setTextColor(0x8410, 0x0841);
-    canvas.setCursor(88, 22);
-    if (s_phase == Phase::SELECT)
-        canvas.print(s_youFirst ? "YOU 1st" : "AI 1st");
-
+    // --- Status line ---
+    canvas.setTextColor(0xFFFF, 0x0841);
+    canvas.setCursor(4, 20);
     if (s_msg[0]) {
-        canvas.setTextColor(0xFFFF, 0x0841);
-        canvas.setCursor(4, 28);
         canvas.print(s_msg);
+    } else if (s_phase == Phase::SELECT) {
+        canvas.setTextColor(0xC618, 0x0841);
+        canvas.printf("PICK %u/2  %s",
+                      (unsigned)s_selCount,
+                      s_youFirst ? "YOU 1st" : "AI 1st");
+    } else if (s_phase == Phase::RESOLVE) {
+        canvas.print("RESOLVE...");
+    } else if (s_phase == Phase::ROUND_OVER) {
+        canvas.print("ROUND OVER");
+    } else if (s_phase == Phase::MATCH_OVER) {
+        canvas.print("MATCH OVER");
     }
 
-    if (s_phase == Phase::RESOLVE || s_phase == Phase::ROUND_OVER ||
-        s_phase == Phase::MATCH_OVER) {
-        canvas.setTextColor(0x07E0, 0x0841);
-        canvas.setCursor(4, 40);
-        canvas.printf("YOU A%d D%d H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
-        canvas.setTextColor(0xF800, 0x0841);
-        canvas.setCursor(4, 50);
-        canvas.printf("AI  A%d D%d H%d", s_aiSum.atk, s_aiSum.def, s_aiSum.heal);
-        if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
-            canvas.setTextColor(0xC618, 0x0841);
-            canvas.setCursor(4, 60);
-            canvas.printf("dmg Y%d/A%d  +Y%d/+A%d",
-                          (int)s_dmgYou, (int)s_dmgAi, (int)s_healYou, (int)s_healAi);
+    const int16_t CW = 34, CH = 40;  // slightly smaller to fit 5 + gaps in 240
+
+    if (s_phase == Phase::SELECT) {
+        // Five hand cards centered
+        const int16_t total = (int16_t)(HAND_N * CW + (HAND_N - 1) * 4);
+        const int16_t x0 = (int16_t)((W - total) / 2);
+        for (uint8_t i = 0; i < HAND_N; i++) {
+            int16_t x = (int16_t)(x0 + i * (CW + 4));
+            drawCardFaceSized(canvas, x, 30, CW, CH, s_hand[i], s_sel[i]);
+            // key digit under card
+            canvas.setTextColor(s_sel[i] ? 0xFFE0 : 0x8410, 0x0841);
+            canvas.setCursor(x + CW / 2 - 3, 72);
+            canvas.printf("%u", (unsigned)(i + 1));
         }
-        for (uint8_t i = 0; i < PICK_N; i++) {
-            drawCardFace(canvas, 8 + (int16_t)i * 40, 62, s_youPlay[i], false);
-            drawCardFace(canvas, 132 + (int16_t)i * 40, 62, s_aiPlay[i], false);
+        // Footer inside main (bottom OS bar repeats keys)
+        canvas.setTextColor(0xC618, 0x1082);
+        canvas.setCursor(4, 94);
+        canvas.print("1-5 select");
+        canvas.setCursor(90, 94);
+        if (s_selCount == PICK_N) {
+            canvas.setTextColor(0xFFE0, 0x1082);
+            canvas.print("ENT=PLAY");
+        } else {
+            canvas.setTextColor(0x8410, 0x1082);
+            canvas.print("pick 2");
         }
-        canvas.setTextColor(0x8410, 0x0841);
-        canvas.setCursor(4, 112);
-        canvas.print(s_phase == Phase::MATCH_OVER ? "` EXIT  ENT OK" : "ENT next");
+        canvas.setTextColor(0x8410, 0x1082);
+        canvas.setCursor(180, 94);
+        canvas.print("`=EXIT");
         return;
     }
 
-    canvas.setTextColor(0xC618, 0x0841);
-    canvas.setCursor(4, 40);
-    canvas.printf("PICK %u/2  1-5  ENT", (unsigned)s_selCount);
+    // RESOLVE / ROUND_OVER / MATCH_OVER — clean split, no stack
+    // Left: YOU play   Right: AI play
+    canvas.setTextColor(0x07E0, 0x0841);
+    canvas.setCursor(8, 30);
+    canvas.print("YOU");
+    canvas.setTextColor(0xF800, 0x0841);
+    canvas.setCursor(140, 30);
+    canvas.print("AI");
 
-    for (uint8_t i = 0; i < HAND_N; i++) {
-        int16_t x = 2 + (int16_t)i * 47;
-        drawCardFace(canvas, x, 48, s_hand[i], s_sel[i]);
-        canvas.setTextColor(0x8410, 0x0841);
-        canvas.setCursor(x + 14, 100);
-        canvas.printf("%u", (unsigned)(i + 1));
+    for (uint8_t i = 0; i < PICK_N; i++) {
+        drawCardFaceSized(canvas, (int16_t)(6 + i * (CW + 4)), 40, CW, CH, s_youPlay[i], false);
+        drawCardFaceSized(canvas, (int16_t)(130 + i * (CW + 4)), 40, CW, CH, s_aiPlay[i], false);
     }
 
-    canvas.setTextColor(0x8410, 0x0841);
-    canvas.setCursor(4, 112);
-    canvas.print("` EXIT");
-    if (s_selCount == PICK_N) {
-        canvas.setTextColor(0xFFE0, 0x0841);
-        canvas.setCursor(80, 112);
-        canvas.print("ENT PLAY");
+    // One compact combat summary under cards (not on top of them)
+    canvas.setTextColor(0xC618, 0x0841);
+    canvas.setCursor(4, 82);
+    canvas.printf("Y A%d D%d H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
+    canvas.setTextColor(0xF81F, 0x0841);
+    canvas.setCursor(120, 82);
+    canvas.printf("A A%d D%d H%d", s_aiSum.atk, s_aiSum.def, s_aiSum.heal);
+
+    canvas.setTextColor(0xC618, 0x1082);
+    canvas.setCursor(4, 94);
+    if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
+        canvas.printf("dmg Y%d/A%d +%d/+%d",
+                      (int)s_dmgYou, (int)s_dmgAi, (int)s_healYou, (int)s_healAi);
+    } else {
+        canvas.print("—");
+    }
+    canvas.setTextColor(0xFFE0, 0x1082);
+    canvas.setCursor(150, 94);
+    if (s_phase == Phase::MATCH_OVER)
+        canvas.print("ENT=` OK");
+    else
+        canvas.print("ENT=next");
+}
+
+
+
+void getStatusLine(char* buf, size_t n) {
+    if (!buf || n == 0) return;
+    if (!s_active) { buf[0] = '\0'; return; }
+    if (s_phase == Phase::SELECT) {
+        if (s_selCount == PICK_N)
+            snprintf(buf, n, "1-5 card  ENT play  ` exit");
+        else
+            snprintf(buf, n, "1-5 pick 2 cards  ` exit");
+    } else if (s_phase == Phase::MATCH_OVER) {
+        snprintf(buf, n, "ENT confirm  ` exit");
+    } else {
+        snprintf(buf, n, "ENT next  ` exit");
     }
 }
 
 }  // namespace CardsTable
+
