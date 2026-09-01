@@ -626,18 +626,19 @@ static void drawCardFace(M5Canvas& canvas, int16_t x, int16_t y,
     }
 }
 
+// Single-row HP: "YOU 20 ####----" — never wraps, stays in header band
 static void drawHpBar(M5Canvas& canvas, int16_t x, int16_t y,
                       uint8_t hp, uint16_t fill, const char* label) {
     canvas.setTextSize(1);
-    canvas.setTextColor(0xC618, 0x0841);
+    canvas.setTextColor(0xC618, 0x1082);
     canvas.setCursor(x, y);
-    canvas.print(label);
-    canvas.fillRect(x, y + 10, 60, 8, 0x2104);
-    int w = (int)hp * 60 / MAX_HP;
-    if (w > 0) canvas.fillRect(x, y + 10, w, 8, fill);
-    canvas.drawRect(x, y + 10, 60, 8, 0x8410);
-    canvas.setCursor(x + 62, y + 10);
-    canvas.printf("%u", (unsigned)hp);
+    canvas.printf("%s %u", label, (unsigned)hp);
+    const int16_t bx = (int16_t)(x + 42);
+    const int16_t bw = 48;
+    canvas.fillRect(bx, y + 1, bw, 6, 0x2104);
+    int w = (int)hp * bw / MAX_HP;
+    if (w > 0) canvas.fillRect(bx, y + 1, w, 6, fill);
+    canvas.drawRect(bx, y + 1, bw, 6, 0x8410);
 }
 
 
@@ -673,120 +674,131 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
 }
 
 void drawActive(M5Canvas& canvas) {
-    // MAIN_H = 105 (135 - top16 - bottom14). Layout must stay inside 0..104.
-    // ┌─────────────────────────────────────────┐ 0
-    // │ YOU ####  R1 1-0  AI ####               │ 0–17 header
-    // │ status / message                        │ 18–27
-    // │ [1] [2] [3] [4] [5]  hand  OR resolve   │ 28–78
-    // │ footer hints                            │ 90–104
-    // └─────────────────────────────────────────┘
+    // MAIN_H = 105. Strict vertical bands — no overlap.
+    // 0..14   header HP + score
+    // 15..26  status (one line)
+    // 27..78  cards
+    // 79..88  combat stats (resolve only)
+    // 89..104 footer keys
     const int16_t W = 240;
-    const int16_t H = 105;  // MAIN_H
+    const int16_t H = 105;
 
     canvas.fillSprite(0x0841);
-    canvas.fillRect(0, 0, W, 18, 0x1082);
-    canvas.fillRect(0, 17, W, 1, 0x2104);
-    canvas.fillRect(0, 89, W, 1, 0x2104);
-    canvas.fillRect(0, 90, W, H - 90, 0x1082);
 
-    // --- HP header (one band, no overlap) ---
-    drawHpBar(canvas, 2, 1, s_youHp, 0x07E0, "YOU");
-    drawHpBar(canvas, 168, 1, s_aiHp, 0xF800, "AI");
+    // --- HEADER band ---
+    canvas.fillRect(0, 0, W, 15, 0x1082);
+    canvas.fillRect(0, 14, W, 1, 0x2104);
+    drawHpBar(canvas, 2, 3, s_youHp, 0x07E0, "YOU");
+    drawHpBar(canvas, 148, 3, s_aiHp, 0xF800, "AI");
+    // score centered in gap between bars (~x 100)
     canvas.setTextSize(1);
     canvas.setTextColor(0xFFE0, 0x1082);
-    canvas.setCursor(96, 2);
+    canvas.setCursor(100, 2);
     canvas.printf("R%u", (unsigned)s_round);
     canvas.setTextColor(0xC618, 0x1082);
-    canvas.setCursor(92, 11);
+    canvas.setCursor(96, 10);
     canvas.printf("%u-%u", (unsigned)s_youWins, (unsigned)s_aiWins);
 
-    // --- Status line ---
+    // --- STATUS band (clear) ---
+    canvas.fillRect(0, 15, W, 12, 0x0841);
     canvas.setTextColor(0xFFFF, 0x0841);
-    canvas.setCursor(4, 20);
+    canvas.setCursor(4, 17);
     if (s_msg[0]) {
-        canvas.print(s_msg);
+        // truncate so it never wraps under cards
+        char buf[28];
+        size_t i = 0;
+        while (s_msg[i] && i < 27) { buf[i] = s_msg[i]; i++; }
+        buf[i] = '\0';
+        canvas.print(buf);
     } else if (s_phase == Phase::SELECT) {
         canvas.setTextColor(0xC618, 0x0841);
-        canvas.printf("PICK %u/2  %s",
+        canvas.printf("Pick %u/2  %s",
                       (unsigned)s_selCount,
-                      s_youFirst ? "YOU 1st" : "AI 1st");
+                      s_youFirst ? "You first" : "AI first");
     } else if (s_phase == Phase::RESOLVE) {
-        canvas.print("RESOLVE...");
+        canvas.print("Resolve...");
     } else if (s_phase == Phase::ROUND_OVER) {
-        canvas.print("ROUND OVER");
+        canvas.print("Round over");
     } else if (s_phase == Phase::MATCH_OVER) {
-        canvas.print("MATCH OVER");
+        canvas.print("Match over");
     }
 
-    const int16_t CW = 34, CH = 40;  // slightly smaller to fit 5 + gaps in 240
+    // --- FOOTER band background ---
+    canvas.fillRect(0, 89, W, H - 89, 0x1082);
+    canvas.fillRect(0, 88, W, 1, 0x2104);
+
+    const int16_t CW = 32, CH = 38;
 
     if (s_phase == Phase::SELECT) {
-        // Five hand cards centered
-        const int16_t total = (int16_t)(HAND_N * CW + (HAND_N - 1) * 4);
+        const int16_t gap = 4;
+        const int16_t total = (int16_t)(HAND_N * CW + (HAND_N - 1) * gap);
         const int16_t x0 = (int16_t)((W - total) / 2);
         for (uint8_t i = 0; i < HAND_N; i++) {
-            int16_t x = (int16_t)(x0 + i * (CW + 4));
-            drawCardFaceSized(canvas, x, 30, CW, CH, s_hand[i], s_sel[i]);
-            // key digit under card
+            int16_t x = (int16_t)(x0 + i * (CW + gap));
+            drawCardFaceSized(canvas, x, 28, CW, CH, s_hand[i], s_sel[i]);
             canvas.setTextColor(s_sel[i] ? 0xFFE0 : 0x8410, 0x0841);
-            canvas.setCursor(x + CW / 2 - 3, 72);
+            canvas.setCursor(x + CW / 2 - 3, 68);
             canvas.printf("%u", (unsigned)(i + 1));
         }
-        // Footer inside main (bottom OS bar repeats keys)
         canvas.setTextColor(0xC618, 0x1082);
         canvas.setCursor(4, 94);
-        canvas.print("1-5 select");
-        canvas.setCursor(90, 94);
+        canvas.print("1-5 card");
+        canvas.setCursor(70, 94);
         if (s_selCount == PICK_N) {
             canvas.setTextColor(0xFFE0, 0x1082);
-            canvas.print("ENT=PLAY");
+            canvas.print("ENT play");
         } else {
             canvas.setTextColor(0x8410, 0x1082);
-            canvas.print("pick 2");
+            canvas.print("need 2");
         }
         canvas.setTextColor(0x8410, 0x1082);
-        canvas.setCursor(180, 94);
-        canvas.print("`=EXIT");
+        canvas.setCursor(170, 94);
+        canvas.print("` exit");
         return;
     }
 
-    // RESOLVE / ROUND_OVER / MATCH_OVER — clean split, no stack
-    // Left: YOU play   Right: AI play
+    // RESOLVE / ROUND_OVER / MATCH_OVER
+    // Labels above cards only
     canvas.setTextColor(0x07E0, 0x0841);
-    canvas.setCursor(8, 30);
+    canvas.setCursor(20, 28);
     canvas.print("YOU");
     canvas.setTextColor(0xF800, 0x0841);
-    canvas.setCursor(140, 30);
+    canvas.setCursor(150, 28);
     canvas.print("AI");
 
     for (uint8_t i = 0; i < PICK_N; i++) {
-        drawCardFaceSized(canvas, (int16_t)(6 + i * (CW + 4)), 40, CW, CH, s_youPlay[i], false);
-        drawCardFaceSized(canvas, (int16_t)(130 + i * (CW + 4)), 40, CW, CH, s_aiPlay[i], false);
+        drawCardFaceSized(canvas, (int16_t)(8 + i * (CW + 6)), 38, CW, CH,
+                          s_youPlay[i], false);
+        drawCardFaceSized(canvas, (int16_t)(130 + i * (CW + 6)), 38, CW, CH,
+                          s_aiPlay[i], false);
     }
 
-    // One compact combat summary under cards (not on top of them)
-    canvas.setTextColor(0xC618, 0x0841);
-    canvas.setCursor(4, 82);
-    canvas.printf("Y A%d D%d H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
-    canvas.setTextColor(0xF81F, 0x0841);
-    canvas.setCursor(120, 82);
-    canvas.printf("A A%d D%d H%d", s_aiSum.atk, s_aiSum.def, s_aiSum.heal);
+    // Stats band 79..87 — one short line each side
+    canvas.fillRect(0, 78, W, 10, 0x0841);
+    canvas.setTextColor(0x07E0, 0x0841);
+    canvas.setCursor(4, 79);
+    canvas.printf("A%d D%d H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
+    canvas.setTextColor(0xF800, 0x0841);
+    canvas.setCursor(130, 79);
+    canvas.printf("A%d D%d H%d", s_aiSum.atk, s_aiSum.def, s_aiSum.heal);
 
     canvas.setTextColor(0xC618, 0x1082);
     canvas.setCursor(4, 94);
     if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
-        canvas.printf("dmg Y%d/A%d +%d/+%d",
-                      (int)s_dmgYou, (int)s_dmgAi, (int)s_healYou, (int)s_healAi);
+        canvas.printf("dmg %d/%d  +%d/+%d",
+                      (int)s_dmgYou, (int)s_dmgAi,
+                      (int)s_healYou, (int)s_healAi);
     } else {
         canvas.print("—");
     }
     canvas.setTextColor(0xFFE0, 0x1082);
-    canvas.setCursor(150, 94);
+    canvas.setCursor(155, 94);
     if (s_phase == Phase::MATCH_OVER)
-        canvas.print("ENT=` OK");
+        canvas.print("ENT ok");
     else
-        canvas.print("ENT=next");
+        canvas.print("ENT next");
 }
+
 
 
 
