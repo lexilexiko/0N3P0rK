@@ -17,6 +17,8 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
+#include "../modes/xfer.h"
+#include "../modes/badusb.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -24,7 +26,7 @@
 
 namespace Menu {
 
-enum class GroupId : int8_t { NONE = -1, ATTACK = 0, SET = 1 };
+enum class GroupId : int8_t { NONE = -1, ATTACK = 0, SET = 1, CONNECT = 2 };
 
 enum class RootType : uint8_t { DIRECT, GROUP };
 
@@ -81,6 +83,18 @@ static const char* const H_BLESET[] = {
 static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
     "HOME WIFI FOR S-SYNC."
+};
+static const char* const H_CONNECT_GRP[] = {
+    "WIFI  BADUSB  USB-SD  XFER.",
+    "LINKS OUTSIDE THE BARN."
+};
+static const char* const H_BADUSB[] = {
+    "DUCKY USB/BLE LIVE + PANEL.",
+    "SCRIPTS /0N3P0rK/badusb/"
+};
+static const char* const H_XFER[] = {
+    "WIFI AP + DOS COMMANDER.",
+    "JOIN AP  OPEN 192.168.4.1"
 };
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
@@ -145,12 +159,13 @@ static const char* const H_TWEAK[] = {
 };
 
 static const RootItem ROOT[] = {
-    {"/>", "ATTACK", H_ATTACK, 2, RootType::GROUP,  GroupId::ATTACK, 0},
-    {"[$", "LOOT",   H_LOOT,   2, RootType::DIRECT, GroupId::NONE,   4},
-    {"^.", "PIG",    H_PIG,    2, RootType::DIRECT, GroupId::NONE,   7},
-    {"::", "SET",    H_SET,    2, RootType::GROUP,  GroupId::SET,    0}
+    {"/>", "ATTACK",  H_ATTACK,      2, RootType::GROUP,  GroupId::ATTACK,  0},
+    {"[$", "LOOT",    H_LOOT,        2, RootType::DIRECT, GroupId::NONE,    4},
+    {"^.", "PIG",     H_PIG,         2, RootType::DIRECT, GroupId::NONE,    7},
+    {"()", "CONNECT", H_CONNECT_GRP, 2, RootType::GROUP,  GroupId::CONNECT, 0},
+    {"::", "SET",     H_SET,         2, RootType::GROUP,  GroupId::SET,     0}
 };
-static const uint8_t ROOT_COUNT = 4;
+static const uint8_t ROOT_COUNT = 5;
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
@@ -167,10 +182,14 @@ static const Item G_SET[] = {
     {"::", "STATUS",  19, H_STAT,   2},
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
-    {"))", "CONNECT",  6, H_CONN,   2},
     {"**", "KEYS",    18, H_KEYS,   2},
-    {"U:", "USB SD",  17, H_USB,    2},
     {"[:", "FILES",   20, H_FILEMGR,2}
+};
+static const Item G_CONNECT[] = {
+    {"))", "WIFI",    6,  H_CONN,   2},
+    {"KB", "BADUSB",  21, H_BADUSB, 2},
+    {"U:", "USB SD",  17, H_USB,    2},
+    {"F:", "XFER",    22, H_XFER,   2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -194,18 +213,21 @@ static uint8_t s_editMax = 32;
 static const Item* groupItems(GroupId g) {
     if (g == GroupId::ATTACK) return G_ATTACK;
     if (g == GroupId::SET) return G_SET;
+    if (g == GroupId::CONNECT) return G_CONNECT;
     return nullptr;
 }
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 8;
+    if (g == GroupId::SET) return 6;
+    if (g == GroupId::CONNECT) return 4;
     return 0;
 }
 
 static const char* groupName(GroupId g) {
     if (g == GroupId::ATTACK) return "ATTACK";
     if (g == GroupId::SET) return "SET";
+    if (g == GroupId::CONNECT) return "CONNECT";
     return "";
 }
 
@@ -282,6 +304,14 @@ static void doAction(uint8_t id) {
         case 17:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::USBSD);
+            break;
+        case 21:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::BADUSB);
+            break;
+        case 22:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::XFER);
             break;
         case 20:
             if (Cap::isRunning()) Cap::stop();
