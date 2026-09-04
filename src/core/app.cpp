@@ -10,6 +10,8 @@
 #include "../modes/irport.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
+#include "../modes/xfer.h"
+#include "../modes/badusb.h"
 #include "../modes/filemgr.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
@@ -40,7 +42,8 @@ bool overlayMode() {
     return s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||
            s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
            s_mode == AppMode::IR || s_mode == AppMode::SPECTRUM ||
-           s_mode == AppMode::USBSD || s_mode == AppMode::FILEMGR ||
+           s_mode == AppMode::USBSD || s_mode == AppMode::FILEMGR || s_mode == AppMode::XFER ||
+           s_mode == AppMode::BADUSB ||
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
 }
@@ -76,6 +79,8 @@ const char* modeName() {
         case AppMode::SPECTRUM: return "SPEC";
         case AppMode::USBSD:    return "USB";
         case AppMode::FILEMGR:  return "FILES";
+        case AppMode::XFER:     return "XFER";
+        case AppMode::BADUSB:   return "BADUSB";
         default:                return "?";
     }
 }
@@ -92,6 +97,8 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::SPECTRUM && SpectrumMode::isRunning()) SpectrumMode::stop();
     if (s_mode == AppMode::USBSD && UsbSdMode::isRunning()) UsbSdMode::stop();
     if (s_mode == AppMode::FILEMGR && FileMgrMode::isRunning()) FileMgrMode::stop();
+    if (s_mode == AppMode::XFER && XferMode::isRunning()) XferMode::stop();
+    if (s_mode == AppMode::BADUSB && BadUsbMode::isRunning()) BadUsbMode::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -103,6 +110,8 @@ void setMode(AppMode m) {
     if (m == AppMode::SPECTRUM) SpectrumMode::start();
     if (m == AppMode::USBSD) UsbSdMode::start();
     if (m == AppMode::FILEMGR) FileMgrMode::start();
+    if (m == AppMode::XFER) XferMode::start();
+    if (m == AppMode::BADUSB) BadUsbMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -271,7 +280,9 @@ void loop() {
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
-    if (overlayMode() && !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
+    // Backspace = minimize overlay — NOT in BADUSB (needs DEL for ducky/live)
+    if (overlayMode() && s_mode != AppMode::BADUSB &&
+        !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {
                 s_winHid = !s_winHid;
@@ -308,6 +319,12 @@ void loop() {
     } else if (s_mode == AppMode::FILEMGR) {
         FileMgrMode::update();
         if (!FileMgrMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::XFER) {
+        XferMode::update();
+        if (!XferMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::BADUSB) {
+        BadUsbMode::update();
+        if (!BadUsbMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();

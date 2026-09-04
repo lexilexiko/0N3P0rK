@@ -66,7 +66,7 @@ struct PersonalityConfig {
     bool wolfEnabled = true;
     bool propsEnabled = true;  // seasonal daily props (lv35 / P0rkP0rk)
     bool friendEnabled = true; // companion pig (lv 40+)
-    bool cardsEnabled = true;  // cards table on farm (lv 45+)
+    bool cardsEnabled = true;  // cards table toggle
     uint8_t scrollSpeed = 9;
     // Seconds between automatic snout monologues. 2..10 (PIG menu TALK SEC).
     uint8_t talkIntervalSec = 5;
@@ -170,12 +170,20 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-static const uint8_t HOTKEY_COUNT = 10;
-// Slots: AGGRO LIGHT PIGPASS EVILPIG BLE IR SPECTRUM LOOT RADIO FILES
+static const uint8_t HOTKEY_COUNT = 16;
+// 0-9 old binds; 10-15 empty (user assigns)
 struct HotkeyConfig {
-    char key[HOTKEY_COUNT] = { 'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f' };
+    char key[HOTKEY_COUNT] = {
+        'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f',
+        0, 0, 0, 0, 0, 0
+    };
 };
 static const uint8_t HOTKEY_RADIO = 8;
+
+struct XferConfig {
+    char ssid[33] = "0N3P0rK";
+    char pass[65] = "0N3-P0rK";
+};
 
 class Config {
 public:
@@ -193,6 +201,7 @@ public:
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
     static HotkeyConfig& hotkeys() { return hotkeyConfig; }
+    static XferConfig& xfer() { return xferConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
 
     static bool isZombieSkinUnlocked();
@@ -206,5 +215,6 @@ private:
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
     static HotkeyConfig hotkeyConfig;
+    static XferConfig xferConfig;
     static bool initialized;
 };

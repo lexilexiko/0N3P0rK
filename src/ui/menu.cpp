@@ -394,7 +394,10 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 }
 
 bool tryHotkey() {
-    static const uint8_t ACT[HOTKEY_COUNT] = { 2, 1, 10, 9, 13, 15, 16, 4, 11, 20 };
+    static const uint8_t ACT[HOTKEY_COUNT] = {
+        2, 1, 10, 9, 13, 15, 16, 4, 11, 20,
+        7, 22, 21, 17, 6, 3
+    };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
         char k = hk.key[i];

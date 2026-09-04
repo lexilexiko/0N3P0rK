@@ -121,6 +121,12 @@ static const Item KEYS[] = {
     {"LOOT",     Kind::BIND, 7, 0, 0, 0},
     {"RADIO",    Kind::BIND, 8, 0, 0, 0},
     {"FILES",    Kind::BIND, 9, 0, 0, 0},
+    {"PIG",      Kind::BIND, 10, 0, 0, 0},
+    {"XFER",     Kind::BIND, 11, 0, 0, 0},
+    {"BADUSB",   Kind::BIND, 12, 0, 0, 0},
+    {"USB SD",   Kind::BIND, 13, 0, 0, 0},
+    {"WIFI",     Kind::BIND, 14, 0, 0, 0},
+    {"STOP",     Kind::BIND, 15, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -135,7 +141,6 @@ static const char* const H_SCENE[] = {
     "RANDOM WOLF VISITOR.",
     "SEASONAL PROPS ON FARM.",
     "COMPANION PIG ON FARM.",
-    "CARDS TABLE ON FARM (LV45).",
     "KILL EATS RANDOM HANDSHAKES.",
     "FRUIT TREES AND DROPS.",
     "RAIN SNOW CLOUDS BIRDS.",

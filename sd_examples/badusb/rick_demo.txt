@@ -1,0 +1,6 @@
+REM Demo only — do not use on others' PCs
+DELAY 1000
+GUI r
+DELAY 400
+STRING https://youtu.be/dQw4w9WgXcQ
+ENTER

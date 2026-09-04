@@ -9,6 +9,7 @@ PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
 HotkeyConfig Config::hotkeyConfig;
+XferConfig Config::xferConfig;
 bool Config::initialized = false;
 
 static char normHot(char c) {
@@ -105,6 +106,21 @@ bool Config::init() {
             char c = normHot(raw[i]);
             hotkeyConfig.key[i] = hotReserved(c) ? 0 : c;
         }
+    }
+
+
+    {
+        XferConfig& x = xferConfig;
+        String xs = s_prefs.getString("xferssid", x.ssid);
+        String xp = s_prefs.getString("xferpass", x.pass);
+        strncpy(x.ssid, xs.c_str(), sizeof(x.ssid) - 1);
+        x.ssid[sizeof(x.ssid) - 1] = 0;
+        strncpy(x.pass, xp.c_str(), sizeof(x.pass) - 1);
+        x.pass[sizeof(x.pass) - 1] = 0;
+        if (!x.ssid[0]) strncpy(x.ssid, "0N3P0rK", sizeof(x.ssid) - 1);
+        if (!x.pass[0]) strncpy(x.pass, "0N3-P0rK", sizeof(x.pass) - 1);
+        if (strlen(x.pass) > 0 && strlen(x.pass) < 8)
+            strncpy(x.pass, "0N3-P0rK", sizeof(x.pass) - 1);
     }
 
     if (p.soundLevel > 5) p.soundLevel = 5;
@@ -214,6 +230,8 @@ bool Config::save() {
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)
         raw[i] = normHot(hotkeyConfig.key[i]);
     s_prefs.putBytes("hotk", raw, HOTKEY_COUNT);
+    s_prefs.putString("xferssid", xferConfig.ssid);
+    s_prefs.putString("xferpass", xferConfig.pass);
     return true;
 }
 

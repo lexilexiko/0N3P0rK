@@ -1,0 +1,9 @@
+REM Lab only — own machine
+DELAY 800
+GUI r
+DELAY 400
+STRING notepad
+ENTER
+DELAY 600
+STRING Hello from 0N3P0rK BadUSB
+ENTER

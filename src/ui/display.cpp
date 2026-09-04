@@ -25,6 +25,8 @@
 #include "../modes/irport.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
+#include "../modes/xfer.h"
+#include "../modes/badusb.h"
 #include "../modes/filemgr.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
@@ -561,10 +563,7 @@ void Display::drawBottomBar() {
     rightName[0] = '\0';
     bool capLive = Cap::isRunning();
 
-    if (CardsTable::isActive()) {
-        CardsTable::getStatusLine(left, sizeof(left));
-        snprintf(rightName, sizeof(rightName), "DUEL");
-    } else if (App::mode() == AppMode::SPECTRUM && SpectrumMode::isRunning()) {
+    if (App::mode() == AppMode::SPECTRUM && SpectrumMode::isRunning()) {
         SpectrumMode::getStatusLine(left, sizeof(left));
     } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
@@ -674,6 +673,12 @@ void Display::drawBottomBar() {
             case AppMode::FILEMGR:
                 FileMgrMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::XFER:
+                XferMode::getStatusLine(left, sizeof(left));
+                break;
+            case AppMode::BADUSB:
+                BadUsbMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -766,6 +771,8 @@ void Display::update() {
         else if (App::mode() == AppMode::SPECTRUM) SpectrumMode::draw(mainCanvas);
         else if (App::mode() == AppMode::USBSD) UsbSdMode::draw(mainCanvas);
         else if (App::mode() == AppMode::FILEMGR) FileMgrMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::XFER) XferMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::BADUSB) BadUsbMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {
