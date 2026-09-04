@@ -527,13 +527,6 @@ void draw(M5Canvas& canvas, int16_t yOffset) {
     int16_t cx = screenX();
     int16_t cy = (int16_t)(GROUND_Y + yOffset);
     drawTableAt(canvas, cx, cy);
-    if (s_nearTable) {
-        canvas.drawRect(cx - 23, cy - 25, 48, 11, 0xFFE0);
-        canvas.setTextSize(1);
-        canvas.setTextColor(0xFFE0, 0x0000);
-        canvas.setCursor(cx - 20, cy - 46);
-        canvas.print("G:PLAY");
-    }
 }
 
 
