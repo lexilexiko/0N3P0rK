@@ -1,4 +1,4 @@
-// Cards table — center + G. Provides isActive/drawActive for app/avatar hooks.
+// Cards table — large table, stand near center, G to play (jump never starts).
 #include "cards_table.h"
 #include "avatar.h"
 #include "mood.h"
@@ -11,18 +11,19 @@
 namespace CardsTable {
 
 static constexpr int16_t GROUND_Y = 106;
-static constexpr int CENTER_PX = 6;
+// Acceptable distance from table center (px). Was 6 — too tight, G never fired.
+static constexpr int CENTER_PX = 20;
 static int16_t s_worldX = 200;
 static int16_t s_scroll = 0;
 static uint32_t s_cool = 0;
 static uint32_t s_hintMs = 0;
 static bool s_ready = false;
 static bool s_onCenter = false;
-static bool s_active = false;  // overlay / "game" session
+static bool s_active = false;
 static bool s_keyLatch = false;
+static bool s_gWas = false;
 
 bool unlocked() {
-    // lv 45+ — no PersonalityConfig flag required (avoids merge skew)
     return XP::getLevel() >= 45;
 }
 
@@ -39,6 +40,7 @@ bool isActive() { return s_active; }
 void close() {
     s_active = false;
     s_keyLatch = false;
+    s_gWas = false;
 }
 
 void begin() {
@@ -50,6 +52,7 @@ void begin() {
     s_onCenter = false;
     s_active = false;
     s_keyLatch = false;
+    s_gWas = false;
 }
 
 void scroll(int8_t dx) {
@@ -66,7 +69,7 @@ void update() {
     }
     if (!s_ready) begin();
 
-    // --- Overlay session: only exit keys ---
+    // --- Overlay open: ` / ENT exit ---
     if (s_active) {
         if (!keyNewPress(s_keyLatch)) return;
         if (keyEsc()) {
@@ -74,7 +77,6 @@ void update() {
             Mood::say("later");
             return;
         }
-        // ENT also leaves stub
         auto st = M5Cardputer.Keyboard.keysState();
         if (st.enter) {
             close();
@@ -83,32 +85,37 @@ void update() {
         return;
     }
 
+    // Jump does NOT count as "at table" for play — avoids tree-smash conflict
     if (Avatar::isJumping()) {
         s_onCenter = false;
+        s_gWas = false;
         return;
     }
 
     int16_t sx = screenX();
+    // Pig feet / body reference (same +20 as original table hitbox)
     int pig = Avatar::getCurrentX() + 20;
     int dist = abs(pig - (int)sx);
-    s_onCenter = dist <= CENTER_PX;
+    s_onCenter = (dist <= CENTER_PX);
+
+    // G edge detect every frame while on farm (do not require isChange)
+    bool gNow = M5Cardputer.Keyboard.isKeyPressed('g') ||
+                M5Cardputer.Keyboard.isKeyPressed('G');
+    bool gEdge = gNow && !s_gWas;
+    s_gWas = gNow;
+
     if (!s_onCenter) return;
 
     uint32_t now = millis();
-    if (now - s_hintMs > 3500) {
+    if (now - s_hintMs > 2800) {
         s_hintMs = now;
         Mood::say("G = PLAY");
     }
 
+    if (!gEdge) return;
     if (now < s_cool) return;
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    if (!M5Cardputer.Keyboard.isPressed()) return;
 
-    bool g = M5Cardputer.Keyboard.isKeyPressed('g') ||
-             M5Cardputer.Keyboard.isKeyPressed('G');
-    if (!g) return;
-
-    s_cool = now + 1500;
+    s_cool = now + 1200;
     s_active = true;
     s_keyLatch = false;
     Mood::say("CARDS NOT READY");
@@ -122,25 +129,41 @@ void draw(M5Canvas& canvas, int16_t yOffset) {
     int16_t x = screenX();
     int16_t y = GROUND_Y + yOffset;
 
-    canvas.fillRect(x - 10, y - 10, 3, 10, 0x8200);
-    canvas.fillRect(x + 8, y - 10, 3, 10, 0x8200);
-    canvas.fillRect(x - 12, y - 14, 26, 5, 0x9A40);
-    canvas.drawRect(x - 12, y - 14, 26, 5, 0x7200);
-    canvas.fillRect(x - 3, y - 18, 8, 5, 0xF800);
-    canvas.fillRect(x - 2, y - 17, 6, 3, 0xFFFF);
+    // --- Larger table (was ~26px; now ~44px top) ---
+    // legs (thicker, farther apart)
+    canvas.fillRect(x - 16, y - 14, 4, 14, 0x8200);
+    canvas.fillRect(x + 13, y - 14, 4, 14, 0x8200);
+    // leg tips
+    canvas.fillRect(x - 17, y - 2, 6, 3, 0x6100);
+    canvas.fillRect(x + 12, y - 2, 6, 3, 0x6100);
 
+    // table top (thick slab)
+    canvas.fillRect(x - 20, y - 18, 42, 7, 0x9A40);
+    canvas.drawRect(x - 20, y - 18, 42, 7, 0x7200);
+    // rim highlight
+    canvas.drawFastHLine(x - 19, y - 17, 40, 0xC4A0);
+
+    // deck of cards on top (bigger)
+    canvas.fillRect(x - 6, y - 26, 12, 9, 0xF800);
+    canvas.drawRect(x - 6, y - 26, 12, 9, 0xC000);
+    canvas.fillRect(x - 5, y - 25, 10, 7, 0xFFFF);
+    // second card offset
+    canvas.fillRect(x - 3, y - 28, 12, 9, 0x001F);
+    canvas.drawRect(x - 3, y - 28, 12, 9, 0x000F);
+    canvas.fillRect(x - 2, y - 27, 10, 7, 0xFFFF);
+
+    // center marker / prompt when standing at table
     if (s_onCenter && !s_active) {
-        canvas.drawRect(x - 13, y - 15, 28, 7, 0xFFE0);
+        canvas.drawRect(x - 21, y - 19, 44, 9, 0xFFE0);
         canvas.setTextSize(1);
         canvas.setTextColor(0xFFE0, 0x0000);
-        canvas.setCursor(x - 18, y - 28);
+        canvas.setCursor(x - 20, y - 38);
         canvas.print("G:PLAY");
     }
 }
 
 void drawActive(M5Canvas& canvas) {
     if (!s_active) return;
-    // Stub full-panel so avatar/app have something to draw
     canvas.fillSprite(0x1082);
     canvas.setTextSize(1);
     canvas.setTextColor(0xFFE0, 0x1082);
