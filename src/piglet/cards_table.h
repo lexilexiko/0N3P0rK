@@ -1,5 +1,5 @@
 #pragma once
-// Farm cards table (lv 45+). Stand at table center, press G to play — not jump.
+// Farm table — unlock lv 45. Stand near + G → duel (best of 3). Jump does not start.
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <stdint.h>
@@ -8,13 +8,12 @@ namespace CardsTable {
 
 void begin();
 bool unlocked();
+bool isActive();
+void end();
 void update();
 void draw(M5Canvas& canvas, int16_t yOffset);
-void scroll(int8_t dx);
-
-bool atCenter();
-bool isActive();
 void drawActive(M5Canvas& canvas);
-void close();
+void getStatusLine(char* buf, size_t n);
+void scroll(int8_t dx);
 
 }  // namespace CardsTable
