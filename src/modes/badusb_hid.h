@@ -24,6 +24,7 @@ void bleReleaseAll();
 void blePrint(const char* text);
 void bleModifierCombo(bool gui, bool alt, bool ctrl, bool shift, uint8_t key);
 void bleSetDelay(uint32_t ms);
+uint32_t blePasskey(); // 0 = Just Works (Bruce-style, no PIN)
 
 #ifndef BADUSB_KEY_CODES
 #define BADUSB_KEY_CODES

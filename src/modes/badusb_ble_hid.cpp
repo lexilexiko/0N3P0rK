@@ -3,8 +3,31 @@
 
 #if __has_include(<BleKeyboard.h>)
 #include <BleKeyboard.h>
+#include <BLEDevice.h>
+#include <BLESecurity.h>
+#include "esp_gap_ble_api.h"
 #define BADUSB_BLE 1
 static BleKeyboard* s_kb = nullptr;
+
+// BleKeyboard 0.3.x defaults to ESP_LE_AUTH_REQ_SC_MITM_BOND → phone asks for PIN.
+// Bruce-style: bond without MITM (Just Works) — no passkey prompt.
+static void applyBruceStyleSecurity() {
+    // No static passkey — Just Works
+    uint8_t iocap = ESP_IO_CAP_NONE;
+    esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &iocap, sizeof(iocap));
+
+    // Bond only, no MITM (same idea as people patching BleKeyboard for Android/iOS)
+    uint8_t auth_req = ESP_LE_AUTH_BOND;
+    esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req, sizeof(auth_req));
+
+    uint8_t key_size = 16;
+    esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE, &key_size, sizeof(key_size));
+
+    uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+    uint8_t rsp_key  = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &init_key, sizeof(init_key));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, sizeof(rsp_key));
+}
 #else
 #define BADUSB_BLE 0
 #endif
@@ -17,7 +40,8 @@ bool bleBegin(const char* name, const char* mfg) {
         s_kb = new BleKeyboard(name ? name : "0N3P0rK", mfg ? mfg : "lexilexiko", 100);
         s_kb->setDelay(25);
         s_kb->begin();
-        delay(200); // Bruce: wait HID service register
+        applyBruceStyleSecurity();
+        delay(200); // wait HID service register (Bruce does the same)
         s_kb->releaseAll();
     }
     return true;
@@ -26,6 +50,11 @@ bool bleBegin(const char* name, const char* mfg) {
     (void)mfg;
     return false;
 #endif
+}
+
+uint32_t blePasskey() {
+    // Bruce-style: no fixed PIN
+    return 0;
 }
 
 void bleEnd() {

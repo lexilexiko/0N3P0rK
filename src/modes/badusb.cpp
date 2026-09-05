@@ -48,6 +48,9 @@ static bool s_keyLatch = false;
 static bool s_linkOk = false;
 static uint32_t s_waitStart = 0;
 static bool s_hidStarted = false;
+static uint32_t s_defaultDelayMs = 0;
+static char s_prevLine[192] = "";
+static bool s_hasPrevLine = false;
 
 static void setStatus(const char* s) {
     strncpy(s_status, s, sizeof(s_status) - 1);
@@ -221,7 +224,13 @@ static void startHidStack() {
         s_linkOk = false;
         s_phase = Phase::WaitLink;
         s_waitStart = millis();
-        setStatus("Waiting BLE pair...");
+        {
+            uint32_t pin = BadUsbHid::blePasskey();
+            if (pin)
+                snprintf(s_status, sizeof(s_status), "Waiting BLE... PIN %06u", (unsigned)pin);
+            else
+                snprintf(s_status, sizeof(s_status), "Waiting BLE pair...");
+        }
     }
 }
 
@@ -266,8 +275,7 @@ static void trimInPlace(char* s) {
     while (n > 0 && isspace((unsigned char)s[n - 1])) s[--n] = '\0';
 }
 
-static bool runLine(char* line) {
-    trimInPlace(line);
+static bool runLine(char* line) {    trimInPlace(line);
     if (!line[0] || line[0] == '#') return true;
     if (!strncasecmp(line, "REM", 3) && (line[3] == 0 || isspace((unsigned char)line[3])))
         return true;
@@ -276,6 +284,22 @@ static bool runLine(char* line) {
         if (ms < 0) ms = 0;
         if (ms > 60000) ms = 60000;
         delay((uint32_t)ms);
+        return true;
+    }
+    if (!strncasecmp(line, "DEFAULT_DELAY", 13) &&
+        (line[13] == 0 || isspace((unsigned char)line[13]))) {
+        int ms = atoi(line + 13);
+        if (ms < 0) ms = 0;
+        if (ms > 60000) ms = 60000;
+        s_defaultDelayMs = (uint32_t)ms;
+        return true;
+    }
+    if (!strncasecmp(line, "DEFAULTDELAY", 12) &&
+        (line[12] == 0 || isspace((unsigned char)line[12]))) {
+        int ms = atoi(line + 12);
+        if (ms < 0) ms = 0;
+        if (ms > 60000) ms = 60000;
+        s_defaultDelayMs = (uint32_t)ms;
         return true;
     }
     if (!strncasecmp(line, "STRING", 6) && isspace((unsigned char)line[6])) {
@@ -298,7 +322,8 @@ static bool runLine(char* line) {
         int ti = 0;
         while (*p && !isspace((unsigned char)*p) && ti < 23) tok[ti++] = *p++;
         tok[ti] = 0;
-        if (!strcasecmp(tok, "GUI") || !strcasecmp(tok, "WINDOWS") || !strcasecmp(tok, "META"))
+        if (!strcasecmp(tok, "GUI") || !strcasecmp(tok, "WINDOWS") || !strcasecmp(tok, "META") ||
+            !strcasecmp(tok, "SUPER"))
             gui = true;
         else if (!strcasecmp(tok, "ALT"))
             alt = true;
@@ -318,6 +343,42 @@ static bool runLine(char* line) {
     return true;
 }
 
+// REM / DELAY / DEFAULT_DELAY / DEFAULTDELAY are timing/no-op lines — they
+// don't count as a "last action" for REPEAT and don't get the default
+// inter-key delay stacked after them (they already control timing directly).
+static bool isTimingOnly(const char* line) {
+    if (!line[0] || line[0] == '#') return true;
+    if (!strncasecmp(line, "REM", 3) && (line[3] == 0 || isspace((unsigned char)line[3]))) return true;
+    if (!strncasecmp(line, "DELAY", 5) && (line[5] == 0 || isspace((unsigned char)line[5]))) return true;
+    if (!strncasecmp(line, "DEFAULT_DELAY", 13) && (line[13] == 0 || isspace((unsigned char)line[13]))) return true;
+    if (!strncasecmp(line, "DEFAULTDELAY", 12) && (line[12] == 0 || isspace((unsigned char)line[12]))) return true;
+    return false;
+}
+
+// One script line, with REPEAT and DEFAULT_DELAY handling on top of runLine().
+static void execDuckyLine(char* line) {
+    trimInPlace(line);
+    if (!strncasecmp(line, "REPEAT", 6) && (line[6] == 0 || isspace((unsigned char)line[6]))) {
+        int n = atoi(line + 6);
+        if (n <= 0) n = 1;
+        if (n > 50) n = 50; // a typo'd REPEAT 5000 shouldn't hang the device
+        if (s_hasPrevLine) {
+            for (int i = 0; i < n && s_run; i++) {
+                runLine(s_prevLine);
+                if (s_defaultDelayMs) delay(s_defaultDelayMs);
+            }
+        }
+        return;
+    }
+    runLine(line);
+    if (!isTimingOnly(line)) {
+        strncpy(s_prevLine, line, sizeof(s_prevLine) - 1);
+        s_prevLine[sizeof(s_prevLine) - 1] = '\0';
+        s_hasPrevLine = true;
+        if (s_defaultDelayMs) delay(s_defaultDelayMs);
+    }
+}
+
 static bool runScriptFile(const char* name) {
     char path[96];
     snprintf(path, sizeof(path), "%s/%s", DIR_BADUSB, name);
@@ -331,6 +392,8 @@ static bool runScriptFile(const char* name) {
         return false;
     }
     setStatus("running...");
+    s_defaultDelayMs = 0;
+    s_hasPrevLine = false;
     char line[192];
     size_t li = 0;
     while (f.available()) {
@@ -338,7 +401,7 @@ static bool runScriptFile(const char* name) {
         if (c == '\r') continue;
         if (c == '\n' || li >= sizeof(line) - 1) {
             line[li] = 0;
-            runLine(line);
+            execDuckyLine(line);
             li = 0;
             yield();
             if (!s_run) break;
@@ -348,7 +411,7 @@ static bool runScriptFile(const char* name) {
     }
     if (li > 0 && s_run) {
         line[li] = 0;
-        runLine(line);
+        execDuckyLine(line);
     }
     f.close();
     hidReleaseAll();
@@ -360,10 +423,7 @@ static void runSelectedScript() {
         setStatus("no script");
         return;
     }
-    if (!needLinkForAction()) {
-        setStatus(s_tr == Transport::Usb ? "plug USB first" : "pair BLE first");
-        return;
-    }
+    if (!needLinkForAction()) return; // startHidStack() already set an accurate status (incl. BLE PIN)
     s_phase = Phase::Running;
     bool ok = runScriptFile(s_files[s_sel]);
     if (!s_run) return;
@@ -373,11 +433,7 @@ static void runSelectedScript() {
 }
 
 static void liveHandleKeys(const Keyboard_Class::KeysState& st) {
-    if (!needLinkForAction()) {
-        setStatus(s_tr == Transport::Usb ? "Waiting USB Host..." : "Waiting BLE pair...");
-        return;
-    }
-    setStatus("LIVE");
+    if (!needLinkForAction()) return; // startHidStack() already set an accurate status (incl. BLE PIN)
 
     if (st.enter) {
         tap(BAD_KEY_RETURN);
@@ -467,35 +523,31 @@ void update() {
     for (char c : st.word) {
         if (c == '1') {
             s_tab = Tab::Scripts;
-            setStatus("SCRIPTS");
             uiKey = true;
         } else if (c == '2') {
             s_tab = Tab::Live;
-            setStatus("LIVE");
             if (!s_hidStarted) startHidStack();
             uiKey = true;
         } else if (c == '3') {
             s_tab = Tab::Panel;
             s_panelIdx = 0;
-            setStatus("PANEL");
             if (!s_hidStarted) startHidStack();
             uiKey = true;
         } else if (c == 'u' || c == 'U') {
             stopHid();
             s_tr = Transport::Usb;
-            setStatus("USB Bad");
             s_phase = Phase::Idle;
+            setStatus("press C to link");
             uiKey = true;
         } else if (c == 'b' || c == 'B') {
             stopHid();
             s_tr = Transport::Ble;
-            setStatus("BLE Bad");
             s_phase = Phase::Idle;
+            setStatus("press C to link");
             uiKey = true;
         } else if (c == 'p' || c == 'P') {
             s_prof = (s_prof == Profile::PC) ? Profile::Phone : Profile::PC;
             s_panelIdx = 0;
-            setStatus(s_prof == Profile::PC ? "PC" : "PHONE");
             uiKey = true;
         } else if (c == 'r' || c == 'R') {
             if (s_tab == Tab::Scripts) rescan();
@@ -540,10 +592,7 @@ void update() {
             }
         }
         if (st.enter) {
-            if (!needLinkForAction()) {
-                setStatus(s_tr == Transport::Usb ? "plug USB / C" : "pair BLE / C");
-                return;
-            }
+            if (!needLinkForAction()) return; // startHidStack() already set an accurate status (incl. BLE PIN)
             if (s_panelIdx < n && presets()[s_panelIdx].fn) {
                 presets()[s_panelIdx].fn();
                 setStatus(presets()[s_panelIdx].label);
@@ -611,14 +660,12 @@ void draw(M5Canvas& canvas) {
         canvas.setCursor(2, 92);
         canvas.print(";/. ENT  C=link  U/B  `");
     } else if (s_tab == Tab::Live) {
-        canvas.setTextColor(hidConnected() ? 0x07E0 : 0xFE60, 0x0841);
+        canvas.setTextColor(0xC618, 0x0841);
         canvas.setCursor(2, 48);
-        canvas.print(hidConnected() ? "CONNECTED — type" : "C=start link, then type");
+        canvas.print("type to send keys");
         canvas.setTextColor(0x8410, 0x0841);
-        canvas.setCursor(2, 64);
-        canvas.print("FN=GUI  U/B  1/3 tabs");
         canvas.setCursor(2, 92);
-        canvas.print("` exit");
+        canvas.print("FN=GUI  C=link  U/B  `");
     } else {
         uint8_t n = presetCount();
         uint8_t base = s_panelIdx > 1 ? (uint8_t)(s_panelIdx - 1) : 0;
