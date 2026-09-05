@@ -46,6 +46,7 @@ static char s_status[48] = "ready";
 static char s_lastErr[40] = "";
 static bool s_keyLatch = false;
 static bool s_linkOk = false;
+static bool s_liveArmed = false; // Live tab: ENT arms it (all keys -> target), FN+` disarms
 static uint32_t s_waitStart = 0;
 static bool s_hidStarted = false;
 static uint32_t s_defaultDelayMs = 0;
@@ -452,9 +453,6 @@ static void liveHandleKeys(const Keyboard_Class::KeysState& st) {
         return;
     }
     for (char c : st.word) {
-        if (c == '`' || c == '~' || c == 27) continue;
-        // skip tab keys used for UI when held with nothing else — already filtered
-        if (c == '1' || c == '2' || c == '3') continue;
         bool shift = st.shift;
         bool ctrl = st.ctrl;
         bool alt = st.alt;
@@ -477,6 +475,7 @@ void start() {
     s_prof = Profile::PC;
     s_keyLatch = false;
     s_linkOk = false;
+    s_liveArmed = false;
     s_hidStarted = false;
     s_panelIdx = 0;
     s_lastErr[0] = 0;
@@ -488,6 +487,7 @@ void start() {
 
 void stop() {
     s_run = false;
+    s_liveArmed = false;
     stopHid();
     Avatar::resumeScene();
 }
@@ -505,6 +505,7 @@ void update() {
         }
     } else if (s_hidStarted && s_linkOk && !hidConnected()) {
         s_linkOk = false;
+        s_liveArmed = false;
         s_phase = Phase::WaitLink;
         setStatus(s_tr == Transport::Usb ? "USB lost" : "BLE lost");
     }
@@ -512,6 +513,21 @@ void update() {
     if (!keyNewPress(s_keyLatch)) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
+
+    // Armed Live typing bypasses every other hotkey below — that's the whole
+    // point: 1/2/3, U/B/P/R/C and plain `/ESC are real keys to send to the
+    // target now, not menu shortcuts. Only FN+` (the same physical key as
+    // "exit", held with FN) disarms it.
+    if (s_tab == Tab::Live && s_liveArmed) {
+        if (st.fn && keyEsc()) {
+            s_liveArmed = false;
+            setStatus("LIVE not armed — ENT to type");
+            SFX::play(SFX::Event::BACK_NAV);
+            return;
+        }
+        liveHandleKeys(st);
+        return;
+    }
 
     if (keyEsc()) {
         stop();
@@ -603,7 +619,14 @@ void update() {
     }
 
     if (s_tab == Tab::Live) {
-        liveHandleKeys(st);
+        // Not armed yet: ENT arms it (needs a real link first); every other
+        // key here is still a menu shortcut, not something to send.
+        if (st.enter) {
+            if (!needLinkForAction()) return; // startHidStack() already set an accurate status (incl. BLE PIN)
+            s_liveArmed = true;
+            setStatus("LIVE armed - FN+` exit");
+            SFX::play(SFX::Event::CONFIRM);
+        }
     }
 }
 
@@ -662,10 +685,10 @@ void draw(M5Canvas& canvas) {
     } else if (s_tab == Tab::Live) {
         canvas.setTextColor(0xC618, 0x0841);
         canvas.setCursor(2, 48);
-        canvas.print("type to send keys");
+        canvas.print(s_liveArmed ? "ARMED - typing live" : "ENT to start typing");
         canvas.setTextColor(0x8410, 0x0841);
         canvas.setCursor(2, 92);
-        canvas.print("FN=GUI  C=link  U/B  `");
+        canvas.print(s_liveArmed ? "FN+` exit  (all keys -> target)" : "ENT start  U/B  `");
     } else {
         uint8_t n = presetCount();
         uint8_t base = s_panelIdx > 1 ? (uint8_t)(s_panelIdx - 1) : 0;
