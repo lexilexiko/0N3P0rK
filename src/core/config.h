@@ -73,6 +73,9 @@ struct PersonalityConfig {
     bool fruitTreesAmbient = true;
     bool freeLife = true;  // pig walks/jumps/hides even during functions
     bool wolfEatLoot = true;  // bite at 0 hearts stashes loot; hit/Am-off returns it
+    // Cardputer RGB LED (WS2812)
+    bool ledEnabled = true;
+    uint8_t ledBright = 40;   // 0..100
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

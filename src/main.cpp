@@ -19,6 +19,7 @@
 #include "cap/sniffer.h"
 #include "modes/evilpig.h"
 #include "modes/pigpass.h"
+#include "board/led.h"
 
 static void preInitWiFiDriverEarly() {
     WiFi.persistent(false);
@@ -78,6 +79,7 @@ void setup() {
     Net::begin();
     Storage::loadKeysIntoNet();
     Cap::begin();
+    Led::begin();
     EvilPigMode::init();
     PigpassMode::init();
 
@@ -95,6 +97,7 @@ void loop() {
     SFX::update();
     XP::tick();
     Cap::loop();
+    Led::update();
 
     if (millis() - s_lastHeapLog > 30000) {
         s_lastHeapLog = millis();

@@ -61,6 +61,8 @@ bool Config::init() {
     p.fruitTreesAmbient = s_prefs.getBool("fruit", p.fruitTreesAmbient);
     p.freeLife = s_prefs.getBool("life", p.freeLife);
     p.wolfEatLoot = s_prefs.getBool("weat", p.wolfEatLoot);
+    p.ledEnabled = s_prefs.getBool("leden", p.ledEnabled);
+    p.ledBright = s_prefs.getUChar("ledbr", p.ledBright);
 
     RadioConfig& r = radioConfig;
     r.hopMs = s_prefs.getUShort("hop", r.hopMs);
@@ -191,6 +193,8 @@ bool Config::save() {
     s_prefs.putBool("fruit", p.fruitTreesAmbient);
     s_prefs.putBool("life", p.freeLife);
     s_prefs.putBool("weat", p.wolfEatLoot);
+    s_prefs.putBool("leden", p.ledEnabled);
+    s_prefs.putUChar("ledbr", p.ledBright);
 
     const RadioConfig& r = radioConfig;
     s_prefs.putUShort("hop", r.hopMs);

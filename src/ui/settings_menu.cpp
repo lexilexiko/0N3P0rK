@@ -10,6 +10,7 @@
 #include "../piglet/mood.h"
 #include "../storage/littlefs_ops.h"
 #include "../audio/sfx.h"
+#include "../board/led.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
 #include "../cap/methods/method_ctx.h"
@@ -65,6 +66,8 @@ static const Item SYSTEM[] = {
     {"SOUND",     Kind::VALUE, 1, 0, 5, 1},
     {"DIM AFTER", Kind::VALUE, 2, 0, 300, 10},
     {"DIM LEVEL", Kind::VALUE, 3, 0, 50, 5},
+    {"LED",       Kind::TOGGLE, 4, 0, 1, 1},
+    {"LED BRIGHT",Kind::VALUE, 5, 0, 100, 5},
 };
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
@@ -157,7 +160,9 @@ static const char* const H_SYSTEM[] = {
     "SCREEN GLOW.",
     "0 = MUTE.",
     "0 = NEVER DIM.",
-    "0 = SCREEN OFF WHEN DIM."
+    "0 = SCREEN OFF WHEN DIM.",
+    "CARDPUTER RGB ON/OFF.",
+    "RGB LED BRIGHTNESS."
 };
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",
@@ -360,6 +365,8 @@ static int getValue(const Item& it) {
             case 1: return p.soundLevel;
             case 2: return p.dimTimeout;
             case 3: return p.dimLevel;
+            case 4: return p.ledEnabled ? 1 : 0;
+            case 5: return p.ledBright;
             default: return 0;
         }
     }
@@ -640,6 +647,17 @@ static bool setValue(const Item& it, int v) {
             case 3:
                 p.dimLevel = (uint8_t)v;
                 Display::resetDimTimer();
+                break;
+            case 4:
+                p.ledEnabled = (v != 0);
+                if (!p.ledEnabled) Led::off();
+                else Led::applyBrightness();
+                break;
+            case 5:
+                p.ledBright = (uint8_t)v;
+                Led::applyBrightness();
+                // brief white so user sees level
+                if (p.ledEnabled) Led::pulse(255, 255, 255, 200);
                 break;
             default: return false;
         }
