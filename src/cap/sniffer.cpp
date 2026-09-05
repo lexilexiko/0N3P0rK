@@ -590,81 +590,12 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     s_cnt.framesQueued++;
 }
 
-// Preferred name: SSID_AABBCCDDEEFF.pcap (readable).
-// BSSID always in the stem so one AP = one logical capture.
-// Unknown SSID -> HIDDEN_AABBCCDDEEFF.pcap; SSID-learn renames later.
-// Append-only open below never truncates a good file.
 static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX]) {
-    if (!out) return;
-    if (!bssid) {
-        snprintf(out, Storage::FILE_NAME_MAX, "UNKNOWN.pcap");
-        return;
-    }
     char ssid[33];
     ssidForBssid(bssid, ssid);
     char stem[40];
     CapName::buildStem(ssid, bssid, stem, sizeof(stem));
     snprintf(out, Storage::FILE_NAME_MAX, "%s.pcap", stem);
-}
-
-// Fold pure-MAC / HIDDEN_* leftovers into the preferred path (SSID when known).
-// Never overwrites an existing preferred file that already has data.
-static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPath) {
-    if (!bssid || !preferredPath) return;
-    if (SD.exists(preferredPath)) {
-        File p = SD.open(preferredPath, "r");
-        size_t sz = p ? p.size() : 0;
-        if (p) p.close();
-        if (sz >= sizeof(Pcap::FileHeader)) return; // preferred already good
-    }
-
-    char stem[40];
-    char legName[Storage::FILE_NAME_MAX];
-    char legPath[80];
-    size_t bestSz = 0;
-    char bestPath[80] = {0};
-
-    auto consider = [&](const char* path) {
-        if (!path || !path[0] || !SD.exists(path)) return;
-        if (strcmp(path, preferredPath) == 0) return;
-        File f = SD.open(path, "r");
-        size_t sz = f ? f.size() : 0;
-        if (f) f.close();
-        if (sz > bestSz) {
-            bestSz = sz;
-            strncpy(bestPath, path, sizeof(bestPath) - 1);
-            bestPath[sizeof(bestPath) - 1] = '\0';
-        }
-    };
-
-    // pure MAC AABBCCDDEEFF.pcap (previous patch)
-    snprintf(legName, sizeof(legName),
-             "%02X%02X%02X%02X%02X%02X.pcap",
-             bssid[0], bssid[1], bssid[2],
-             bssid[3], bssid[4], bssid[5]);
-    snprintf(legPath, sizeof(legPath), "%s%s", PREFIX, legName);
-    consider(legPath);
-
-    // HIDDEN_MAC
-    CapName::buildStem("", bssid, stem, sizeof(stem));
-    snprintf(legName, sizeof(legName), "%s.pcap", stem);
-    snprintf(legPath, sizeof(legPath), "%s%s", PREFIX, legName);
-    consider(legPath);
-
-    if (!bestPath[0] || bestSz == 0) return;
-    if (SD.exists(preferredPath)) {
-        // preferred exists but was tiny/corrupt path — don't clobber with rename
-        File p = SD.open(preferredPath, "r");
-        size_t psz = p ? p.size() : 0;
-        if (p) p.close();
-        if (psz >= sizeof(Pcap::FileHeader)) return;
-        if (psz > 0 && psz < sizeof(Pcap::FileHeader)) SD.remove(preferredPath);
-        else if (psz >= sizeof(Pcap::FileHeader)) return;
-    }
-    if (SD.rename(bestPath, preferredPath)) {
-        Serial.printf("[CAP] migrate pcap -> %s (%u bytes)\n",
-                      Storage::baseName(preferredPath), (unsigned)bestSz);
-    }
 }
 
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
@@ -701,17 +632,28 @@ static bool openFileForBssid(const uint8_t* bssid) {
     makeFilename(bssid, name);
     char path[80];
     snprintf(path, sizeof(path), "%s%s", PREFIX, name);
-    char ssid[33];
-    ssidForBssid(bssid, ssid);
-
-    // Fold legacy SSID_/HIDDEN_ names into stable MAC-only path once.
-    migrateLegacyPcapName(bssid, path);
 
     bool exists = SD.exists(path);
-    // Probe size BEFORE any write open. Append-only for existing captures
-    // (Bruce: never FILE_WRITE-truncate a handshake pcap).
-    // Tiny (< global header) files are corrupt remnants — only those may be
-    // removed. Anything with a full header is sacred: append or refuse.
+    // Probe size BEFORE any write open. A file smaller than the 24-byte
+    // pcap global header is a remnant of a cut-short header write - delete
+    // and start clean. A file that already has a full header (+ maybe
+    // packets) is just an EXISTING capture for this BSSID that we're about
+    // to APPEND more frames to (M2/M3/M4 arriving later, a retry, etc.) -
+    // opening in "a" mode below never truncates, so there is nothing to
+    // protect against here. The one real failure mode (SD size() lying
+    // and reporting smaller than a moment ago) is caught separately after
+    // the real open, below - that's the correct, narrow place for it.
+    // NOTE: this function used to `return false` here for any file with
+    // an existing header, treating it as "already finished, don't touch."
+    // That was the actual data-loss bug: writeFrameToFile() closes the
+    // current file the instant a frame from a DIFFERENT BSSID interleaves
+    // (very common - the ring buffer carries frames from many APs), so
+    // M1 would get written, the file would close as soon as any other AP's
+    // frame came through, and then M2/M3/M4 for the SAME BSSID arriving
+    // later would hit this check, get refused, and be silently dropped -
+    // captures got stuck at "header + first frame" forever. Appending is
+    // exactly what should happen instead; there is no scenario here where
+    // NOT appending protects anything.
     size_t preSize = 0;
     if (exists) {
         File probe = SD.open(path, "r");
@@ -729,23 +671,17 @@ static bool openFileForBssid(const uint8_t* bssid) {
         return false;
     }
 
-    // Explicit append. Never "w" / FILE_WRITE (truncates on ESP32 SD).
     s_file = SD.open(path, "a");
     if (!s_file) return false;
 
     s_fileSize = s_file.size();
-    // Safety: card said non-empty but open shows smaller — do not write,
-    // do not remove (protect good data; Bruce-style refuse).
-    if (preSize > 0 && s_fileSize < preSize) {
+    // Safety: if the card reported a non-empty file above but open shows 0,
+    // something is wrong with the FS handle - do not write, do not remove.
+    if (preSize >= sizeof(Pcap::FileHeader) && s_fileSize < preSize) {
         Serial.printf("[CAP] size mismatch (pre=%u open=%u), refuse write: %s\n",
                       (unsigned)preSize, (unsigned)s_fileSize, name);
         s_file.close();
         return false;
-    }
-    // If we believed the file was empty but open shows data, trust disk:
-    // never write a second global header into an existing stream.
-    if (preSize == 0 && s_fileSize > 0) {
-        preSize = s_fileSize;
     }
     bool createdNew = false;
     if (s_fileSize >= MAX_FILE_SIZE) {
@@ -761,9 +697,8 @@ static bool openFileForBssid(const uint8_t* bssid) {
         memset(s_fullLoggedBssid, 0, sizeof(s_fullLoggedBssid));
     }
 
-    // Only brand-new empty files get a header. If preSize or s_fileSize
-    // indicates any prior bytes, never rewrite header (would corrupt /
-    // look like a "zeroed" capture after a bad reopen).
+    // Only brand-new empty files get a header. Never rewrite header onto
+    // an existing stream (preSize already gated above).
     if (s_fileSize == 0 && preSize == 0) {
         Pcap::FileHeader fh;
         fh.magic        = 0xA1B2C3D4;
@@ -775,28 +710,21 @@ static bool openFileForBssid(const uint8_t* bssid) {
         fh.linktype     = 127;
         if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
             s_file.close();
-            // Only remove if we created an empty/new failure — not a prior good file.
-            if (SD.exists(path)) {
-                File chk = SD.open(path, "r");
-                size_t cz = chk ? chk.size() : 0;
-                if (chk) chk.close();
-                if (cz < sizeof(Pcap::FileHeader)) SD.remove(path);
-            }
+            SD.remove(path);
             return false;
         }
         s_fileSize = sizeof(fh);
         s_cnt.filesOpened++;
         createdNew = true;
         XP::addXP(XPEvent::HANDSHAKE);
-    } else if (preSize >= sizeof(Pcap::FileHeader)) {
-        // Existing good capture — append path. Log once per BSSID per boot.
-        static uint8_t s_keptLog[6] = {0};
-        if (memcmp(s_keptLog, bssid, 6) != 0) {
-            Serial.printf("[CAP] keep/append existing pcap %s (%u bytes)\n",
-                          name, (unsigned)s_fileSize);
-            memcpy(s_keptLog, bssid, 6);
-        }
     }
+
+    memcpy(s_fileBssid, bssid, 6);
+    memcpy(s_fileName, name, sizeof(s_fileName));
+    s_fileOpen = true;
+
+    char ssid[33];
+    ssidForBssid(bssid, ssid);
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, name, ssid);
 
     const BeaconSlot* bcn = findBeacon(bssid);
