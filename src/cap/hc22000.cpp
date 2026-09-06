@@ -8,6 +8,7 @@
 #include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <freertos/portmacro.h>
 
 namespace Hc22000 {
 
@@ -44,6 +45,7 @@ struct Hs {
 };
 
 static Hs s_hs[MAX_HS];
+static portMUX_TYPE s_hsMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void hexEnc(const uint8_t* in, size_t n, char* out) {
     static const char* H = "0123456789abcdef";
@@ -54,7 +56,7 @@ static void hexEnc(const uint8_t* in, size_t n, char* out) {
     out[n * 2] = '\0';
 }
 
-static uint32_t s_lastM1Ms = 0;
+static volatile uint32_t s_lastM1Ms = 0;
 
 static void essidOf(const Hs* h, char ssid[33]) {
     ssid[0] = '\0';
@@ -389,8 +391,10 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
 }
 
 void reset() {
+    portENTER_CRITICAL(&s_hsMux);
     memset(s_hs, 0, sizeof(s_hs));
     s_lastM1Ms = 0;
+    portEXIT_CRITICAL(&s_hsMux);
 }
 
 void flushPending() {
@@ -401,54 +405,82 @@ void flushPending() {
     // SD isn't ISR-safe and the radio would WDT the moment any beacon or
     // EAPOL arrived under load.
     for (uint8_t i = 0; i < MAX_HS; i++) {
-        if (!s_hs[i].used) continue;
-        if (!s_hs[i].dirty) continue;
-        s_hs[i].dirty = false;
-        // haveEssid is required by maybeWrite() anyway, and we want to
-        // drop the dirty bit even if no write was actually performed,
-        // otherwise we'd re-check the same slot every loop tick forever.
-        if (s_hs[i].haveEssid && s_hs[i].essidLen > 0) {
-            maybeWrite(&s_hs[i]);
+        Hs pending{};
+        bool claimed = false;
+        portENTER_CRITICAL(&s_hsMux);
+        if (s_hs[i].used && s_hs[i].dirty) {
+            pending = s_hs[i];
+            s_hs[i].dirty = false;
+            claimed = true;
         }
+        portEXIT_CRITICAL(&s_hsMux);
+        if (!claimed) continue;
+
+        // Keep SD I/O outside the critical section so the Wi-Fi callback can
+        // continue updating other handshake slots while a file is written.
+        if (pending.haveEssid && pending.essidLen > 0) {
+            maybeWrite(&pending);
+        }
+
+        portENTER_CRITICAL(&s_hsMux);
+        if (s_hs[i].used &&
+            memcmp(s_hs[i].bssid, pending.bssid, sizeof(pending.bssid)) == 0) {
+            s_hs[i].wroteEapol = s_hs[i].wroteEapol || pending.wroteEapol;
+            s_hs[i].wrotePmkid = s_hs[i].wrotePmkid || pending.wrotePmkid;
+        }
+        portEXIT_CRITICAL(&s_hsMux);
     }
 }
 
 bool shouldPauseDeauth() {
     uint16_t pause = Config::radio().pauseMs;
     if (pause < 200) pause = 200;
-    return s_lastM1Ms != 0 && (millis() - s_lastM1Ms) < pause;
+    uint32_t lastM1;
+    portENTER_CRITICAL(&s_hsMux);
+    lastM1 = s_lastM1Ms;
+    portEXIT_CRITICAL(&s_hsMux);
+    return lastM1 != 0 && (millis() - lastM1) < pause;
 }
 
 bool hasPair(const uint8_t* bssid) {
     if (!bssid) return false;
+    bool found = false;
+    portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
-        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0)
-            return s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
+        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
+            found = s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
+            break;
+        }
     }
-    return false;
+    portEXIT_CRITICAL(&s_hsMux);
+    return found;
 }
 
 uint16_t pairCount() {
     uint16_t n = 0;
+    portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
     }
+    portEXIT_CRITICAL(&s_hsMux);
     return n;
 }
 
 uint8_t handshakeMask(const uint8_t* bssid) {
     if (!bssid) return 0;
+    uint8_t mask = 0;
+    portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
-            uint8_t m = 0;
-            if (s_hs[i].haveAnonce)  m |= 0x01; // M1
-            if (s_hs[i].haveM2)      m |= 0x02; // M2
-            if (s_hs[i].haveAnonce3) m |= 0x04; // M3
-            if (s_hs[i].haveM4)      m |= 0x08; // M4
-            return m;
+            if (s_hs[i].haveAnonce)  mask |= 0x01; // M1
+            if (s_hs[i].haveM2)      mask |= 0x02; // M2
+            if (s_hs[i].haveAnonce3) mask |= 0x04; // M3
+            if (s_hs[i].haveM4)      mask |= 0x08; // M4
+            break;
         }
     }
-    return 0;
+    portEXIT_CRITICAL(&s_hsMux);
+    return mask;
 }
 
 bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
@@ -464,12 +496,14 @@ bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
 
 void feed(const uint8_t* frame, uint16_t len) {
     if (!frame || len < 24) return;
+    portENTER_CRITICAL(&s_hsMux);
     uint8_t type = (frame[0] >> 2) & 0x03;
     if (type == 0) {
         uint8_t subtype = (frame[0] >> 4) & 0x0F;
         if (subtype == 8 || subtype == 5) parseBeacon(frame, len);
         else if (subtype == 1) parseAssoc(frame, len);
     } else if (type == 2) parseEapol(frame, len);
+    portEXIT_CRITICAL(&s_hsMux);
 }
 
 uint16_t convertPcap(const char* pcapPath) {

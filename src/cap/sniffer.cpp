@@ -28,7 +28,7 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 1024;
-static const uint8_t  RING_SLOTS = 12;
+static const uint8_t  RING_SLOTS = 24;
 static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
@@ -93,6 +93,7 @@ static const uint8_t BEACON_SLOTS = 16;
 // method_ctx.h) so the capture methods can read it without depending on
 // sniffer.cpp's internals.
 static BeaconSlot s_beacons[BEACON_SLOTS];
+static portMUX_TYPE s_beaconMux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t s_beaconCount = 0;
 static uint8_t s_beaconClock = 0;
 
@@ -272,6 +273,7 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
     for (uint8_t i = 0; i < s_beaconCount; i++) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) return &s_beacons[i];
     }
+
     return nullptr;
 }
 
@@ -300,22 +302,31 @@ static void setMethodTag() {
 static void noteClient(const uint8_t* bssid, const uint8_t* sta) {
     if (!bssid || !sta) return;
     if (sta[0] & 0x01) return;
+    portENTER_CRITICAL(&s_beaconMux);
     BeaconSlot* b = findBeacon(bssid);
-    if (!b) return;
+    if (!b) {
+        portEXIT_CRITICAL(&s_beaconMux);
+        return;
+    }
     // Linear-scan dedup against the live client count, not the hard cap.
     // Cheap (20 * memcmp(6B) worst case) and correct even after rollover.
     uint8_t cap = (uint8_t)(sizeof(b->clients) / sizeof(b->clients[0]));
     for (uint8_t i = 0; i < b->clientN; i++) {
-        if (memcmp(b->clients[i], sta, 6) == 0) return;
+        if (memcmp(b->clients[i], sta, 6) == 0) {
+            portEXIT_CRITICAL(&s_beaconMux);
+            return;
+        }
     }
     if (b->clientN < cap) {
         memcpy(b->clients[b->clientN], sta, 6);
         b->clientN++;
+        portEXIT_CRITICAL(&s_beaconMux);
         return;
     }
     // Pool full - LRU-ish eviction by clock counter so we don't churn the
     // same four slots forever in a busy room.
     memcpy(b->clients[s_beaconClock % cap], sta, 6);
+    portEXIT_CRITICAL(&s_beaconMux);
 }
 
 static bool hopLocked() {
@@ -434,6 +445,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     if (len > BEACON_MAX) len = BEACON_MAX;
     char ssid[33];
     CapName::ssidFromMgmt(f, len, ssid);
+    portENTER_CRITICAL(&s_beaconMux);
     for (uint8_t i = 0; i < s_beaconCount; i++) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) {
             memcpy(s_beacons[i].frame, f, len);
@@ -465,6 +477,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             } else if (!hopLocked()) {
                 noteNetwork(bssid, s_beacons[i].ssid, false);
             }
+            portEXIT_CRITICAL(&s_beaconMux);
             return;
         }
     }
@@ -484,6 +497,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
     Hc22000::feed(f, len);
+    portEXIT_CRITICAL(&s_beaconMux);
 }
 
 // Strict EAPOL-Key detector. Hc22000 remains the authority for the
@@ -1126,9 +1140,14 @@ static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest) 
 }
 
 static Methods::Ctx buildMethodCtx() {
+    static BeaconSlot methodBeacons[BEACON_SLOTS];
     Methods::Ctx ctx{};
-    ctx.beacons      = s_beacons;
-    ctx.beaconCount   = s_beaconCount;
+    portENTER_CRITICAL(&s_beaconMux);
+    uint8_t beaconCount = s_beaconCount;
+    memcpy(methodBeacons, s_beacons, sizeof(methodBeacons));
+    portEXIT_CRITICAL(&s_beaconMux);
+    ctx.beacons      = methodBeacons;
+    ctx.beaconCount   = beaconCount;
     ctx.channel       = s_cnt.currentChannel;
     ctx.minRssi       = s_minRssi;
     ctx.kickBurst     = s_kickBurst;
@@ -1486,6 +1505,7 @@ bool skipCurrent() {
     // Drop this AP from the live beacon table so scoring methods cannot
     // rediscover it until a fresh beacon arrives — and even then
     // isSessionSkipped() still blocks kick/lock/pcap for the session.
+    portENTER_CRITICAL(&s_beaconMux);
     for (uint8_t i = 0; i < s_beaconCount; ) {
         if (memcmp(s_beacons[i].bssid, t, 6) == 0) {
             if (i + 1 < s_beaconCount) {
@@ -1497,6 +1517,7 @@ bool skipCurrent() {
         }
         i++;
     }
+    portEXIT_CRITICAL(&s_beaconMux);
     // Next hop ASAP — don't stay parked on the skipped AP's channel.
     s_lastHopMs = 0;
 
