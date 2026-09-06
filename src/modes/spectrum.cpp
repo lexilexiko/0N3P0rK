@@ -127,6 +127,13 @@ static void cycleHuntDepth() {
 }
 
 static int8_t s_cliSel = 0;
+static bool s_hsSeenLock = false; // one-shot "saw EAPOL while just watching" flag for LOCK
+// Set from onData() (WiFi promiscuous callback context) when EAPOL shows up
+// during LOCK; consumed from update() (main loop() context) to actually
+// call enterHunt() — that touches the radio (Cap::startPinned() does
+// WiFi.softAP/esp_wifi_set_promiscuous_rx_cb/etc.), which must never be
+// called reentrantly from inside the WiFi stack's own RX callback.
+static volatile bool s_autoHuntPending = false;
 static uint8_t s_cliScroll = 0;
 static bool s_reveal = false;
 static uint32_t s_revealT0 = 0;
@@ -382,6 +389,31 @@ static void onData(const uint8_t* p, uint16_t len, int8_t rssi) {
     else if (!toDs && !fromDs) {
         if (macEq(a3, s_monBssid)) trackCli(a3, a2, rssi);
     }
+
+    // LOCK still runs our own onRx — nothing feeds Hc22000 until HUNT
+    // hands the radio to Cap::. Without this, a client reconnecting right
+    // after a test kick() produces a real handshake that nobody's
+    // watching for, and it's gone by the time you commit to HUNT.
+    // Detection only: this can't persist to a pcap by itself (that needs
+    // Cap::'s own writer, only running during HUNT) — it just tells you
+    // it's worth pressing ENT to hunt+save before the moment passes.
+    if (!(toDs ^ fromDs)) return; // EAPOL only ever travels AP<->STA
+    if (!macEq(a1, s_monBssid) && !macEq(a2, s_monBssid) && !macEq(a3, s_monBssid)) return;
+    uint16_t bodyOff = 24;
+    bool isQos = (p[0] & 0x80) != 0;
+    if (isQos) bodyOff += 2;
+    if (isQos && (p[1] & 0x80)) bodyOff += 4; // HT Control (Order bit)
+    if (bodyOff + 8 > len) return;
+    bool eapol = p[bodyOff] == 0xAA && p[bodyOff + 1] == 0xAA && p[bodyOff + 2] == 0x03 &&
+                 p[bodyOff + 6] == 0x88 && p[bodyOff + 7] == 0x8E;
+    if (!eapol) return;
+    Hc22000::feed(p, len);
+    if (!s_hsSeenLock) {
+        s_hsSeenLock = true;
+        Display::showToast("EAPOL seen - hunting...");
+        SFX::play(SFX::MENU_CLICK);
+        s_autoHuntPending = true;
+    }
 }
 
 static void onRx(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -497,6 +529,8 @@ static void enterLock() {
     s_cliScroll = 0;
     s_reveal = false;
     s_phase = LOCK;
+    s_hsSeenLock = false;
+    s_autoHuntPending = false;
     esp_wifi_set_channel(s_monCh, WIFI_SECOND_CHAN_NONE);
     s_ch = s_monCh;
     s_busy = false;
@@ -508,6 +542,7 @@ static void enterLock() {
 static void exitLock() {
     s_busy = true;
     s_reveal = false;
+    s_hsSeenLock = false;
     s_phase = SWEEP;
     memset(s_monBssid, 0, 6);
     s_busy = false;
@@ -1076,6 +1111,14 @@ void update() {
         if (Avatar::isSceneSuspended()) Avatar::resumeScene();
     } else {
         if (!Avatar::isSceneSuspended()) Avatar::suspendScene();
+    }
+
+    // Deferred from onData() (WiFi promiscuous callback context) — safe
+    // here since this is the same main-loop context a manual ENT already
+    // calls enterHunt() from.
+    if (s_autoHuntPending) {
+        s_autoHuntPending = false;
+        if (s_phase == LOCK) enterHunt();
     }
 
     if (s_phase == HUNT) {

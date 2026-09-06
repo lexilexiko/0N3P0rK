@@ -27,7 +27,7 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 
 namespace Cap {
 
-static const uint16_t FRAME_MAX = 512;
+static const uint16_t FRAME_MAX = 1024;
 static const uint8_t  RING_SLOTS = 12;
 static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
 static const uint16_t MAX_FILES = 200;
@@ -54,6 +54,15 @@ static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
+// True once a Beacon has actually been written into the currently-open
+// file. openFileForBssid() only has a shot at writing one if a beacon
+// happens to be cached (16 slots, evicted round-robin) at the exact instant
+// the file is created — on a channel with >16 visible APs that's often not
+// the case, and a pcap with EAPOL but no Beacon has no ESSID: hashcat/
+// hcxpcapngtool/wpa-sec can't derive a hash from it at all ("bad file").
+// writeFrameToFile() backfills a beacon the moment one becomes available,
+// however late, so this only ever needs to happen once per file-open span.
+static bool     s_fileHasBeacon = false;
 // One-shot log dedup for the "file is already at MAX_FILE_SIZE" branch
 // in openFileForBssid() — without this, the Serial would see one
 // "[CAP] full" line per EAPOL frame, drowning out useful output. Reset
@@ -477,6 +486,38 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     Hc22000::feed(f, len);
 }
 
+// Strict EAPOL-Key detector. Hc22000 remains the authority for the
+// actual handshake state; this only prevents bogus/non-EAPOL frames from
+// entering the PCAP pipeline.
+static bool isValidEapolKey(const uint8_t* f, uint16_t len, uint16_t bodyOff) {
+    if (!f || bodyOff + 8 + 4 + 1 > len) return false;
+
+    // LLC/SNAP: AA AA 03 00 00 00 88 8E
+    if (f[bodyOff + 0] != 0xAA ||
+        f[bodyOff + 1] != 0xAA ||
+        f[bodyOff + 2] != 0x03 ||
+        f[bodyOff + 3] != 0x00 ||
+        f[bodyOff + 4] != 0x00 ||
+        f[bodyOff + 5] != 0x00 ||
+        f[bodyOff + 6] != 0x88 ||
+        f[bodyOff + 7] != 0x8E) return false;
+
+    const uint16_t e = bodyOff + 8;
+    const uint8_t version = f[e + 0];
+    const uint8_t type = f[e + 1];
+    const uint16_t plen = ((uint16_t)f[e + 2] << 8) | f[e + 3];
+
+    if (version == 0 || version > 2) return false;
+    if (type != 3) return false;                 // EAPOL-Key
+    if (plen < 95) return false;                 // fixed EAPOL-Key body
+    if ((uint32_t)e + 4u + plen > len) return false;
+
+    const uint8_t descriptor = f[e + 4];
+    if (descriptor != 1 && descriptor != 2) return false; // WPA / RSN
+
+    return true;
+}
+
 static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
     const wifi_promiscuous_pkt_t* pkt = (const wifi_promiscuous_pkt_t*)buf;
     if (!pkt || !s_running) return;
@@ -529,18 +570,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
 
     if (bssid && station) noteClient(bssid, station);
 
-    bool eapol = false;
-    if (bodyOff + 8 <= len &&
-        f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA && f[bodyOff + 2] == 0x03 &&
-        f[bodyOff + 6] == 0x88 && f[bodyOff + 7] == 0x8E) {
-        eapol = true;
-    }
-    if (!eapol) {
-        uint16_t lim = len;
-        for (uint16_t i = bodyOff; i + 1 < lim; i++) {
-            if (f[i] == 0x88 && f[i + 1] == 0x8E) { eapol = true; break; }
-        }
-    }
+    const bool eapol = isValidEapolKey(f, len, bodyOff);
     // DATA ACT (RADIO): count non-EAPOL data toward BeaconSlot::dataRecent
     // so FOCUS can score real traffic instead of beacon-only activity.
     if (!eapol && s_dataAct && bssid) {
@@ -598,7 +628,10 @@ static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX])
     snprintf(out, Storage::FILE_NAME_MAX, "%s.pcap", stem);
 }
 
+static void closeFile();  // defined below; writePcapPacket() closes on a short write
+
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
+    if (!s_file) return false;
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
     uint8_t rtLen = Pcap::buildRadiotap(rt, ch ? ch : s_cnt.currentChannel, rssi, s_fatPcap);
     Pcap::PacketHeader ph;
@@ -606,26 +639,125 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.tsUsec  = (ts % 1000) * 1000;
     ph.inclLen = rtLen + flen;
     ph.origLen = ph.inclLen;
-    size_t n = 0;
-    n += s_file.write((uint8_t*)&ph, sizeof(ph));
-    n += s_file.write(rt, rtLen);
-    n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
-    if (n != expect) return false;
+
+    // One write() call instead of three. flen is capped at FRAME_MAX (1024)
+    // and rtLen at RADIOTAP_FAT_LEN (16), so the whole packet is at most
+    // ~544 bytes here — comfortably stack-sized. This isn't a filesystem
+    // transaction (a single write can still land partially), but it
+    // removes the far likelier failure mode of three separate write()
+    // calls where anything going wrong between calls 1/2/3 guarantees a
+    // torn packet; one call either writes the whole thing or it doesn't.
+    uint8_t buf[sizeof(ph) + Pcap::RADIOTAP_FAT_LEN + FRAME_MAX];
+    memcpy(buf, &ph, sizeof(ph));
+    memcpy(buf + sizeof(ph), rt, rtLen);
+    memcpy(buf + sizeof(ph) + rtLen, frame, flen);
+
+    size_t n = s_file.write(buf, expect);
+    if (n != expect) {
+        // Whatever DID land on disk before the short write is now a torn,
+        // undersized trailing "packet" whose inclLen/origLen claim a
+        // length that was never fully written — and there's no truncate()
+        // on Arduino-ESP32's File to cut it back off. Closing the file
+        // here is the next best thing: it forces openFileForBssid() to
+        // re-derive s_fileSize from the card's real on-disk size next
+        // time (via s_file.size()) instead of trusting our own in-memory
+        // counter, which is the thing that would otherwise drift out of
+        // sync with reality after a short write like this one.
+        closeFile();
+        return false;
+    }
     s_fileSize += expect;
+    // No flush() here on purpose: drainRing() (loop() context, runs every
+    // tick) already does `if (s_fileOpen) s_file.flush();` once after
+    // draining everything queued for that tick. A second, independent
+    // "every N packets" flush in here doesn't shorten the data-loss window
+    // any further — that per-tick flush already bounds it to "whatever
+    // arrived in one loop iteration" — and during a burst bigger than N it
+    // would fire MORE flushes than the per-tick one alone, i.e. more SD
+    // writes during exactly the moments you'd most want fewer.
     return true;
 }
 
 static void closeFile() {
-    if (s_fileOpen) {
+    // Check the actual handle, not just the flag — s_fileOpen getting out of
+    // sync with reality (it used to never be set at all, see below) must
+    // never leave a stale SD handle open underneath us.
+    if (s_file) {
         s_file.flush();
         s_file.close();
-        s_fileOpen = false;
     }
+    s_fileOpen = false;
 }
 
+// Beacon (if this file has one at all) is always the very first packet
+// written after the 24-byte pcap header — openFileForBssid() writes it,
+// if at all, before returning, and only after that does writeFrameToFile()
+// append the frame that triggered this open. So "does this file already
+// have a Beacon" reduces to "peek at the FC byte of packet #1" — no need
+// to scan the whole file. Same fc==0x80 (Beacon) / fc==0x50 (Probe Resp)
+// check promiscuousRxCb() uses to decide what counts as beacon-like in
+// the first place.
+static bool scanPcapForBeacon(const char* path) {
+    File f = SD.open(path, "r");
+    if (!f) return false;
+
+    const size_t fileSize = f.size();
+    if (fileSize < 24) {
+        f.close();
+        return false;
+    }
+
+    // Scan every packet. A Beacon can be backfilled after EAPOL,
+    // so checking only packet #1 is not sufficient.
+    size_t pos = 24;
+    while (pos + sizeof(Pcap::PacketHeader) <= fileSize) {
+        if (!f.seek(pos))
+            break;
+
+        Pcap::PacketHeader ph{};
+        if (f.read(reinterpret_cast<uint8_t*>(&ph), sizeof(ph)) != sizeof(ph))
+            break;
+
+        const size_t inclLen = ph.inclLen;
+        const size_t packetData = pos + sizeof(Pcap::PacketHeader);
+
+        if (inclLen < 4 || packetData > fileSize ||
+            inclLen > fileSize - packetData)
+            break;
+
+        uint8_t rt[4];
+        if (f.read(rt, sizeof(rt)) != sizeof(rt))
+            break;
+
+        const uint16_t rtLen =
+            static_cast<uint16_t>(rt[2] |
+                                  (static_cast<uint16_t>(rt[3]) << 8));
+
+        if (rtLen < 8 || rtLen > inclLen || rtLen > 256)
+            break;
+
+        if (!f.seek(packetData + rtLen))
+            break;
+
+        uint8_t fc[2];
+        if (f.read(fc, sizeof(fc)) != sizeof(fc))
+            break;
+
+        // Beacon: 0x80. Probe Response: 0x50.
+        if (fc[0] == 0x80 || fc[0] == 0x50) {
+            f.close();
+            return true;
+        }
+
+        pos = packetData + inclLen;
+    }
+
+    f.close();
+    return false;
+}
 static bool openFileForBssid(const uint8_t* bssid) {
-    if (s_fileOpen) closeFile();
+    closeFile(); // always — closeFile() itself is a no-op if nothing's open
 
     Storage::Stats st = Storage::stats();
     char name[Storage::FILE_NAME_MAX];
@@ -664,6 +796,30 @@ static bool openFileForBssid(const uint8_t* bssid) {
             SD.remove(path);
             exists = false;
             preSize = 0;
+        } else if (preSize >= sizeof(Pcap::FileHeader)) {
+            // Large-but-invalid: wrong magic (half-written header, torn
+            // write, whatever). Quarantine instead of appending garbage
+            // after a broken header, or refusing this BSSID forever.
+            File chk = SD.open(path, "r");
+            uint32_t magic = 0;
+            if (chk && chk.read((uint8_t*)&magic, 4) == 4) {
+                chk.close();
+                bool okMagic = (magic == 0xA1B2C3D4u || magic == 0xD4C3B2A1u ||
+                                magic == 0xA1B23C4Du || magic == 0x4D3CB2A1u);
+                if (!okMagic) {
+                    char bad[96];
+                    snprintf(bad, sizeof(bad), "%s.bad", path);
+                    SD.remove(bad);
+                    if (SD.rename(path, bad))
+                        Serial.printf("[CAP] quarantine bad magic -> %s\n", bad);
+                    else
+                        SD.remove(path);
+                    exists = false;
+                    preSize = 0;
+                }
+            } else if (chk) {
+                chk.close();
+            }
         }
     }
     if (!exists && st.handshakes >= MAX_FILES) {
@@ -714,6 +870,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
             return false;
         }
         s_fileSize = sizeof(fh);
+        s_file.flush(); // size visible to any later probe; header durable
         s_cnt.filesOpened++;
         createdNew = true;
         XP::addXP(XPEvent::HANDSHAKE);
@@ -728,9 +885,28 @@ static bool openFileForBssid(const uint8_t* bssid) {
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, name, ssid);
 
     const BeaconSlot* bcn = findBeacon(bssid);
-    if (bcn && (createdNew || s_fileSize < 80)) {
-        writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi);
-        Hc22000::feed(bcn->frame, bcn->len);
+    if (createdNew || s_fileSize < 80) {
+        // Empty/near-empty file: no packet has been written into it yet
+        // (in this session or any prior one) for a Beacon to have landed
+        // in, so it's safe to just try writing one now if we have it.
+        s_fileHasBeacon = false;
+        if (bcn) {
+            if (writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi)) {
+                Hc22000::feed(bcn->frame, bcn->len);
+                s_fileHasBeacon = true;
+            }
+        }
+    } else {
+        // Re-opening an existing, already-populated file (a prior session
+        // for this same BSSID that got interrupted by another AP's frame
+        // interleaving — see the comment on appending, above). s_fileHasBeacon
+        // is only ever an in-memory flag for the CURRENT open span; it says
+        // nothing about whether a Beacon already made it into this file
+        // during an earlier open. Assuming "no" here (the old behavior)
+        // meant writeFrameToFile()'s backfill would cheerfully append a
+        // second Beacon into a file that already had one. Probe the actual
+        // first packet on disk instead of guessing.
+        s_fileHasBeacon = scanPcapForBeacon(path);
     }
     return true;
 }
@@ -771,6 +947,18 @@ static void writeFrameToFile(const Slot& s) {
     }
     s_cnt.framesWritten++;
     Hc22000::feed(s.frame, s.len);
+    // Backfill a Beacon the moment one is cached for this BSSID, however
+    // late — without it this pcap has no ESSID and nothing (hashcat,
+    // hcxpcapngtool, wpa-sec) can turn the EAPOL data into a crackable hash.
+    if (!s_fileHasBeacon) {
+        const BeaconSlot* bcn = findBeacon(s.bssid);
+        if (bcn && bcn->len > 0) {
+            if (writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi)) {
+                Hc22000::feed(bcn->frame, bcn->len);
+                s_fileHasBeacon = true;
+            }
+        }
+    }
     memcpy(s_kickBssid, s.bssid, 6);
     memcpy(s_kickSta, s.station, 6);
     s_kickStaOk = (s.station[0] & 0x01) == 0;
@@ -844,9 +1032,18 @@ static void processPendingSsidLearn() {
     ph.tsUsec  = (ts % 1000) * 1000;
     ph.inclLen = (uint32_t)(rtLen + b->len);
     ph.origLen = ph.inclLen;
-    f.write((uint8_t*)&ph, sizeof(ph));
-    f.write(rt, rtLen);
-    f.write(b->frame, b->len);
+    const size_t expect = sizeof(ph) + rtLen + b->len;
+    uint8_t buf[sizeof(ph) + Pcap::RADIOTAP_FAT_LEN + FRAME_MAX];
+    memcpy(buf, &ph, sizeof(ph));
+    memcpy(buf + sizeof(ph), rt, rtLen);
+    memcpy(buf + sizeof(ph) + rtLen, b->frame, b->len);
+
+    const size_t n = f.write(buf, expect);
+    if (n != expect) {
+        f.close();
+        return;
+    }
+    f.flush();
     f.close();
 }
 
