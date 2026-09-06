@@ -20,6 +20,7 @@
 #include <SD.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
     return 0;
@@ -642,6 +643,9 @@ static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX])
     snprintf(out, Storage::FILE_NAME_MAX, "%s.pcap", stem);
 }
 
+static bool persistFileMeta(const char* path, size_t fileSize);
+static size_t loadFileMeta(const char* path, bool* ok);
+static bool quarantineFile(const char* path);
 static void closeFile();  // defined below; writePcapPacket() closes on a short write
 
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
@@ -679,17 +683,21 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
         // counter, which is the thing that would otherwise drift out of
         // sync with reality after a short write like this one.
         closeFile();
+        char path[96];
+        snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
+        quarantineFile(path);
         return false;
     }
     s_fileSize += expect;
-    // No flush() here on purpose: drainRing() (loop() context, runs every
-    // tick) already does `if (s_fileOpen) s_file.flush();` once after
-    // draining everything queued for that tick. A second, independent
-    // "every N packets" flush in here doesn't shorten the data-loss window
-    // any further — that per-tick flush already bounds it to "whatever
-    // arrived in one loop iteration" — and during a burst bigger than N it
-    // would fire MORE flushes than the per-tick one alone, i.e. more SD
-    // writes during exactly the moments you'd most want fewer.
+    if (s_fileName[0]) {
+        char path[96];
+        snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
+        persistFileMeta(path, s_fileSize);
+    }
+    // Explicit flush is now the file-close boundary rather than an ad hoc
+    // per-packet side effect. This keeps the write path consistent: one
+    // complete packet -> one durable append -> one offset checkpoint.
+    s_file.flush();
     return true;
 }
 
@@ -699,6 +707,11 @@ static void closeFile() {
     // never leave a stale SD handle open underneath us.
     if (s_file) {
         s_file.flush();
+        if (s_fileName[0]) {
+            char path[96];
+            snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
+            persistFileMeta(path, s_fileSize);
+        }
         s_file.close();
     }
     s_fileOpen = false;
@@ -770,6 +783,57 @@ static bool scanPcapForBeacon(const char* path) {
     f.close();
     return false;
 }
+
+static bool quarantineFile(const char* path) {
+    if (!path || !*path) return false;
+    char bad[96];
+    snprintf(bad, sizeof(bad), "%s.bad", path);
+    SD.remove(bad);
+    if (SD.rename(path, bad)) {
+        Serial.printf("[CAP] quarantine %s -> %s\n", path, bad);
+        char meta[96];
+        snprintf(meta, sizeof(meta), "%s.meta", path);
+        SD.remove(meta);
+        return true;
+    }
+    SD.remove(path);
+    char meta[96];
+    snprintf(meta, sizeof(meta), "%s.meta", path);
+    SD.remove(meta);
+    return false;
+}
+
+static bool persistFileMeta(const char* path, size_t fileSize) {
+    if (!path || !*path) return false;
+    char meta[96];
+    snprintf(meta, sizeof(meta), "%s.meta", path);
+    File f = SD.open(meta, FILE_WRITE);
+    if (!f) return false;
+    char tmp[16];
+    snprintf(tmp, sizeof(tmp), "%u", (unsigned)fileSize);
+    const size_t len = strlen(tmp);
+    bool ok = (f.write(reinterpret_cast<const uint8_t*>(tmp), len) == len);
+    f.flush();
+    f.close();
+    return ok;
+}
+
+static size_t loadFileMeta(const char* path, bool* ok) {
+    if (ok) *ok = false;
+    if (!path || !*path) return 0;
+    char meta[96];
+    snprintf(meta, sizeof(meta), "%s.meta", path);
+    File f = SD.open(meta, FILE_READ);
+    if (!f) return 0;
+    char tmp[16] = {};
+    const size_t n = f.read(reinterpret_cast<uint8_t*>(tmp), sizeof(tmp) - 1);
+    f.close();
+    if (n == 0) return 0;
+    tmp[n] = '\0';
+    if (ok) *ok = true;
+    return strtoul(tmp, nullptr, 10);
+}
+
 static bool openFileForBssid(const uint8_t* bssid) {
     closeFile(); // always — closeFile() itself is a no-op if nothing's open
 
@@ -836,6 +900,16 @@ static bool openFileForBssid(const uint8_t* bssid) {
             }
         }
     }
+    bool metaOk = false;
+    size_t metaSize = loadFileMeta(path, &metaOk);
+    if (metaOk && preSize >= sizeof(Pcap::FileHeader) && metaSize > preSize) {
+        Serial.printf("[CAP] stale offset %u > on-disk %u, quarantining %s\n",
+                      (unsigned)metaSize, (unsigned)preSize, name);
+        quarantineFile(path);
+        exists = false;
+        preSize = 0;
+        metaSize = 0;
+    }
     if (!exists && st.handshakes >= MAX_FILES) {
         Serial.println("[CAP] handshake cap (200 files) reached");
         return false;
@@ -885,6 +959,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
         }
         s_fileSize = sizeof(fh);
         s_file.flush(); // size visible to any later probe; header durable
+        persistFileMeta(path, s_fileSize);
         s_cnt.filesOpened++;
         createdNew = true;
         XP::addXP(XPEvent::HANDSHAKE);
