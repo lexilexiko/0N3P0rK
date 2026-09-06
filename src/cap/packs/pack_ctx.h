@@ -1,5 +1,5 @@
 // Interface for the "Pack" registry (Radio menu's PACK item + bottom bar's
-// P: tag). Mirrors src/cap/methods/method_ctx.h's plug-and-play pattern
+// P: tag). Mirrors src/cap/pack presets only (no methods)'s plug-and-play pattern
 // exactly, but for named general-radio knob bundles instead of capture
 // algorithms.
 //

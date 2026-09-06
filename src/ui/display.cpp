@@ -606,9 +606,9 @@ void Display::drawBottomBar() {
             }
         }
         // Compact method letter: ALL/CLIENTS/FOCUS/HERD (+ AUTO)
-        const char* mtag = c.methodTag[0] ? c.methodTag : "ALL";
+        const char* mtag = c.methodTag[0] ? c.methodTag : "CAP";
         char methCh = mtag[0] ? mtag[0] : '?';
-        if (!strcmp(mtag, "ALL"))          methCh = 'A';
+        if (!strcmp(mtag, "CAP"))          methCh = 'A';
         else if (!strcmp(mtag, "CLIENTS")) methCh = 'C';
         else if (!strcmp(mtag, "FOCUS"))   methCh = 'F';
         else if (!strcmp(mtag, "HERD"))    methCh = 'H';
@@ -624,6 +624,13 @@ void Display::drawBottomBar() {
                  methCh,
                  (unsigned)hsN,
                  (unsigned)c.currentChannel);
+        if (Config::radio().showDrops) {
+            char dbuf[16];
+            snprintf(dbuf, sizeof(dbuf), " D%u", (unsigned)c.framesDropped);
+            size_t used = strlen(rightName);
+            if (used + strlen(dbuf) < sizeof(rightName))
+                strlcat(rightName, dbuf, sizeof(rightName));
+        }
     } else if (bottomHint[0]) {
         strncpy(left, bottomHint, sizeof(left) - 1);
     } else {

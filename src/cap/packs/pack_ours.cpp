@@ -1,4 +1,4 @@
-// "SOFT" pack — light/quiet tuning paired with the ALL capture method.
+// "ALL" pack — light/quiet tuning paired with the ALL capture method.
 // Minimal TX: broadcast kick only, no bidir/EAPOL/PMKID/CSA. FOCUS extras
 // stay off (ALL does not score); strict lock still on so if a handshake
 // starts we do not wander.
@@ -26,7 +26,7 @@ static const Preset kOursPreset{
     /* depthHoldSec  */ 0,
 };
 
-CAP_PACK_REGISTER(ours, "SOFT", "ALL", kOursPreset)
+CAP_PACK_REGISTER(ours, "ALL", nullptr, kOursPreset)
 
 } // namespace Packs
 } // namespace Cap

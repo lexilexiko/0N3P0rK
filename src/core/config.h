@@ -81,44 +81,14 @@ struct PersonalityConfig {
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };
 static const uint8_t HOP_SET_COUNT = 3;
 
-// OURS = current greedy EAPOL + broadcast kick
-// PAN  = extra stack (bidir kick, EAPOL-Start, PMKID probe, optional CSA/flood)
-// AUTO = OURS first, then PAN if no pair lands
-//
-// The enum values are the on-disk format for the radio.hsMethod byte:
-//   0      -> AUTO (special, not a real method)
-//   1..N   -> Methods::name(idx - 1) from cap/methods/method_registry.cpp
-// Adding a new method no longer requires touching this enum — just add a
-// row to METHOD_LIST() in method_ctx.h and the new entry shows up in the
-// radio settings UI at the next index. Values written by older firmware
-// (OURS=1, PAN=2) keep resolving to the same name because the first two
-// registry rows are still OURS and PAN in that order.
-enum class HsMethod : uint8_t { AUTO = 0, OURS = 1, PAN = 2 };
-// Runtime count for the UI is 1 + Cap::Methods::count(); see
-// HS_METHOD_COUNT below. Use HS_METHOD_COUNT for legacy code that needs a
-// constexpr upper bound (the registry isn't visible from config.h).
-static const uint8_t HS_METHOD_COUNT_MAX = 8;
+// Capture methods (OURS/PAN/FOCUS/...) removed — Light/Aggro + knobs only.
+// Packs = preset knobs. PRO radio page = write/debug fine-tuning.
 
-// pack on-disk layout (RadioConfig::pack byte) mirrors hsMethod above, but
-// walks the independent Cap::Packs table (cap/packs/), not the Methods one:
-//   0      -> STOCK  (factory-default knobs, hsMethod left on AUTO)
-//   1..N   -> Cap::Packs::table()[idx-1] - a named knob bundle that can
-//              point at any capture method by name (or none, for AUTO).
-//              Dropping a pack_yourname.cpp file into src/cap/packs/ (see
-//              its README.md) adds a new numbered slot here automatically,
-//              same plug-and-play pattern as capture methods.
-//   0xFF   -> CUSTOM (fixed sentinel, deliberately NOT N+1 - if it were
-//              N+1 it would silently mean a different thing after a
-//              firmware update that adds/removes a pack; a fixed byte
-//              keeps a saved CUSTOM pack CUSTOM forever)
-enum class RadioPack : uint8_t { STOCK = 0, CUSTOM = 0xFF };
-static const uint8_t RADIO_PACK_CUSTOM = 0xFF;
-// Sanity-clamp bound for NVS load, same role as HS_METHOD_COUNT_MAX above
-// (the Packs registry isn't visible from config.h either).
-static const uint8_t RADIO_PACK_COUNT_MAX = 8;
+// Legacy NVS clamp only (methods removed).
+static const uint8_t HS_METHOD_COUNT_MAX = 16;
 
-// Knobs for LIGHT / AGGRO / EVILPIG — same code, different tune.
 struct RadioConfig {
+
     uint16_t hopMs = 300;      // 50..2000 channel dwell
     uint16_t lockMs = 8000;    // stay on channel after EAPOL (0 = never)
     bool lockOnHs = true;
@@ -126,7 +96,7 @@ struct RadioConfig {
     bool randomMac = false;
     int8_t minRssi = -85;      // skip weaker APs for kick
     uint8_t hopSet = 0;        // HopSet: ALL / PRI / 1-6-11
-    uint8_t hsMethod = 0;      // HsMethod AUTO / OURS / PAN
+    uint8_t hsMethod = 0;      // DEPRECATED unused (NVS compat, always 0)
     uint8_t fallbackSec = 25;  // AUTO: seconds before trying the other method
     uint8_t kickBurst = 2;     // deauth/disassoc rounds per AP
     bool bidirKick = true;     // also spoof client -> AP
@@ -166,7 +136,34 @@ struct RadioConfig {
     // if no further EAPOL refreshes the normal lockMs deadline.
     // 0 = off (release on normal lockMs / hasHandshake only).
     uint8_t depthHoldSec = 0;
+    // ----- PRO: capture write / ring (sniffer v2) -----------------------
+    // Ring depth in the Wi-Fi callback path (compile max 32). Higher =
+    // fewer drops under load, more RAM.
+    uint8_t ringSlots = 12;     // 8..32
+    // Flush SD every N successful packet writes (1 = every packet).
+    uint8_t flushEvery = 8;     // 1..32
+    // Retry count if a single write returns short (0 = no retry).
+    uint8_t writeRetry = 1;     // 0..3
+    // On open: refuse / quarantine if magic is not classic pcap.
+    bool magicCheck = true;
+    // After write: compare File::size() with expected s_fileSize (slower).
+    bool sizeVerify = false;
+    // Never SD.remove() a pcap that already has a full header (keep data).
+    bool protectPcap = true;
+    // Allow HIDDEN_*.pcap -> SSID_*.pcap rename when name is learned.
+    bool learnRename = true;
+    // Fold legacy name variants into preferred path on open.
+    bool migrateNames = true;
+    // PRO debug
+    bool logSd = false;      // extra Serial [CAP] lines
+    bool showDrops = false;  // bottom bar shows framesDropped
 };
+
+
+
+
+
+
 
 struct BleConfig {
     uint16_t burstMs = 200;    // 50..500 between bursts

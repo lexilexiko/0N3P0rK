@@ -28,7 +28,7 @@ static const Preset kPorkchopPreset{
     /* depthHoldSec  */ 8,      // hold after pair to collect M3/M4
 };
 
-CAP_PACK_REGISTER(porkchop, "FOCUS", "FOCUS", kPorkchopPreset)
+CAP_PACK_REGISTER(porkchop, "FOCUS", nullptr, kPorkchopPreset)
 
 } // namespace Packs
 } // namespace Cap
