@@ -291,7 +291,11 @@ static void setMethodTag() {
     else if (s_mode == RunMode::Aggressive) tag = "AGGRO";
     else if (s_mode == RunMode::Pinned) tag = "PIN";
     strncpy(s_cnt.methodTag, tag, sizeof(s_cnt.methodTag) - 1);
+<<<<<<< HEAD
     s_cnt.methodTag[sizeof(s_cnt.methodTag) - 1] = '\0';
+=======
+    s_cnt.methodTag[sizeof(s_cnt.methodTag) - 1] = ' ';
+>>>>>>> d61fdae1f5cb94eaaa5ef07e68b37a46b7ea4e7f
 }
 
 static void noteClient(const uint8_t* bssid, const uint8_t* sta) {
@@ -1315,6 +1319,7 @@ static void startCommon(RunMode mode) {
     s_strictLock = Config::radio().strictLock;
     s_depthHoldSec = Config::radio().depthHoldSec;
     if (s_depthHoldSec > 30) s_depthHoldSec = 30;
+<<<<<<< HEAD
     {
         uint8_t rs = Config::radio().ringSlots;
         if (rs < 8) rs = 8;
@@ -1333,6 +1338,27 @@ static void startCommon(RunMode mode) {
         s_write = 0;
         s_read = 0;
     }
+=======
+    }
+    {
+        uint8_t rs = Config::radio().ringSlots;
+        if (rs < 8) rs = 8;
+        if (rs > RING_SLOTS_MAX) rs = RING_SLOTS_MAX;
+        s_ringCap = rs;
+        s_flushEvery = Config::radio().flushEvery;
+        if (s_flushEvery < 1) s_flushEvery = 1;
+        if (s_flushEvery > 32) s_flushEvery = 32;
+        s_writeRetry = Config::radio().writeRetry;
+        if (s_writeRetry > 3) s_writeRetry = 3;
+        s_magicCheck = Config::radio().magicCheck;
+        s_sizeVerify = Config::radio().sizeVerify;
+        s_protectPcap = Config::radio().protectPcap;
+        s_learnRename = Config::radio().learnRename;
+        s_migrateNames = Config::radio().migrateNames;
+        s_write = 0;
+        s_read = 0;
+    }
+>>>>>>> d61fdae1f5cb94eaaa5ef07e68b37a46b7ea4e7f
 
     s_methodStartMs = millis();
     s_pairAtSwitch = Hc22000::pairCount();
