@@ -20,7 +20,6 @@
 #include <SD.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
     return 0;
@@ -29,7 +28,7 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 1024;
-static const uint8_t  RING_SLOTS = 24;
+static const uint8_t  RING_SLOTS = 12;
 static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
@@ -94,7 +93,6 @@ static const uint8_t BEACON_SLOTS = 16;
 // method_ctx.h) so the capture methods can read it without depending on
 // sniffer.cpp's internals.
 static BeaconSlot s_beacons[BEACON_SLOTS];
-static portMUX_TYPE s_beaconMux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t s_beaconCount = 0;
 static uint8_t s_beaconClock = 0;
 
@@ -274,7 +272,6 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
     for (uint8_t i = 0; i < s_beaconCount; i++) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) return &s_beacons[i];
     }
-
     return nullptr;
 }
 
@@ -303,31 +300,22 @@ static void setMethodTag() {
 static void noteClient(const uint8_t* bssid, const uint8_t* sta) {
     if (!bssid || !sta) return;
     if (sta[0] & 0x01) return;
-    portENTER_CRITICAL(&s_beaconMux);
     BeaconSlot* b = findBeacon(bssid);
-    if (!b) {
-        portEXIT_CRITICAL(&s_beaconMux);
-        return;
-    }
+    if (!b) return;
     // Linear-scan dedup against the live client count, not the hard cap.
     // Cheap (20 * memcmp(6B) worst case) and correct even after rollover.
     uint8_t cap = (uint8_t)(sizeof(b->clients) / sizeof(b->clients[0]));
     for (uint8_t i = 0; i < b->clientN; i++) {
-        if (memcmp(b->clients[i], sta, 6) == 0) {
-            portEXIT_CRITICAL(&s_beaconMux);
-            return;
-        }
+        if (memcmp(b->clients[i], sta, 6) == 0) return;
     }
     if (b->clientN < cap) {
         memcpy(b->clients[b->clientN], sta, 6);
         b->clientN++;
-        portEXIT_CRITICAL(&s_beaconMux);
         return;
     }
     // Pool full - LRU-ish eviction by clock counter so we don't churn the
     // same four slots forever in a busy room.
     memcpy(b->clients[s_beaconClock % cap], sta, 6);
-    portEXIT_CRITICAL(&s_beaconMux);
 }
 
 static bool hopLocked() {
@@ -446,7 +434,6 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     if (len > BEACON_MAX) len = BEACON_MAX;
     char ssid[33];
     CapName::ssidFromMgmt(f, len, ssid);
-    portENTER_CRITICAL(&s_beaconMux);
     for (uint8_t i = 0; i < s_beaconCount; i++) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) {
             memcpy(s_beacons[i].frame, f, len);
@@ -478,7 +465,6 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             } else if (!hopLocked()) {
                 noteNetwork(bssid, s_beacons[i].ssid, false);
             }
-            portEXIT_CRITICAL(&s_beaconMux);
             return;
         }
     }
@@ -498,7 +484,6 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
     Hc22000::feed(f, len);
-    portEXIT_CRITICAL(&s_beaconMux);
 }
 
 // Strict EAPOL-Key detector. Hc22000 remains the authority for the
@@ -643,9 +628,6 @@ static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX])
     snprintf(out, Storage::FILE_NAME_MAX, "%s.pcap", stem);
 }
 
-static bool persistFileMeta(const char* path, size_t fileSize);
-static size_t loadFileMeta(const char* path, bool* ok);
-static bool quarantineFile(const char* path);
 static void closeFile();  // defined below; writePcapPacket() closes on a short write
 
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
@@ -683,21 +665,17 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
         // counter, which is the thing that would otherwise drift out of
         // sync with reality after a short write like this one.
         closeFile();
-        char path[96];
-        snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
-        quarantineFile(path);
         return false;
     }
     s_fileSize += expect;
-    if (s_fileName[0]) {
-        char path[96];
-        snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
-        persistFileMeta(path, s_fileSize);
-    }
-    // Explicit flush is now the file-close boundary rather than an ad hoc
-    // per-packet side effect. This keeps the write path consistent: one
-    // complete packet -> one durable append -> one offset checkpoint.
-    s_file.flush();
+    // No flush() here on purpose: drainRing() (loop() context, runs every
+    // tick) already does `if (s_fileOpen) s_file.flush();` once after
+    // draining everything queued for that tick. A second, independent
+    // "every N packets" flush in here doesn't shorten the data-loss window
+    // any further — that per-tick flush already bounds it to "whatever
+    // arrived in one loop iteration" — and during a burst bigger than N it
+    // would fire MORE flushes than the per-tick one alone, i.e. more SD
+    // writes during exactly the moments you'd most want fewer.
     return true;
 }
 
@@ -707,11 +685,6 @@ static void closeFile() {
     // never leave a stale SD handle open underneath us.
     if (s_file) {
         s_file.flush();
-        if (s_fileName[0]) {
-            char path[96];
-            snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
-            persistFileMeta(path, s_fileSize);
-        }
         s_file.close();
     }
     s_fileOpen = false;
@@ -783,57 +756,6 @@ static bool scanPcapForBeacon(const char* path) {
     f.close();
     return false;
 }
-
-static bool quarantineFile(const char* path) {
-    if (!path || !*path) return false;
-    char bad[96];
-    snprintf(bad, sizeof(bad), "%s.bad", path);
-    SD.remove(bad);
-    if (SD.rename(path, bad)) {
-        Serial.printf("[CAP] quarantine %s -> %s\n", path, bad);
-        char meta[96];
-        snprintf(meta, sizeof(meta), "%s.meta", path);
-        SD.remove(meta);
-        return true;
-    }
-    SD.remove(path);
-    char meta[96];
-    snprintf(meta, sizeof(meta), "%s.meta", path);
-    SD.remove(meta);
-    return false;
-}
-
-static bool persistFileMeta(const char* path, size_t fileSize) {
-    if (!path || !*path) return false;
-    char meta[96];
-    snprintf(meta, sizeof(meta), "%s.meta", path);
-    File f = SD.open(meta, FILE_WRITE);
-    if (!f) return false;
-    char tmp[16];
-    snprintf(tmp, sizeof(tmp), "%u", (unsigned)fileSize);
-    const size_t len = strlen(tmp);
-    bool ok = (f.write(reinterpret_cast<const uint8_t*>(tmp), len) == len);
-    f.flush();
-    f.close();
-    return ok;
-}
-
-static size_t loadFileMeta(const char* path, bool* ok) {
-    if (ok) *ok = false;
-    if (!path || !*path) return 0;
-    char meta[96];
-    snprintf(meta, sizeof(meta), "%s.meta", path);
-    File f = SD.open(meta, FILE_READ);
-    if (!f) return 0;
-    char tmp[16] = {};
-    const size_t n = f.read(reinterpret_cast<uint8_t*>(tmp), sizeof(tmp) - 1);
-    f.close();
-    if (n == 0) return 0;
-    tmp[n] = '\0';
-    if (ok) *ok = true;
-    return strtoul(tmp, nullptr, 10);
-}
-
 static bool openFileForBssid(const uint8_t* bssid) {
     closeFile(); // always — closeFile() itself is a no-op if nothing's open
 
@@ -900,16 +822,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
             }
         }
     }
-    bool metaOk = false;
-    size_t metaSize = loadFileMeta(path, &metaOk);
-    if (metaOk && preSize >= sizeof(Pcap::FileHeader) && metaSize > preSize) {
-        Serial.printf("[CAP] stale offset %u > on-disk %u, quarantining %s\n",
-                      (unsigned)metaSize, (unsigned)preSize, name);
-        quarantineFile(path);
-        exists = false;
-        preSize = 0;
-        metaSize = 0;
-    }
     if (!exists && st.handshakes >= MAX_FILES) {
         Serial.println("[CAP] handshake cap (200 files) reached");
         return false;
@@ -959,7 +871,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
         }
         s_fileSize = sizeof(fh);
         s_file.flush(); // size visible to any later probe; header durable
-        persistFileMeta(path, s_fileSize);
         s_cnt.filesOpened++;
         createdNew = true;
         XP::addXP(XPEvent::HANDSHAKE);
@@ -1215,14 +1126,9 @@ static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest) 
 }
 
 static Methods::Ctx buildMethodCtx() {
-    static BeaconSlot methodBeacons[BEACON_SLOTS];
     Methods::Ctx ctx{};
-    portENTER_CRITICAL(&s_beaconMux);
-    uint8_t beaconCount = s_beaconCount;
-    memcpy(methodBeacons, s_beacons, sizeof(methodBeacons));
-    portEXIT_CRITICAL(&s_beaconMux);
-    ctx.beacons      = methodBeacons;
-    ctx.beaconCount   = beaconCount;
+    ctx.beacons      = s_beacons;
+    ctx.beaconCount   = s_beaconCount;
     ctx.channel       = s_cnt.currentChannel;
     ctx.minRssi       = s_minRssi;
     ctx.kickBurst     = s_kickBurst;
@@ -1580,7 +1486,6 @@ bool skipCurrent() {
     // Drop this AP from the live beacon table so scoring methods cannot
     // rediscover it until a fresh beacon arrives — and even then
     // isSessionSkipped() still blocks kick/lock/pcap for the session.
-    portENTER_CRITICAL(&s_beaconMux);
     for (uint8_t i = 0; i < s_beaconCount; ) {
         if (memcmp(s_beacons[i].bssid, t, 6) == 0) {
             if (i + 1 < s_beaconCount) {
@@ -1592,7 +1497,6 @@ bool skipCurrent() {
         }
         i++;
     }
-    portEXIT_CRITICAL(&s_beaconMux);
     // Next hop ASAP — don't stay parked on the skipped AP's channel.
     s_lastHopMs = 0;
 
