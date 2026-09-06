@@ -39,6 +39,7 @@ private:
     static void startSync(bool oneFile = false);
     static void startPullResults();
     static void runDiag();
+    static void runCaptureTest();
     static void deleteSelected();
     static void reloadList();
 };

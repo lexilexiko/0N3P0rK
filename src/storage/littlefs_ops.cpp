@@ -682,7 +682,7 @@ static uint8_t compactOneDir(const char* dir) {
         char name[48];
         char hex[13];
         uint32_t size;
-        int16_t score;
+        int32_t score;
     };
     Cand list[48];
     uint8_t n = 0;
@@ -695,7 +695,13 @@ static uint8_t compactOneDir(const char* dir) {
     while (f && n < 48) {
         if (!f.isDirectory()) {
             const char* name = baseName(f.name());
-            if (isLootCap(name) && !isProtectedName(name)) {
+            // Raw PCAPs are irreplaceable capture evidence. Never let the
+            // automatic loot compactor delete one; only hash artifacts are
+            // safe to deduplicate here.
+            const bool rawPcap = endsWithCI(name, ".pcap") ||
+                                 endsWithCI(name, ".pcapng") ||
+                                 endsWithCI(name, ".cap");
+            if (isLootCap(name) && !rawPcap && !isProtectedName(name)) {
                 Cand& c = list[n];
                 memset(&c, 0, sizeof(c));
                 strncpy(c.name, name, sizeof(c.name) - 1);
@@ -706,7 +712,7 @@ static uint8_t compactOneDir(const char* dir) {
                     if (CapName::metaFrom22000File(dir, name, hx, ss) && hx[0])
                         memcpy(c.hex, hx, 13);
                 }
-                c.score = (int16_t)lootScore(name, c.size);
+                c.score = (int32_t)lootScore(name, c.size);
                 if (c.hex[0]) n++;
             }
         }
