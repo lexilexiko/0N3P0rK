@@ -1,4 +1,4 @@
-// "NORMAL" pack — balanced aggressive tuning with CLIENTS method:
+// "PAN" pack — balanced aggressive tuning with CLIENTS method:
 // bidirectional kick, EAPOL-Start/Logoff, PMKID probe. Light jitter and a
 // short DEPTH HOLD so M3 has a chance after the pair lands.
 #include "pack_ctx.h"
@@ -25,7 +25,7 @@ static const Preset kPanPreset{
     /* depthHoldSec  */ 5,      // short hold after pair for late M3
 };
 
-CAP_PACK_REGISTER(pan, "NORMAL", "CLIENTS", kPanPreset)
+CAP_PACK_REGISTER(pan, "PAN", nullptr, kPanPreset)
 
 } // namespace Packs
 } // namespace Cap

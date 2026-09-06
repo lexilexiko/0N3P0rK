@@ -1,5 +1,5 @@
 // One tracked AP, shared between the orchestrator (cap/sniffer.cpp, which
-// owns the array) and every capture method in cap/methods/ (which only read
+// owns the array) and every capture method in cap/ (which only read
 // it). Moved out of sniffer.cpp so methods don't need to reach into its
 // internals to see what they're aiming at.
 #pragma once

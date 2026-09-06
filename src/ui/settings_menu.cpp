@@ -13,7 +13,6 @@
 #include "../board/led.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
-#include "../cap/methods/method_ctx.h"
 #include "../cap/packs/pack_ctx.h"
 #include "../board/board.h"
 #include "../build_info.h"
@@ -72,40 +71,57 @@ static const Item SYSTEM[] = {
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
-    {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
-    {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
-    {"RESET",     Kind::ACTION, 19, 0, 0, 0}, // stock radio — next to method
-    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
-    {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
-    {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
-    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
-    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
-    {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
-    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
-    {"REASON",    Kind::VALUE,  15, 1, 8, 1},
-    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
-    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
-    // Porkchop-style knobs. ID 20+ keeps them out of the way of the
-    // legacy IDs already on disk; legacy fields stay exactly the same
-    // bytes for backwards compatibility with saved NVS configs.
-    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},     // random ms between mgmt frames
-    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},     // seconds per-AP after kick
-    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
-    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
-    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},      // 0=PAIR 1=+M3 2=FULL
-    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
-    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
-    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
+    {"PACK",      Kind::VALUE,  18, 0, 0, 1},
+    {"PRO",       Kind::ACTION, 28, 0, 0, 0},
+    {"RESET",     Kind::ACTION, 19, 0, 0, 0},
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
     {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
-    {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
+    {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
+    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
     {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
+    {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
+    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
+
+// Fine-tune / write-lock knobs (sniffer debug surface).
+static const Item RADIO_PRO[] = {
+    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},
+    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},
+    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
+    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
+    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},
+    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},
+    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},
+    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},
+    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10},
+    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
+    {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
+    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
+    {"REASON",    Kind::VALUE,  15, 1, 8, 1},
+    {"RING N",    Kind::VALUE,  30, 8, 32, 4},
+    {"FLUSH N",   Kind::VALUE,  31, 1, 32, 1},
+    {"W RETRY",   Kind::VALUE,  32, 0, 3, 1},
+    {"MAGIC CHK", Kind::TOGGLE, 33, 0, 1, 1},
+    {"SIZE VER",  Kind::TOGGLE, 34, 0, 1, 1},
+    {"PROTECT",   Kind::TOGGLE, 35, 0, 1, 1},
+    {"LEARN REN", Kind::TOGGLE, 36, 0, 1, 1},
+    {"MIGRATE",   Kind::TOGGLE, 37, 0, 1, 1},
+    {"LOG SD",    Kind::TOGGLE, 38, 0, 1, 1},
+    {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
+    {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
+    {"CAP TEST",  Kind::ACTION, 41, 0, 0, 0},
+    {"RESET PRO", Kind::ACTION, 29, 0, 0, 0},
+};
+
+
+static const uint8_t RADIO_PRO_N = sizeof(RADIO_PRO) / sizeof(RADIO_PRO[0]);
 
 static const Item BLE[] = {
     {"BLE BURST", Kind::VALUE, 0, 50, 500, 50},
@@ -195,6 +211,38 @@ static const char* const H_RADIO[] = {
     "ALL / PRI 1-6-11 FIRST / CORE."
 };
 
+// Hints for RADIO PRO rows (same order as RADIO_PRO[]).
+static const char* const H_RADIO_PRO[] = {
+    "RICH RADIOTAP CH/RSSI IN PCAP.",
+    "0=M1+M2  1=+M3  2=FULL M1-M4.",
+    "EXTRA SEC HOLD AFTER PAIR.",
+    "ONLY KICK LOCKED BSSID.",
+    "LISTEN AFTER M1 BEFORE KICK.",
+    "RANDOM MS BETWEEN MGMT FRAMES.",
+    "SEC COOLDOWN PER AP AFTER KICK.",
+    "MIN CHANNEL DWELL MS.",
+    "COUNT DATA FRAMES FOR ACTIVITY.",
+    "MIN SCORE THRESHOLD (LEGACY).",
+    "TX EAPOL-START / LOGOFF.",
+    "SPOOFED CSA BEACON.",
+    "RANDOM-MAC AUTH FLOOD.",
+    "DEAUTH REASON CODE 1-8.",
+    "RING SLOTS IN WIFI CALLBACK 8-32.",
+    "FLUSH SD EVERY N PACKETS.",
+    "RETRY COUNT ON SHORT WRITE.",
+    "REJECT BAD PCAP MAGIC ON OPEN.",
+    "COMPARE FILE.SIZE AFTER WRITE.",
+    "NEVER DELETE GOOD PCAP ON SD.",
+    "RENAME HIDDEN_ TO REAL SSID.",
+    "MERGE LEGACY NAME VARIANTS.",
+    "EXTRA SERIAL [CAP] LOG LINES.",
+    "BOTTOM BAR SHOWS DROPPED FRAMES.",
+    "FORCE FLUSH OPEN PCAP NOW.",
+    "WRITE _SELFTEST.PCAP ON SD.",
+    "RESET ALL PRO KNOBS TO DEFAULTS.",
+};
+
+
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
     "MS EACH ADVERTISEMENT."
@@ -243,6 +291,7 @@ static bool s_scanning = false;
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
+    if (s_page == SettingsPage::RADIO_PRO) { *n = RADIO_PRO_N; return RADIO_PRO; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
@@ -314,13 +363,9 @@ static const char* hsDepthName(uint8_t s) {
 }
 // HsMethod layout for the saved value (kept stable across versions so old
 // NVS blobs still parse): 0 = AUTO (special), then explicit methods use
-// 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
+// 1..N and resolve to methods removed. Unknown values fall back to
 // AUTO so the user can still tweak something without bricking the radio.
-static const char* hsMethodName(uint8_t s) {
-    if (s == 0) return "AUTO";
-    const char* n = Cap::Methods::name((uint8_t)(s - 1));
-    return n ? n : "AUTO";
-}
+static const char* hsMethodName(uint8_t) { return "OFF"; }
 // PACK layout mirrors hsMethodName() just above but walks the independent
 // Cap::Packs table: 0 = STOCK, 1..N = Packs::name(idx-1), RADIO_PACK_CUSTOM
 // (0xFF) = CUSTOM.
@@ -370,7 +415,7 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
-    if (s_page == SettingsPage::RADIO) {
+    if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO)) {
         switch (it.id) {
             case 0: return r.hopMs;
             case 1: return r.lockMs;
@@ -379,7 +424,7 @@ static int getValue(const Item& it) {
             case 4: return r.randomMac ? 1 : 0;
             case 5: return r.minRssi;
             case 6: return r.hopSet;
-            case 7: return r.hsMethod;
+            case 7: return 0; // methods removed
             case 8: return r.fallbackSec;
             case 9: return r.kickBurst;
             case 10: return r.bidirKick ? 1 : 0;
@@ -400,6 +445,16 @@ static int getValue(const Item& it) {
             case 25: return r.dataAct ? 1 : 0;
             case 26: return r.strictLock ? 1 : 0;
             case 27: return r.depthHoldSec;
+            case 30: return r.ringSlots;
+            case 31: return r.flushEvery;
+            case 32: return r.writeRetry;
+            case 33: return r.magicCheck ? 1 : 0;
+            case 34: return r.sizeVerify ? 1 : 0;
+            case 35: return r.protectPcap ? 1 : 0;
+            case 36: return r.learnRename ? 1 : 0;
+            case 37: return r.migrateNames ? 1 : 0;
+            case 38: return r.logSd ? 1 : 0;
+            case 39: return r.showDrops ? 1 : 0;
             default: return 0;
         }
     }
@@ -450,21 +505,21 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 6) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 6) {
         strncpy(raw, hopSetName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 7) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 7) {
         strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 18) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 18) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 24) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 24) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 8) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 27) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 27) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 21) {
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 21) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
@@ -485,8 +540,8 @@ static bool setValue(const Item& it, int v) {
     // HS METHOD (RADIO id 7) is the only item whose max grows with the
     // method registry — clamp it explicitly so the rest of the function
     // can keep using a single minV/maxV range.
-    if (s_page == SettingsPage::RADIO && it.id == 7) {
-        int maxV = (int)Cap::Methods::count(); // AUTO takes slot 0
+    if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 7) {
+        int maxV = 0; // methods removed
         if (v < 0) v = maxV;
         if (v > maxV) v = 0;
         r.hsMethod = (uint8_t)v;
@@ -503,7 +558,7 @@ static bool setValue(const Item& it, int v) {
     // back. `v` is `getValue()+/-step` in the RAW on-disk domain, so its
     // direction relative to the current raw value tells us which way the
     // user pressed even when the raw jump (e.g. off of 0xFF) isn't +/-1.
-    if (s_page == SettingsPage::RADIO && it.id == 18) {
+    if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 18) {
         int packCount = (int)Cap::Packs::count();
         int lastSlot = packCount + 1; // logical slot for CUSTOM
         int curSlot = (r.pack == RADIO_PACK_CUSTOM) ? lastSlot : (int)r.pack;
@@ -664,7 +719,7 @@ static bool setValue(const Item& it, int v) {
         Config::save();
         return true;
     }
-    if (s_page == SettingsPage::RADIO) {
+    if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO)) {
         // PACK (id 18) is handled above, before the generic minV/maxV clamp.
         switch (it.id) {
             case 0: r.hopMs = (uint16_t)v; break;
@@ -674,7 +729,7 @@ static bool setValue(const Item& it, int v) {
             case 4: r.randomMac = v != 0; break;
             case 5: r.minRssi = (int8_t)v; break;
             case 6: r.hopSet = (uint8_t)v; break;
-            case 7: r.hsMethod = (uint8_t)v; break;
+            case 7: break; // methods removed
             case 8: r.fallbackSec = (uint8_t)v; break;
             case 9: r.kickBurst = (uint8_t)v; break;
             case 10: r.bidirKick = v != 0; break;
@@ -694,6 +749,16 @@ static bool setValue(const Item& it, int v) {
             case 25: r.dataAct = (uint8_t)(v != 0 ? 1 : 0); break;
             case 26: r.strictLock = v != 0; break;
             case 27: r.depthHoldSec = (uint8_t)v; break;
+            case 30: r.ringSlots = (uint8_t)v; break;
+            case 31: r.flushEvery = (uint8_t)v; break;
+            case 32: r.writeRetry = (uint8_t)v; break;
+            case 33: r.magicCheck = v != 0; break;
+            case 34: r.sizeVerify = v != 0; break;
+            case 35: r.protectPcap = v != 0; break;
+            case 36: r.learnRename = v != 0; break;
+            case 37: r.migrateNames = v != 0; break;
+            case 38: r.logSd = v != 0; break;
+            case 39: r.showDrops = v != 0; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that
@@ -899,6 +964,12 @@ void update() {
         bool up = M5Cardputer.Keyboard.isKeyPressed(';');
         bool down = M5Cardputer.Keyboard.isKeyPressed('.');
         if (keyEsc()) {
+            if (s_page == SettingsPage::RADIO_PRO) {
+                s_page = SettingsPage::RADIO;
+                s_idx = 0;
+                SFX::play(SFX::MENU_CLICK);
+                return;
+            }
             hide();
             return;
         }
@@ -1071,10 +1142,62 @@ void update() {
     }
 
     if (cur.kind == Kind::ACTION) {
-        if (s_page == SettingsPage::RADIO && cur.id == 19) {
+        if (s_page == SettingsPage::RADIO && cur.id == 28) {
+            s_page = SettingsPage::RADIO_PRO;
+            s_idx = 0;
+            SFX::play(SFX::MENU_CLICK);
+            Display::showToast("RADIO PRO", 700);
+            return;
+        }
+        if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && cur.id == 19) {
             Config::resetRadio();
             SFX::play(SFX::CONFIRM);
             Display::showToast("RADIO RESET", 1000);
+            return;
+        }
+        if (s_page == SettingsPage::RADIO_PRO && cur.id == 40) {
+            Cap::flushNow();
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("FLUSHED", 800);
+            return;
+        }
+        if (s_page == SettingsPage::RADIO_PRO && cur.id == 41) {
+            bool ok = Cap::selfTestPcap();
+            SFX::play(ok ? SFX::CONFIRM : SFX::ERROR);
+            Display::showToast(ok ? "TEST PCAP OK" : "TEST FAIL", 1200);
+            return;
+        }
+        if (s_page == SettingsPage::RADIO_PRO && cur.id == 29) {
+            RadioConfig& r = Config::radio();
+            r.fatPcap = true;
+            r.hsDepth = 0;
+            r.depthHoldSec = 0;
+            r.strictLock = true;
+            r.pauseMs = 1200;
+            r.jitterMs = 0;
+            r.cooldownMs = 0;
+            r.dwellMinMs = 120;
+            r.dataAct = false;
+            r.scoreThr = 0;
+            r.eapolTx = false;
+            r.csaHerd = false;
+            r.authFlood = false;
+            r.deauthReason = 7;
+            r.ringSlots = 12;
+            r.flushEvery = 8;
+            r.writeRetry = 1;
+            r.magicCheck = true;
+            r.sizeVerify = false;
+            r.protectPcap = true;
+            r.learnRename = true;
+            r.migrateNames = true;
+            r.logSd = false;
+            r.showDrops = false;
+            Config::markRadioCustom();
+            Config::save();
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("PRO RESET", 1000);
+            return;
         }
         return;
     }
@@ -1267,6 +1390,7 @@ void draw(M5Canvas& canvas) {
 
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
+    else if (s_page == SettingsPage::RADIO_PRO) title = "RADIO PRO";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
@@ -1310,6 +1434,7 @@ void draw(M5Canvas& canvas) {
 
     const char* const* hints = H_SCENE;
     if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
+    else if (s_page == SettingsPage::RADIO_PRO) hints = H_RADIO_PRO;
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
     else if (s_page == SettingsPage::KEYS) hints = H_KEYS;

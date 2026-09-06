@@ -1,6 +1,5 @@
 #include "config.h"
 #include "../storage/littlefs_ops.h"
-#include "../cap/methods/method_ctx.h"
 #include "../cap/packs/pack_ctx.h"
 #include <Preferences.h>
 #include <string.h>
@@ -93,6 +92,16 @@ bool Config::init() {
     r.dataAct = s_prefs.getUChar("dataact", r.dataAct);
     r.strictLock = s_prefs.getBool("strlock", r.strictLock);
     r.depthHoldSec = s_prefs.getUChar("dphold", r.depthHoldSec);
+    r.ringSlots   = s_prefs.getUChar("ringslot", r.ringSlots);
+    r.flushEvery  = s_prefs.getUChar("flushev", r.flushEvery);
+    r.writeRetry  = s_prefs.getUChar("wretry", r.writeRetry);
+    r.magicCheck  = s_prefs.getBool("magchk", r.magicCheck);
+    r.sizeVerify  = s_prefs.getBool("szver", r.sizeVerify);
+    r.protectPcap = s_prefs.getBool("protpcap", r.protectPcap);
+    r.learnRename = s_prefs.getBool("lrnren", r.learnRename);
+    r.migrateNames = s_prefs.getBool("migrn", r.migrateNames);
+    r.logSd = s_prefs.getBool("logsd", r.logSd);
+    r.showDrops = s_prefs.getBool("showdrp", r.showDrops);
 
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
@@ -144,6 +153,11 @@ bool Config::init() {
     if (r.minRssi > -50) r.minRssi = -50;
     if (r.hopSet >= HOP_SET_COUNT) r.hopSet = 0;
     if (r.hsMethod >= HS_METHOD_COUNT_MAX) r.hsMethod = 0;
+    if (r.ringSlots < 8) r.ringSlots = 8;
+    if (r.ringSlots > 32) r.ringSlots = 32;
+    if (r.flushEvery < 1) r.flushEvery = 1;
+    if (r.flushEvery > 32) r.flushEvery = 32;
+    if (r.writeRetry > 3) r.writeRetry = 3;
     if (r.fallbackSec < 10) r.fallbackSec = 10;
     if (r.fallbackSec > 90) r.fallbackSec = 90;
     if (r.kickBurst < 1) r.kickBurst = 1;
@@ -225,6 +239,16 @@ bool Config::save() {
     s_prefs.putUChar("dataact", r.dataAct);
     s_prefs.putBool("strlock", r.strictLock);
     s_prefs.putUChar("dphold", r.depthHoldSec);
+    s_prefs.putUChar("ringslot", r.ringSlots);
+    s_prefs.putUChar("flushev", r.flushEvery);
+    s_prefs.putUChar("wretry", r.writeRetry);
+    s_prefs.putBool("magchk", r.magicCheck);
+    s_prefs.putBool("szver", r.sizeVerify);
+    s_prefs.putBool("protpcap", r.protectPcap);
+    s_prefs.putBool("lrnren", r.learnRename);
+    s_prefs.putBool("migrn", r.migrateNames);
+    s_prefs.putBool("logsd", r.logSd);
+    s_prefs.putBool("showdrp", r.showDrops);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
@@ -242,22 +266,6 @@ bool Config::save() {
 void Config::setPersonality(const PersonalityConfig& cfg) {
     personalityConfig = cfg;
     save();
-}
-
-// Resolves a Cap::Methods table name to the on-disk hsMethod byte (0 =
-// AUTO, 1..N = that table's index + 1). Used when applying a pack, since
-// a pack names its method by string (see cap/packs/pack_ctx.h) rather
-// than by table index — packs and methods are independent registries, so
-// a pack can't just reuse its own slot number the way it could when the
-// two tables were coupled 1:1.
-static uint8_t hsMethodIndexForName(const char* name) {
-    if (!name || !name[0]) return 0; // AUTO
-    uint8_t n = 0;
-    const Cap::Methods::Entry* tbl = Cap::Methods::table(&n);
-    for (uint8_t i = 0; i < n; i++) {
-        if (strcmp(tbl[i].name, name) == 0) return (uint8_t)(i + 1);
-    }
-    return 0; // unknown method name -> safe fallback to AUTO
 }
 
 // pack byte layout: 0 = STOCK, 1..N = Cap::Packs::table()[idx-1], 0xFF =
@@ -282,15 +290,11 @@ void Config::applyRadioPack(uint8_t pack) {
     if (pack > packCount) pack = 0; // out of range -> STOCK
 
     // PACK independent of METHOD — never force hsMethod on pack pick.
-    const uint8_t keepMethod = radioConfig.hsMethod;
-
     RadioConfig r; // starts from RadioConfig's own defaults (= STOCK)
-    r.hsMethod = keepMethod;
+    r.hsMethod = 0; // methods removed
     if (pack != 0) {
         const Cap::Packs::Entry& pk = tbl[pack - 1];
         const Cap::Packs::Preset& pr = pk.preset;
-        if (pk.methodName && pk.methodName[0])
-            r.hsMethod = hsMethodIndexForName(pk.methodName);
         r.bidirKick  = pr.bidirKick;
         r.eapolTx    = pr.eapolTx;
         r.pmkidProbe = pr.pmkidProbe;

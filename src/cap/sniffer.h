@@ -36,6 +36,11 @@ uint8_t hsDepth();
 
 void loop();
 
+// PRO helpers (RADIO PRO actions)
+void flushNow();           // flush open pcap if any
+bool selfTestPcap();       // write tiny valid test pcap on SD
+
+
 struct Counters {
     uint32_t framesSeen;
     uint32_t framesEapol;

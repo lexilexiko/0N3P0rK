@@ -905,7 +905,7 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     snprintf(line, sizeof(line), "CH%u  %s  %s",
              s_monCh,
              idx >= 0 ? authStr(s_net[idx].auth) : "?",
-             cap.methodTag[0] ? cap.methodTag : "OURS");
+             cap.methodTag[0] ? cap.methodTag : "CAP");
     c.setTextColor(fg);
     c.drawString(line, 4, 14);
 

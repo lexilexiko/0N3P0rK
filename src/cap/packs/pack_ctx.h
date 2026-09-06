@@ -1,5 +1,5 @@
 // Interface for the "Pack" registry (Radio menu's PACK item + bottom bar's
-// P: tag). Mirrors src/cap/methods/method_ctx.h's plug-and-play pattern
+// P: tag). Mirrors src/cap/pack presets only (no methods)'s plug-and-play pattern
 // exactly, but for named general-radio knob bundles instead of capture
 // algorithms.
 //
@@ -12,6 +12,14 @@
 #pragma once
 
 #include <stdint.h>
+
+enum class RadioPack : uint8_t {
+    STOCK = 0,
+    CUSTOM = UINT8_MAX
+};
+
+static constexpr uint8_t RADIO_PACK_CUSTOM = static_cast<uint8_t>(RadioPack::CUSTOM);
+static constexpr uint8_t RADIO_PACK_COUNT_MAX = UINT8_MAX - 1;
 
 namespace Cap {
 namespace Packs {

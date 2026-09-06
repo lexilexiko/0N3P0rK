@@ -734,7 +734,9 @@ void LootMenu::runCaptureTest() {
 
     uint32_t packets = 0, beacons = 0, eapol = 0, bad = 0;
     size_t pos = sizeof(Cap::Pcap::FileHeader);
-    while (pos < fileSize && packets < 4096) {
+    // Full file scan (no packet cap). yield() so UI/WDT stay alive on large pcaps.
+    while (pos < fileSize) {
+        if ((packets & 0x3F) == 0) yield();
         size_t before = pos;
         if (!readPcapPacket(f, pos, fileSize, packets, beacons, eapol, bad)) break;
         Cap::Pcap::PacketHeader ph{};

