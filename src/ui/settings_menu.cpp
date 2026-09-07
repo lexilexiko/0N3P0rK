@@ -74,7 +74,7 @@ static const Item RADIO[] = {
     {"PACK",      Kind::VALUE,  18, 0, 0, 1},
     {"PRO",       Kind::ACTION, 28, 0, 0, 0},
     {"RESET",     Kind::ACTION, 19, 0, 0, 0},
-    {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
+    {"HOP MS",    Kind::VALUE,  0,  50, 60000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
     {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},

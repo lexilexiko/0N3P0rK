@@ -89,7 +89,7 @@ static const uint8_t HS_METHOD_COUNT_MAX = 16;
 
 struct RadioConfig {
 
-    uint16_t hopMs = 300;      // 50..2000 channel dwell
+    uint16_t hopMs = 300;      // 50..60000 channel dwell
     uint16_t lockMs = 8000;    // stay on channel after EAPOL (0 = never)
     bool lockOnHs = true;
     bool deauth = true;        // AGGRO / EVILPIG kicks

@@ -1,5 +1,5 @@
 // cap/sniffer.h
-// Light: stay on current channel, web UI stays up, no deauth.
+// Light: passively scan channels with a long dwell, web UI stays up, no deauth.
 // Aggressive (board button only): hop 1-13, kick clients, catch handshakes.
 
 #pragma once

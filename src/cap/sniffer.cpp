@@ -1282,7 +1282,9 @@ static void startCommon(RunMode mode) {
     clearSkipList();
     s_skipKeyWas = false;
     s_mode = mode;
-    s_hopEnabled = (mode == RunMode::Aggressive);
+    // Light scans one channel at a time as well, but without deauth/kicks.
+    // Aggressive keeps its existing hopping behavior unchanged.
+    s_hopEnabled = (mode == RunMode::Light || mode == RunMode::Aggressive);
     s_deauthEnabled = (mode != RunMode::Light) && Config::radio().deauth;
     if (mode != RunMode::Pinned) {
         s_pinOk = false;

@@ -1,4 +1,4 @@
-// LIGHT preset — 1.2.5-style: hop, light kick, short patience. Knobs only.
+// LIGHT preset — passive channel scan with a 30-second dwell per channel.
 #include "pack_ctx.h"
 
 namespace Cap {
@@ -13,7 +13,7 @@ static const Preset kLightPreset{
     /* kickBurst     */ 1,
     /* pauseMs       */ 800,
     /* lockMs        */ 5000,
-    /* hopMs         */ 300,
+    /* hopMs         */ 30000,
     /* jitterMs      */ 0,
     /* cooldownSec   */ 0,
     /* scoreThr      */ 0,

@@ -147,7 +147,7 @@ bool Config::init() {
     if (p.seasonMode >= SEASON_MODE_COUNT) p.seasonMode = 0;
     if (p.skyMode >= SKY_MODE_COUNT) p.skyMode = 0;
     if (r.hopMs < 50) r.hopMs = 50;
-    if (r.hopMs > 2000) r.hopMs = 2000;
+    if (r.hopMs > 60000) r.hopMs = 60000;
     if (r.lockMs > 15000) r.lockMs = 15000;
     if (r.minRssi < -90) r.minRssi = -90;
     if (r.minRssi > -50) r.minRssi = -50;
