@@ -1,13 +1,13 @@
 # 0N3P0rK - Full project guide
 
-**Current version: 1.3 beta**
+**Current version: 1.3.0**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, what every major area does, and what changed from the early builds to the current 1.3 beta line.
+This document is the **full** project picture: what the device is, how to flash it, what every major area does, and what changed from the early builds to the current 1.3.0 release.
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -53,7 +53,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.beta_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -357,17 +357,21 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - PigPass tabs + scene suspend  
 - Cleaner public site + automatic gallery loading   
 
-### 1.3 beta (current)
+### 1.3.0 (current release)
 
 - Light mode channel hopping with a slow default dwell
 - Configurable `HOP MS` range up to 60 seconds
+- New capture pipeline with separate LIGHT and AGGRESSIVE behavior
 - PCAP tail repair before append
 - Rollback after short or partial SD writes
 - PCAP safety controls and self-test in RADIO PRO
 - Configurable 256/512-byte frame limit
 - `CAP PERF` lower-memory capture profile
 - SYSTEM task dispatcher with persistent runtime toggles and a TASKS hotkey
+- Full SCENE suspension for stopping the pig, movement, wolf, weather, and farm animation work
+- BadUSB and BadBLE HID automation with scripts, LIVE mode, and PC/phone presets
 - Expanded LED scene: wolf red alert, day/night brightness, season colors, and breathing ambient effects
+- Many new sniffer controls for hopping, handshake locking, ring buffering, SD flushing, retries, diagnostics, and file protection
 
 ---
 
