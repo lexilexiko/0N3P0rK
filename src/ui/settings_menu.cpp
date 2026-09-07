@@ -88,21 +88,32 @@ static const Item RADIO[] = {
     {"HOP MS",    Kind::VALUE,  0,  50, 60000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
+    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
+    {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
     {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
-    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
-    {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
-    {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
     {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
     {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
     {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
+    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    {"AUTO REPAIR",Kind::TOGGLE,43, 0, 1, 1},
+    {"ROLLBACK",  Kind::TOGGLE, 44, 0, 1, 1},
+    {"FRAME LIM", Kind::VALUE,  45, 256, 512, 256},
+    {"RING N",    Kind::VALUE,  30, 8, 32, 4},
+    {"FLUSH N",   Kind::VALUE,  31, 1, 32, 1},
+    {"W RETRY",   Kind::VALUE,  32, 0, 3, 1},
+    {"MAGIC CHK", Kind::TOGGLE, 33, 0, 1, 1},
+    {"SIZE VER",  Kind::TOGGLE, 34, 0, 1, 1},
+    {"PROTECT",   Kind::TOGGLE, 35, 0, 1, 1},
+    {"LEARN REN", Kind::TOGGLE, 36, 0, 1, 1},
+    {"MIGRATE",   Kind::TOGGLE, 37, 0, 1, 1},
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
 
 // Fine-tune / write-lock knobs (sniffer debug surface).
 static const Item RADIO_PRO[] = {
-    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
     {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},
     {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},
     {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
@@ -116,17 +127,6 @@ static const Item RADIO_PRO[] = {
     {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
     {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
-    {"RING N",    Kind::VALUE,  30, 8, 32, 4},
-    {"FLUSH N",   Kind::VALUE,  31, 1, 32, 1},
-    {"W RETRY",   Kind::VALUE,  32, 0, 3, 1},
-    {"MAGIC CHK", Kind::TOGGLE, 33, 0, 1, 1},
-    {"SIZE VER",  Kind::TOGGLE, 34, 0, 1, 1},
-    {"PROTECT",   Kind::TOGGLE, 35, 0, 1, 1},
-    {"LEARN REN", Kind::TOGGLE, 36, 0, 1, 1},
-    {"MIGRATE",   Kind::TOGGLE, 37, 0, 1, 1},
-    {"AUTO REPAIR",Kind::TOGGLE,43, 0, 1, 1},
-    {"ROLLBACK",  Kind::TOGGLE, 44, 0, 1, 1},
-    {"FRAME LIM", Kind::VALUE,  45, 256, 512, 256},
     {"LOG SD",    Kind::TOGGLE, 38, 0, 1, 1},
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
@@ -209,19 +209,30 @@ static const char* const H_RADIO[] = {
     "HOW LONG YOU SIT ON A CH.",          // HOP MS
     "HOLD CHANNEL AFTER EAPOL.",          // LOCK MS
     "LOCK WHEN HANDSHAKE LANDS.",         // LOCK HS
+    "SECONDS BEFORE MOVING TO NEXT TARGET.", // FALLBACK
+    "ALL / PRI 1-6-11 FIRST / CORE.",    // HOP SET
+    "SKIP WEAK APS FOR KICK.",            // ATK RSSI
     "KICK CLIENTS ON AGGRO / EP.",        // DEAUTH
     "DEAUTH ROUNDS PER AP.",              // KICK N
-    "AUTO: SEC THEN NEXT METHOD.",        // FALLBACK
-    "SKIP WEAK APS FOR KICK.",            // ATK RSSI
-    "ALL / PRI 1-6-11 FIRST / CORE.",    // HOP SET
     "NEW MAC EACH ATTACK START.",         // RND MAC
     "KICK BOTH WAYS AP<->STA.",           // BIDIR
     "AUTH+ASSOC FOR PMKID.",              // PMKID
+    "RICH RADIOTAP CH/RSSI IN PCAP.",     // FAT PCAP
+    "REPAIR INCOMPLETE PCAP TAIL.",       // AUTO REPAIR
+    "ROLL BACK PARTIAL PACKET WRITE.",    // ROLLBACK
+    "STORE 256 OR 512 BYTES PER FRAME.",  // FRAME LIM
+    "RING SLOTS IN WIFI CALLBACK.",       // RING N
+    "FLUSH SD EVERY N PACKETS.",          // FLUSH N
+    "RETRY COUNT ON SHORT WRITE.",        // W RETRY
+    "REJECT BAD PCAP MAGIC ON OPEN.",     // MAGIC CHK
+    "COMPARE FILE.SIZE AFTER WRITE.",     // SIZE VER
+    "NEVER DELETE GOOD PCAP ON SD.",      // PROTECT
+    "RENAME HIDDEN_ TO REAL SSID.",       // LEARN REN
+    "MERGE LEGACY NAME VARIANTS.",        // MIGRATE
 };
 
 // Hints for RADIO PRO rows (same order as RADIO_PRO[]).
 static const char* const H_RADIO_PRO[] = {
-    "RICH RADIOTAP CH/RSSI IN PCAP.",
     "0=M1+M2  1=+M3  2=FULL M1-M4.",
     "EXTRA SEC HOLD AFTER PAIR.",
     "ONLY KICK LOCKED BSSID.",
@@ -235,16 +246,6 @@ static const char* const H_RADIO_PRO[] = {
     "SPOOFED CSA BEACON.",
     "RANDOM-MAC AUTH FLOOD.",
     "DEAUTH REASON CODE 1-8.",
-    "RING SLOTS IN WIFI CALLBACK 8-32.",
-    "FLUSH SD EVERY N PACKETS.",
-    "RETRY COUNT ON SHORT WRITE.",
-    "REJECT BAD PCAP MAGIC ON OPEN.",
-    "COMPARE FILE.SIZE AFTER WRITE.",
-    "NEVER DELETE GOOD PCAP ON SD.",
-    "RENAME HIDDEN_ TO REAL SSID.",
-    "MERGE LEGACY NAME VARIANTS.",
-    "REPAIR INCOMPLETE PCAP TAIL BEFORE APPEND.",
-    "ROLL BACK PARTIAL PACKET AFTER SHORT WRITE.",
     "EXTRA SERIAL [CAP] LOG LINES.",
     "BOTTOM BAR SHOWS DROPPED FRAMES.",
     "FORCE FLUSH OPEN PCAP NOW.",
