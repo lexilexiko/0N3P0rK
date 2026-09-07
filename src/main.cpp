@@ -89,9 +89,19 @@ void setup() {
 }
 
 static unsigned long s_lastHeapLog = 0;
+static bool s_taskSceneSuspended = false;
+
+static void syncTaskScene() {
+    const bool shouldSuspend = !Config::tasks().scene;
+    if (shouldSuspend == s_taskSceneSuspended) return;
+    if (shouldSuspend) Avatar::suspendScene();
+    else Avatar::resumeScene();
+    s_taskSceneSuspended = shouldSuspend;
+}
 
 void loop() {
     M5Cardputer.update();
+    syncTaskScene();
     App::loop();
     if (!Config::tasks().capture && Cap::isRunning()) Cap::stop();
     Display::update();
