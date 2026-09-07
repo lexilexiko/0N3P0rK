@@ -605,27 +605,26 @@ void Display::drawBottomBar() {
                 else packCh = (char)n[0]; // first letter fallback
             }
         }
-        // Compact method letter: ALL/CLIENTS/FOCUS/HERD (+ AUTO)
-        const char* mtag = c.methodTag[0] ? c.methodTag : "CAP";
-        char methCh = mtag[0] ? mtag[0] : '?';
-        if (!strcmp(mtag, "CAP"))          methCh = 'A';
-        else if (!strcmp(mtag, "CLIENTS")) methCh = 'C';
-        else if (!strcmp(mtag, "FOCUS"))   methCh = 'F';
-        else if (!strcmp(mtag, "HERD"))    methCh = 'H';
-        else if (!strcmp(mtag, "AUTO"))    methCh = '~';
-        // Unique networks with saved HS/PMKID — not raw EAPOL frame count
-        // (that grew huge and looked like "kilobyte" garbage on the bar).
+        // Unique networks with saved HS/PMKID — not raw EAPOL frame count.
         uint16_t hsN = Hc22000::pairCount();
-        // e.g. "A* F/F &3 #06" — &N = handshakes, #ch = channel
-        snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u",
+        // Q% = framesDropped / (framesQueued + framesDropped) * 100.
+        uint32_t total = c.framesQueued + c.framesDropped;
+        uint8_t dropPct = (total > 0)
+            ? (uint8_t)((c.framesDropped * 100u) / total)
+            : 0;
+        // Right: "A* F &3 E:4 Q:3% #06"
+        // methCh removed: methodTag now carries mode (LIGHT/AGGRO/PIN),
+        // which duplicates the tag letter already shown — dead column.
+        snprintf(rightName, sizeof(rightName), "%s%s %c &%u E:%u Q:%u%% #%02u",
                  tag,
                  Cap::isLocked() ? "*" : "",
                  packCh,
-                 methCh,
                  (unsigned)hsN,
+                 (unsigned)c.framesEapol,
+                 (unsigned)dropPct,
                  (unsigned)c.currentChannel);
         if (Config::radio().showDrops) {
-            char dbuf[16];
+            char dbuf[12];
             snprintf(dbuf, sizeof(dbuf), " D%u", (unsigned)c.framesDropped);
             size_t used = strlen(rightName);
             if (used + strlen(dbuf) < sizeof(rightName))
