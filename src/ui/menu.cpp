@@ -317,6 +317,10 @@ static void doAction(uint8_t id) {
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::FILEMGR);
             break;
+        case 23:
+            SettingsMenu::show(SettingsPage::TASKS);
+            App::setMode(AppMode::TUNE);
+            break;
         case 9:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::EVILPIG);
@@ -426,7 +430,7 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 bool tryHotkey() {
     static const uint8_t ACT[HOTKEY_COUNT] = {
         2, 1, 10, 9, 13, 15, 16, 4, 11, 20,
-        7, 22, 21, 17, 6, 3
+        7, 22, 21, 17, 6, 3, 23
     };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {

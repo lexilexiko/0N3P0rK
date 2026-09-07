@@ -93,11 +93,12 @@ static unsigned long s_lastHeapLog = 0;
 void loop() {
     M5Cardputer.update();
     App::loop();
+    if (!Config::tasks().capture && Cap::isRunning()) Cap::stop();
     Display::update();
-    SFX::update();
-    XP::tick();
-    Cap::loop();
-    Led::update();
+    if (Config::tasks().sound) SFX::update();
+    if (Config::tasks().xp) XP::tick();
+    if (Config::tasks().capture) Cap::loop();
+    if (Config::tasks().led) Led::update();
 
     if (millis() - s_lastHeapLog > 30000) {
         s_lastHeapLog = millis();

@@ -67,8 +67,19 @@ static const Item SYSTEM[] = {
     {"DIM LEVEL", Kind::VALUE, 3, 0, 50, 5},
     {"LED",       Kind::TOGGLE, 4, 0, 1, 1},
     {"LED BRIGHT",Kind::VALUE, 5, 0, 100, 5},
+    {"TASKS",     Kind::ACTION, 6, 0, 0, 0},
 };
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
+
+static const Item TASKS[] = {
+    {"CAPTURE", Kind::TOGGLE, 0, 0, 1, 1},
+    {"NETWORK", Kind::TOGGLE, 1, 0, 1, 1},
+    {"LED LOOP",Kind::TOGGLE, 2, 0, 1, 1},
+    {"SOUND",   Kind::TOGGLE, 3, 0, 1, 1},
+    {"XP",      Kind::TOGGLE, 4, 0, 1, 1},
+    {"SCENE",   Kind::TOGGLE, 5, 0, 1, 1},
+};
+static const uint8_t TASKS_N = sizeof(TASKS) / sizeof(TASKS[0]);
 
 static const Item RADIO[] = {
     {"PACK",      Kind::VALUE,  18, 0, 0, 1},
@@ -151,6 +162,7 @@ static const Item KEYS[] = {
     {"USB SD",   Kind::BIND, 13, 0, 0, 0},
     {"WIFI",     Kind::BIND, 14, 0, 0, 0},
     {"STOP",     Kind::BIND, 15, 0, 0, 0},
+    {"TASKS",    Kind::BIND, 16, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -184,6 +196,11 @@ static const char* const H_SYSTEM[] = {
     "0 = SCREEN OFF WHEN DIM.",
     "CARDPUTER RGB ON/OFF.",
     "RGB LED BRIGHTNESS."
+};
+static const char* const H_TASKS[] = {
+    "FREE HEAP BY STOPPING BACKGROUND JOBS.",
+    "CAPTURE / NETWORK CAN BE RESTORED.",
+    "TASKS HOTKEY OPENS THIS PANEL."
 };
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",   // PACK
@@ -286,6 +303,7 @@ static bool s_scanning = false;
 
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
+    if (s_page == SettingsPage::TASKS) { *n = TASKS_N; return TASKS; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::RADIO_PRO) { *n = RADIO_PRO_N; return RADIO_PRO; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
@@ -408,6 +426,18 @@ static int getValue(const Item& it) {
             case 3: return p.dimLevel;
             case 4: return p.ledEnabled ? 1 : 0;
             case 5: return p.ledBright;
+            default: return 0;
+        }
+    }
+    if (s_page == SettingsPage::TASKS) {
+        TaskConfig& t = Config::tasks();
+        switch (it.id) {
+            case 0: return t.capture ? 1 : 0;
+            case 1: return t.network ? 1 : 0;
+            case 2: return t.led ? 1 : 0;
+            case 3: return t.sound ? 1 : 0;
+            case 4: return t.xp ? 1 : 0;
+            case 5: return t.scene ? 1 : 0;
             default: return 0;
         }
     }
@@ -544,6 +574,28 @@ static bool setValue(const Item& it, int v) {
         if (v < 0) v = maxV;
         if (v > maxV) v = 0;
         r.hsMethod = (uint8_t)v;
+        Config::save();
+        return true;
+    }
+    if (s_page == SettingsPage::TASKS) {
+        TaskConfig& t = Config::tasks();
+        bool on = v != 0;
+        switch (it.id) {
+            case 0:
+                if (!on && Cap::isRunning()) Cap::stop();
+                t.capture = on;
+                break;
+            case 1:
+                if (!on) WiFi.mode(WIFI_OFF);
+                else Net::begin();
+                t.network = on;
+                break;
+            case 2: t.led = on; if (!on) Led::off(); break;
+            case 3: t.sound = on; break;
+            case 4: t.xp = on; break;
+            case 5: t.scene = on; break;
+            default: return false;
+        }
         Config::save();
         return true;
     }
@@ -1144,6 +1196,12 @@ void update() {
     }
 
     if (cur.kind == Kind::ACTION) {
+        if (s_page == SettingsPage::SYSTEM && cur.id == 6) {
+            s_page = SettingsPage::TASKS;
+            s_idx = 0;
+            s_scroll = 0;
+            return;
+        }
         if (s_page == SettingsPage::RADIO && cur.id == 28) {
             s_page = SettingsPage::RADIO_PRO;
             s_idx = 0;
@@ -1433,6 +1491,7 @@ void draw(M5Canvas& canvas) {
 
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
+    else if (s_page == SettingsPage::TASKS) title = "TASKS";
     else if (s_page == SettingsPage::RADIO_PRO) title = "RADIO PRO";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::BLE) title = "BLE";
@@ -1477,6 +1536,7 @@ void draw(M5Canvas& canvas) {
 
     const char* const* hints = H_SCENE;
     if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
+    else if (s_page == SettingsPage::TASKS) hints = H_TASKS;
     else if (s_page == SettingsPage::RADIO_PRO) hints = H_RADIO_PRO;
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;

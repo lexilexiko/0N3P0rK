@@ -278,7 +278,8 @@ void loop() {
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
 
-    if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
+    if (Config::tasks().scene && (s_mode == AppMode::FARM || windowHidden()))
+        farmPoll();
 
     // Backspace = minimize overlay — NOT in BADUSB (needs DEL for ducky/live)
     if (overlayMode() && s_mode != AppMode::BADUSB &&

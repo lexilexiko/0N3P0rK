@@ -12,7 +12,8 @@ enum class SettingsPage : uint8_t {
     CONNECT = 4,
     KEYS = 5,
     STATUS = 6,
-    RADIO_PRO = 7  // fine write/lock knobs (sniffer v2)
+    RADIO_PRO = 7,
+    TASKS = 8
 };
 
 namespace SettingsMenu {

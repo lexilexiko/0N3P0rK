@@ -8,6 +8,7 @@ PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
 HotkeyConfig Config::hotkeyConfig;
+TaskConfig Config::taskConfig;
 XferConfig Config::xferConfig;
 bool Config::initialized = false;
 
@@ -112,6 +113,12 @@ bool Config::init() {
 
     HotkeyConfig def{};
     hotkeyConfig = def;
+    taskConfig.capture = s_prefs.getBool("tcap", taskConfig.capture);
+    taskConfig.network = s_prefs.getBool("tnet", taskConfig.network);
+    taskConfig.led = s_prefs.getBool("tled", taskConfig.led);
+    taskConfig.sound = s_prefs.getBool("tsfx", taskConfig.sound);
+    taskConfig.xp = s_prefs.getBool("txp", taskConfig.xp);
+    taskConfig.scene = s_prefs.getBool("tscn", taskConfig.scene);
     char raw[HOTKEY_COUNT];
     size_t got = s_prefs.getBytes("hotk", raw, HOTKEY_COUNT);
     if (got > 0) {
@@ -265,6 +272,12 @@ bool Config::save() {
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)
         raw[i] = normHot(hotkeyConfig.key[i]);
     s_prefs.putBytes("hotk", raw, HOTKEY_COUNT);
+    s_prefs.putBool("tcap", taskConfig.capture);
+    s_prefs.putBool("tnet", taskConfig.network);
+    s_prefs.putBool("tled", taskConfig.led);
+    s_prefs.putBool("tsfx", taskConfig.sound);
+    s_prefs.putBool("txp", taskConfig.xp);
+    s_prefs.putBool("tscn", taskConfig.scene);
     s_prefs.putString("xferssid", xferConfig.ssid);
     s_prefs.putString("xferpass", xferConfig.pass);
     return true;
