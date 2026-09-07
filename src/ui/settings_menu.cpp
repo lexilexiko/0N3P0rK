@@ -113,6 +113,8 @@ static const Item RADIO_PRO[] = {
     {"PROTECT",   Kind::TOGGLE, 35, 0, 1, 1},
     {"LEARN REN", Kind::TOGGLE, 36, 0, 1, 1},
     {"MIGRATE",   Kind::TOGGLE, 37, 0, 1, 1},
+    {"AUTO REPAIR",Kind::TOGGLE,43, 0, 1, 1},
+    {"ROLLBACK",  Kind::TOGGLE, 44, 0, 1, 1},
     {"LOG SD",    Kind::TOGGLE, 38, 0, 1, 1},
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
@@ -440,6 +442,8 @@ static int getValue(const Item& it) {
             case 35: return r.protectPcap ? 1 : 0;
             case 36: return r.learnRename ? 1 : 0;
             case 37: return r.migrateNames ? 1 : 0;
+            case 43: return r.autoRepair ? 1 : 0;
+            case 44: return r.rollbackWrite ? 1 : 0;
             case 38: return r.logSd ? 1 : 0;
             case 39: return r.showDrops ? 1 : 0;
             default: return 0;
@@ -744,6 +748,8 @@ static bool setValue(const Item& it, int v) {
             case 35: r.protectPcap = v != 0; break;
             case 36: r.learnRename = v != 0; break;
             case 37: r.migrateNames = v != 0; break;
+            case 43: r.autoRepair = v != 0; break;
+            case 44: r.rollbackWrite = v != 0; break;
             case 38: r.logSd = v != 0; break;
             case 39: r.showDrops = v != 0; break;
             default: return false;
@@ -1166,6 +1172,8 @@ void update() {
             r.protectPcap = true;
             r.learnRename = true;
             r.migrateNames = true;
+            r.autoRepair = true;
+            r.rollbackWrite = true;
             r.logSd = true;
             r.showDrops = true;
             Config::markRadioCustom();
@@ -1198,6 +1206,8 @@ void update() {
             r.protectPcap = true;
             r.learnRename = true;
             r.migrateNames = true;
+            r.autoRepair = true;
+            r.rollbackWrite = true;
             r.logSd = false;
             r.showDrops = false;
             Config::markRadioCustom();

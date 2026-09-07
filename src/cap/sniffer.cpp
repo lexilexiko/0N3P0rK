@@ -675,6 +675,91 @@ static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPat
 }
 
 static void closeFile();  // defined below; short-write path needs it
+static bool repairPcapTail(const char* path) {
+    if (!path || !path[0] || !SD.exists(path)) return false;
+
+    File src = SD.open(path, "r");
+    if (!src) return false;
+    const size_t fileSize = src.size();
+    if (fileSize < sizeof(Pcap::FileHeader)) {
+        src.close();
+        return false;
+    }
+
+    Pcap::FileHeader fh{};
+    if (src.read((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
+        src.close();
+        return false;
+    }
+    const bool validMagic = fh.magic == 0xA1B2C3D4u ||
+                            fh.magic == 0xD4C3B2A1u ||
+                            fh.magic == 0xA1B23C4Du ||
+                            fh.magic == 0x4D3CB2A1u;
+    if (!validMagic) {
+        src.close();
+        return false;
+    }
+
+    size_t goodSize = sizeof(Pcap::FileHeader);
+    while (goodSize < fileSize) {
+        if (fileSize - goodSize < sizeof(Pcap::PacketHeader)) break;
+        if (!src.seek((uint32_t)goodSize)) break;
+        Pcap::PacketHeader ph{};
+        if (src.read((uint8_t*)&ph, sizeof(ph)) != sizeof(ph)) break;
+        const size_t packetEnd = goodSize + sizeof(ph) + (size_t)ph.inclLen;
+        if (ph.inclLen == 0 || packetEnd <= goodSize || packetEnd > fileSize) break;
+        goodSize = packetEnd;
+    }
+    src.close();
+
+    if (goodSize == fileSize) return true;
+
+    char tempPath[96];
+    snprintf(tempPath, sizeof(tempPath), "%s.repair", path);
+    SD.remove(tempPath);
+    File out = SD.open(tempPath, "w");
+    if (!out) return false;
+    File in = SD.open(path, "r");
+    if (!in) {
+        out.close();
+        SD.remove(tempPath);
+        return false;
+    }
+
+    uint8_t copyBuf[512];
+    size_t copied = 0;
+    while (copied < goodSize) {
+        size_t want = goodSize - copied;
+        if (want > sizeof(copyBuf)) want = sizeof(copyBuf);
+        size_t got = in.read(copyBuf, want);
+        if (got != want || out.write(copyBuf, got) != got) break;
+        copied += got;
+    }
+    out.flush();
+    in.close();
+    out.close();
+    if (copied != goodSize) {
+        SD.remove(tempPath);
+        return false;
+    }
+
+    char backupPath[96];
+    snprintf(backupPath, sizeof(backupPath), "%s.recovery", path);
+    SD.remove(backupPath);
+    if (!SD.rename(path, backupPath)) {
+        SD.remove(tempPath);
+        return false;
+    }
+    if (!SD.rename(tempPath, path)) {
+        SD.rename(backupPath, path);
+        return false;
+    }
+    SD.remove(backupPath);
+    Serial.printf("[CAP] repaired PCAP tail %u -> %u bytes\n",
+                  (unsigned)fileSize, (unsigned)goodSize);
+    return true;
+}
+
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
     if (!s_file) return false;
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
@@ -701,10 +786,16 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
         if (n == expect) break;
     }
     if (n != expect) {
-        // Partial packet would corrupt the stream — close so next open is clean.
+        // A short write may leave a partial packet. Rebuild the file from the
+        // last complete packet before the next append.
         if (Config::radio().logSd)
             Serial.printf("[CAP] short write n=%u expect=%u\n", (unsigned)n, (unsigned)expect);
         closeFile();
+        if (Config::radio().rollbackWrite) {
+            char path[96];
+            snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
+            repairPcapTail(path);
+        }
         return false;
     }
     s_fileSize += expect;
@@ -756,6 +847,8 @@ static bool openFileForBssid(const uint8_t* bssid) {
 
     // Fold legacy SSID_/HIDDEN_ names into stable MAC-only path once.
     migrateLegacyPcapName(bssid, path);
+    if (Config::radio().autoRepair && SD.exists(path))
+        repairPcapTail(path);
 
     bool exists = SD.exists(path);
     // Probe size BEFORE any write open. Append-only for existing captures
@@ -874,7 +967,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
     memcpy(s_fileBssid, bssid, 6);
     memcpy(s_fileName, name, sizeof(s_fileName));
     s_fileOpen = true;
-
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, name, ssid);
 
     const BeaconSlot* bcn = findBeacon(bssid);

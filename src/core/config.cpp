@@ -100,6 +100,8 @@ bool Config::init() {
     r.protectPcap = s_prefs.getBool("protpcap", r.protectPcap);
     r.learnRename = s_prefs.getBool("lrnren", r.learnRename);
     r.migrateNames = s_prefs.getBool("migrn", r.migrateNames);
+    r.autoRepair = s_prefs.getBool("autorep", r.autoRepair);
+    r.rollbackWrite = s_prefs.getBool("rollback", r.rollbackWrite);
     r.logSd = s_prefs.getBool("logsd", r.logSd);
     r.showDrops = s_prefs.getBool("showdrp", r.showDrops);
 
@@ -247,6 +249,8 @@ bool Config::save() {
     s_prefs.putBool("protpcap", r.protectPcap);
     s_prefs.putBool("lrnren", r.learnRename);
     s_prefs.putBool("migrn", r.migrateNames);
+    s_prefs.putBool("autorep", r.autoRepair);
+    s_prefs.putBool("rollback", r.rollbackWrite);
     s_prefs.putBool("logsd", r.logSd);
     s_prefs.putBool("showdrp", r.showDrops);
 

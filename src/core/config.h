@@ -154,6 +154,8 @@ struct RadioConfig {
     bool learnRename = true;
     // Fold legacy name variants into preferred path on open.
     bool migrateNames = true;
+    bool     autoRepair = true;   // repair an incomplete PCAP tail before append
+    bool     rollbackWrite = true; // repair a partial packet after a short write
     // PRO debug
     bool logSd = false;      // extra Serial [CAP] lines
     bool showDrops = false;  // bottom bar shows framesDropped
