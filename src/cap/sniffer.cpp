@@ -30,6 +30,7 @@ namespace Cap {
 static const uint16_t FRAME_MAX = 512;
 static const uint8_t  RING_SLOTS_MAX = 32;
 static uint8_t        s_ringCap = 12;   // live slots from RADIO PRO (8..32)
+static uint16_t       s_frameLimit = FRAME_MAX;
 static uint8_t        s_flushEvery = 8;
 static uint8_t        s_writeRetry = 1;
 static bool           s_magicCheck = true;
@@ -587,7 +588,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     Slot& s = s_ring[s_write];
     memcpy(s.bssid, bssid, 6);
     memcpy(s.station, station, 6);
-    s.len = (len > FRAME_MAX) ? FRAME_MAX : len;
+    s.len = (len > s_frameLimit) ? s_frameLimit : len;
     s.ts  = millis();
     s.rssi = (int8_t)pkt->rx_ctrl.rssi;
     s.channel = s_cnt.currentChannel;
@@ -1386,6 +1387,8 @@ static void startCommon(RunMode mode) {
     s_lockOnHs = Config::radio().lockOnHs;
     s_lockMs = Config::radio().lockMs;
     s_hopMs = Config::radio().hopMs;
+    s_frameLimit = Config::radio().frameLimit;
+    if (s_frameLimit != 256 && s_frameLimit != FRAME_MAX) s_frameLimit = FRAME_MAX;
     s_minRssi = Config::radio().minRssi;
     s_hopSet = Config::radio().hopSet;
     s_fallbackSec = Config::radio().fallbackSec;

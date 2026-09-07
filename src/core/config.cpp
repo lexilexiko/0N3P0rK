@@ -102,6 +102,7 @@ bool Config::init() {
     r.migrateNames = s_prefs.getBool("migrn", r.migrateNames);
     r.autoRepair = s_prefs.getBool("autorep", r.autoRepair);
     r.rollbackWrite = s_prefs.getBool("rollback", r.rollbackWrite);
+    r.frameLimit = s_prefs.getUShort("frmlim", r.frameLimit);
     r.logSd = s_prefs.getBool("logsd", r.logSd);
     r.showDrops = s_prefs.getBool("showdrp", r.showDrops);
 
@@ -160,6 +161,7 @@ bool Config::init() {
     if (r.flushEvery < 1) r.flushEvery = 1;
     if (r.flushEvery > 32) r.flushEvery = 32;
     if (r.writeRetry > 3) r.writeRetry = 3;
+    if (r.frameLimit != 256 && r.frameLimit != 512) r.frameLimit = 512;
     if (r.fallbackSec < 10) r.fallbackSec = 10;
     if (r.fallbackSec > 90) r.fallbackSec = 90;
     if (r.kickBurst < 1) r.kickBurst = 1;
@@ -251,6 +253,7 @@ bool Config::save() {
     s_prefs.putBool("migrn", r.migrateNames);
     s_prefs.putBool("autorep", r.autoRepair);
     s_prefs.putBool("rollback", r.rollbackWrite);
+    s_prefs.putUShort("frmlim", r.frameLimit);
     s_prefs.putBool("logsd", r.logSd);
     s_prefs.putBool("showdrp", r.showDrops);
 

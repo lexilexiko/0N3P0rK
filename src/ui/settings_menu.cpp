@@ -115,11 +115,13 @@ static const Item RADIO_PRO[] = {
     {"MIGRATE",   Kind::TOGGLE, 37, 0, 1, 1},
     {"AUTO REPAIR",Kind::TOGGLE,43, 0, 1, 1},
     {"ROLLBACK",  Kind::TOGGLE, 44, 0, 1, 1},
+    {"FRAME LIM", Kind::VALUE,  45, 256, 512, 256},
     {"LOG SD",    Kind::TOGGLE, 38, 0, 1, 1},
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
     {"CAP TEST",  Kind::ACTION, 41, 0, 0, 0},
     {"SAFE IO",   Kind::ACTION, 42, 0, 0, 0},
+    {"CAP PERF",  Kind::ACTION, 46, 0, 0, 0},
     {"RESET PRO", Kind::ACTION, 29, 0, 0, 0},
 };
 
@@ -231,6 +233,8 @@ static const char* const H_RADIO_PRO[] = {
     "FORCE FLUSH OPEN PCAP NOW.",
     "WRITE _SELFTEST.PCAP ON SD.",
     "ENABLE SAFE SD PROFILE.",
+    "CAPTURE 256 OR 512 BYTES PER FRAME.",
+    "LOW-RAM CAPTURE PROFILE; RESET PRO RESTORES.",
     "RESET ALL PRO KNOBS TO DEFAULTS.",
 };
 
@@ -447,6 +451,7 @@ static int getValue(const Item& it) {
             case 37: return r.migrateNames ? 1 : 0;
             case 43: return r.autoRepair ? 1 : 0;
             case 44: return r.rollbackWrite ? 1 : 0;
+            case 45: return r.frameLimit;
             case 38: return r.logSd ? 1 : 0;
             case 39: return r.showDrops ? 1 : 0;
             default: return 0;
@@ -753,6 +758,7 @@ static bool setValue(const Item& it, int v) {
             case 37: r.migrateNames = v != 0; break;
             case 43: r.autoRepair = v != 0; break;
             case 44: r.rollbackWrite = v != 0; break;
+            case 45: r.frameLimit = (uint16_t)v; break;
             case 38: r.logSd = v != 0; break;
             case 39: r.showDrops = v != 0; break;
             default: return false;
@@ -1185,6 +1191,20 @@ void update() {
             Display::showToast("SAFE IO ON", 1000);
             return;
         }
+        if (s_page == SettingsPage::RADIO_PRO && cur.id == 46) {
+            RadioConfig& r = Config::radio();
+            r.frameLimit = 256;
+            r.ringSlots = 8;
+            r.fatPcap = false;
+            r.dataAct = false;
+            r.logSd = false;
+            r.showDrops = false;
+            Config::markRadioCustom();
+            Config::save();
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("CAP PERF ON", 1000);
+            return;
+        }
         if (s_page == SettingsPage::RADIO_PRO && cur.id == 29) {
             RadioConfig& r = Config::radio();
             r.fatPcap = true;
@@ -1211,6 +1231,9 @@ void update() {
             r.migrateNames = true;
             r.autoRepair = true;
             r.rollbackWrite = true;
+            r.frameLimit = 512;
+            r.ringSlots = 12;
+            r.fatPcap = true;
             r.logSd = false;
             r.showDrops = false;
             Config::markRadioCustom();
