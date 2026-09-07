@@ -2,6 +2,8 @@
 #include "../core/config.h"
 #include "../core/app.h"
 #include "../cap/sniffer.h"
+#include "../piglet/avatar.h"
+#include "../piglet/wolf.h"
 
 #include <FastLED.h>
 #include <M5Cardputer.h>
@@ -28,8 +30,11 @@ static const uint16_t BLINK_OFF_MS = 110;
 
 // Season ambient: rare refresh, keep last color to avoid FastLED.show spam.
 static CRGB     s_lastShown = CRGB::Black;
+static CRGB     s_ambientColor = CRGB::Black;
 static uint32_t s_seasonTick = 0;
 static const uint32_t SEASON_REFRESH_MS = 4000;  // rarely — battery
+static uint32_t s_ambientTick = 0;
+static const uint32_t AMBIENT_REFRESH_MS = 140;
 
 static uint32_t s_lastFiles = 0;
 
@@ -115,6 +120,21 @@ static CRGB seasonColor() {
     }
 }
 
+static uint8_t breatheLevel(uint32_t now, uint8_t low, uint8_t high) {
+    const uint16_t phase = (uint16_t)((now / AMBIENT_REFRESH_MS) % 24);
+    const uint8_t wave = phase <= 12 ? (uint8_t)phase : (uint8_t)(24 - phase);
+    return (uint8_t)(low + ((uint16_t)(high - low) * wave / 12));
+}
+
+static bool updateWolfAlert(uint32_t now) {
+    if (!Wolf::isActive()) return false;
+    const uint8_t level = breatheLevel(now, 45, 190);
+    CRGB red(255, 0, 0);
+    red.nscale8(level);
+    show(red);
+    return true;
+}
+
 static bool tickBlink() {
     if (!s_blinkLeft) return false;
     uint32_t now = millis();
@@ -182,15 +202,28 @@ void update() {
 
     s_lastFiles = 0;
 
-    // --- Farm / menu / normal game: season ambient, rare refresh ---
+    // --- Farm / menu / normal game: scene ambient with priority alerts ---
     AppMode mode = App::mode();
     if (mode == AppMode::FARM || mode == AppMode::MENU || mode == AppMode::PIG) {
         uint32_t now = millis();
+        if (mode == AppMode::FARM && updateWolfAlert(now)) {
+            return;
+        }
         if (now - s_seasonTick >= SEASON_REFRESH_MS || s_lastShown == CRGB::Black) {
             s_seasonTick = now;
-            CRGB c = seasonColor();
-            // Dim season further so it's a hint, not a flashlight
-            c.nscale8(96);
+            s_ambientColor = seasonColor();
+            CRGB c = s_ambientColor;
+            // Night is +10% brighter; daylight stays soft for the morning.
+            const uint8_t base = Avatar::isNightTime() ? 106 : 84;
+            const uint8_t breath = breatheLevel(now, 88, 100);
+            c.nscale8((uint8_t)((uint16_t)base * breath / 100));
+            show(c);
+        }
+        if (now - s_ambientTick >= AMBIENT_REFRESH_MS) {
+            s_ambientTick = now;
+            CRGB c = s_ambientColor;
+            const uint8_t breath = breatheLevel(now, 88, 100);
+            c.nscale8(breath);
             show(c);
         }
         return;
