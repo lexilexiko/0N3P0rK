@@ -131,7 +131,6 @@ static const Item RADIO_PRO[] = {
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
     {"CAP TEST",  Kind::ACTION, 41, 0, 0, 0},
-    {"SAFE IO",   Kind::ACTION, 42, 0, 0, 0},
     {"CAP PERF",  Kind::ACTION, 46, 0, 0, 0},
     {"RESET PRO", Kind::ACTION, 29, 0, 0, 0},
 };
@@ -250,7 +249,6 @@ static const char* const H_RADIO_PRO[] = {
     "BOTTOM BAR SHOWS DROPPED FRAMES.",
     "FORCE FLUSH OPEN PCAP NOW.",
     "WRITE _SELFTEST.PCAP ON SD.",
-    "ENABLE SAFE SD PROFILE.",
     "CAPTURE 256 OR 512 BYTES PER FRAME.",
     "LOW-RAM CAPTURE PROFILE; RESET PRO RESTORES.",
     "RESET ALL PRO KNOBS TO DEFAULTS.",
@@ -391,6 +389,12 @@ static const char* radioPackName(uint8_t s) {
     return n ? n : "STOCK";
 }
 
+static bool capturePerformanceProfileActive() {
+    const RadioConfig& r = Config::radio();
+    return r.frameLimit == 256 && r.ringSlots == 8 && !r.fatPcap &&
+           !r.dataAct && !r.logSd && !r.showDrops;
+}
+
 static int getValue(const Item& it) {
     PersonalityConfig& p = Config::personality();
     RadioConfig& r = Config::radio();
@@ -418,6 +422,7 @@ static int getValue(const Item& it) {
             case 20: return p.cardsEnabled ? 1 : 0;
             default: return 0;
         }
+
     }
     if (s_page == SettingsPage::SYSTEM) {
         switch (it.id) {
@@ -517,11 +522,14 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         return;
     }
     if (it.kind == Kind::ACTION) {
-        snprintf(out, len, editing ? "[ENT]" : "ENT");
+        if (it.id == 46)
+            snprintf(out, len, capturePerformanceProfileActive() ? "ON" : "OFF");
+        else
+            snprintf(out, len, editing ? "[ENT]" : "ENT");
         return;
     }
     if (it.kind == Kind::TOGGLE) {
-        snprintf(out, len, getValue(it) ? "YES" : "NO");
+        snprintf(out, len, getValue(it) ? "ON" : "OFF");
         return;
     }
     char raw[20];
@@ -918,7 +926,11 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
         if (it[s_idx].kind == Kind::TEXT)
             return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
-        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
+        if (it[s_idx].kind == Kind::ACTION) {
+            if (it[s_idx].id == 42 || it[s_idx].id == 46)
+                return "ENT toggle ON/OFF";
+            return "ENT run action";
+        }
         return "ENT edit  ;/.  ` back";
     }
     return ";/.  ENT  ` back";
@@ -1228,40 +1240,31 @@ void update() {
             Display::showToast(ok ? "TEST PCAP OK" : "TEST FAIL", 1200);
             return;
         }
-        if (s_page == SettingsPage::RADIO_PRO && cur.id == 42) {
-            // Conservative SD profile: use the existing write safeguards
-            // without changing the capture format or routing.
-            RadioConfig& r = Config::radio();
-            r.ringSlots = 32;
-            r.flushEvery = 1;
-            r.writeRetry = 3;
-            r.magicCheck = true;
-            r.sizeVerify = true;
-            r.protectPcap = true;
-            r.learnRename = true;
-            r.migrateNames = true;
-            r.autoRepair = true;
-            r.rollbackWrite = true;
-            r.logSd = true;
-            r.showDrops = true;
-            Config::markRadioCustom();
-            Config::save();
-            SFX::play(SFX::CONFIRM);
-            Display::showToast("SAFE IO ON", 1000);
-            return;
-        }
         if (s_page == SettingsPage::RADIO_PRO && cur.id == 46) {
             RadioConfig& r = Config::radio();
-            r.frameLimit = 256;
-            r.ringSlots = 8;
-            r.fatPcap = false;
-            r.dataAct = false;
-            r.logSd = false;
-            r.showDrops = false;
+            const bool enable = !capturePerformanceProfileActive();
+            if (enable) {
+                r.frameLimit = 256;
+                r.ringSlots = 8;
+                r.fatPcap = false;
+                r.dataAct = false;
+                r.logSd = false;
+                r.showDrops = false;
+                r.flushEvery = 8;
+                r.writeRetry = 1;
+                r.sizeVerify = false;
+            } else {
+                r.frameLimit = 512;
+                r.ringSlots = 12;
+                r.fatPcap = true;
+                r.dataAct = false;
+                r.logSd = false;
+                r.showDrops = false;
+            }
             Config::markRadioCustom();
             Config::save();
             SFX::play(SFX::CONFIRM);
-            Display::showToast("CAP PERF ON", 1000);
+            Display::showToast(enable ? "CAP PERF ON" : "CAP PERF OFF", 1000);
             return;
         }
         if (s_page == SettingsPage::RADIO_PRO && cur.id == 29) {
@@ -1308,7 +1311,7 @@ void update() {
         int next = getValue(cur) ? 0 : 1;
         if (setValue(cur, next)) {
             SFX::play(SFX::CONFIRM);
-            Display::showToast(next ? "YES" : "NO", 700);
+            Display::showToast(next ? "ON" : "OFF", 700);
         }
         return;
     }

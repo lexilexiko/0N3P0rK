@@ -333,6 +333,17 @@ void Config::applyRadioPack(uint8_t pack) {
         r.dataAct      = pr.dataAct;
         r.strictLock   = pr.strictLock;
         r.depthHoldSec = pr.depthHoldSec;
+        r.ringSlots    = pr.ringSlots;
+        r.flushEvery   = pr.flushEvery;
+        r.writeRetry   = pr.writeRetry;
+        r.magicCheck   = pr.magicCheck;
+        r.sizeVerify   = pr.sizeVerify;
+        r.protectPcap  = pr.protectPcap;
+        r.learnRename  = pr.learnRename;
+        r.migrateNames = pr.migrateNames;
+        r.autoRepair   = pr.autoRepair;
+        r.rollbackWrite = pr.rollbackWrite;
+        r.frameLimit   = pr.frameLimit;
     }
     r.pack = pack;
     radioConfig = r;

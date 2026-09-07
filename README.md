@@ -218,7 +218,7 @@ The current radio design uses the two capture modes above plus shared RADIO and 
 - `LOG SD` and `SHOW DROP` expose optional diagnostics
 - `FLUSH NOW` and `CAP TEST` provide maintenance and PCAP self-test actions
 
-`AUTO REPAIR` and `ROLLBACK` are enabled by default. `SAFE IO` enables the conservative PCAP protection profile. `CAP PERF` selects a lower-memory capture profile: a 256-byte frame limit, a smaller ring, reduced radiotap/data-activity work, and fewer optional SD/UI diagnostics. `RESET PRO` restores the normal radio profile.
+`AUTO REPAIR` and `ROLLBACK` are enabled by default. The `SAFE` pack is a selectable ready-made profile for conservative PCAP protection and frequent SD flushing. It is selected from the normal `PACK` control and applies the complete profile at once. `CAP PERF` is a selectable ON/OFF lower-memory capture profile: a 256-byte frame limit, a smaller ring, reduced radiotap/data-activity work, and fewer optional SD/UI diagnostics. Editing any pack knob changes the pack indicator to `CUSTOM`. `RESET PRO` restores the normal radio profile.
 
 ### Capture file safety
 
