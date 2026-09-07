@@ -117,6 +117,7 @@ static const Item RADIO_PRO[] = {
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
     {"CAP TEST",  Kind::ACTION, 41, 0, 0, 0},
+    {"SAFE IO",   Kind::ACTION, 42, 0, 0, 0},
     {"RESET PRO", Kind::ACTION, 29, 0, 0, 0},
 };
 
@@ -1151,6 +1152,26 @@ void update() {
             bool ok = Cap::selfTestPcap();
             SFX::play(ok ? SFX::CONFIRM : SFX::ERROR);
             Display::showToast(ok ? "TEST PCAP OK" : "TEST FAIL", 1200);
+            return;
+        }
+        if (s_page == SettingsPage::RADIO_PRO && cur.id == 42) {
+            // Conservative SD profile: use the existing write safeguards
+            // without changing the capture format or routing.
+            RadioConfig& r = Config::radio();
+            r.ringSlots = 32;
+            r.flushEvery = 1;
+            r.writeRetry = 3;
+            r.magicCheck = true;
+            r.sizeVerify = true;
+            r.protectPcap = true;
+            r.learnRename = true;
+            r.migrateNames = true;
+            r.logSd = true;
+            r.showDrops = true;
+            Config::markRadioCustom();
+            Config::save();
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("SAFE IO ON", 1000);
             return;
         }
         if (s_page == SettingsPage::RADIO_PRO && cur.id == 29) {
