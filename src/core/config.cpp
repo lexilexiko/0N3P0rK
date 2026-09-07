@@ -104,6 +104,7 @@ bool Config::init() {
     r.autoRepair = s_prefs.getBool("autorep", r.autoRepair);
     r.rollbackWrite = s_prefs.getBool("rollback", r.rollbackWrite);
     r.frameLimit = s_prefs.getUShort("frmlim", r.frameLimit);
+    r.pcapMaxKb = s_prefs.getUShort("pcapmax", r.pcapMaxKb);
     r.logSd = s_prefs.getBool("logsd", r.logSd);
     r.showDrops = s_prefs.getBool("showdrp", r.showDrops);
 
@@ -169,6 +170,8 @@ bool Config::init() {
     if (r.flushEvery > 32) r.flushEvery = 32;
     if (r.writeRetry > 3) r.writeRetry = 3;
     if (r.frameLimit != 256 && r.frameLimit != 512) r.frameLimit = 512;
+    if (r.pcapMaxKb != 2 && r.pcapMaxKb != 4 &&
+        r.pcapMaxKb != 8 && r.pcapMaxKb != 16) r.pcapMaxKb = 4;
     if (r.fallbackSec < 10) r.fallbackSec = 10;
     if (r.fallbackSec > 90) r.fallbackSec = 90;
     if (r.kickBurst < 1) r.kickBurst = 1;
@@ -261,6 +264,7 @@ bool Config::save() {
     s_prefs.putBool("autorep", r.autoRepair);
     s_prefs.putBool("rollback", r.rollbackWrite);
     s_prefs.putUShort("frmlim", r.frameLimit);
+    s_prefs.putUShort("pcapmax", r.pcapMaxKb);
     s_prefs.putBool("logsd", r.logSd);
     s_prefs.putBool("showdrp", r.showDrops);
 

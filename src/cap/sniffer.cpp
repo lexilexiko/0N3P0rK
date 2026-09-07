@@ -38,7 +38,7 @@ static bool           s_sizeVerify = false;
 static bool           s_protectPcap = true;
 static bool           s_learnRename = true;
 static bool           s_migrateNames = true;
-static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
+static uint32_t s_maxFileSize = 4UL * 1024UL;
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 static const uint8_t HOP_CORE[] = {1, 6, 11};
@@ -944,7 +944,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
         preSize = s_fileSize;
     }
     bool createdNew = false;
-    if (s_fileSize >= MAX_FILE_SIZE) {
+    if (s_fileSize >= s_maxFileSize) {
         s_file.close();
         if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
             Serial.printf("[CAP] pcap at cap (%u bytes), skipping %s\n",
@@ -1020,7 +1020,7 @@ static void writeFrameToFile(const Slot& s) {
     if (s_fileOpen && !sameBssid(s_fileBssid, s.bssid)) {
         closeFile();
     }
-    if (s_fileOpen && s_fileSize >= MAX_FILE_SIZE) {
+    if (s_fileOpen && s_fileSize >= s_maxFileSize) {
         closeFile();
     }
     if (!s_fileOpen) {
@@ -1425,6 +1425,7 @@ static void startCommon(RunMode mode) {
     s_hopMs = Config::radio().hopMs;
     s_frameLimit = Config::radio().frameLimit;
     if (s_frameLimit != 256 && s_frameLimit != FRAME_MAX) s_frameLimit = FRAME_MAX;
+    s_maxFileSize = (uint32_t)Config::radio().pcapMaxKb * 1024UL;
     s_minRssi = Config::radio().minRssi;
     s_hopSet = Config::radio().hopSet;
     s_fallbackSec = Config::radio().fallbackSec;

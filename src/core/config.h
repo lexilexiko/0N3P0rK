@@ -157,6 +157,7 @@ struct RadioConfig {
     bool     autoRepair = true;   // repair an incomplete PCAP tail before append
     bool     rollbackWrite = true; // repair a partial packet after a short write
     uint16_t frameLimit = 512;      // 256 or 512 bytes stored per captured frame
+    uint16_t pcapMaxKb = 4;         // 2, 4, 8 or 16 KB per BSSID capture
     // PRO debug
     bool logSd = false;      // extra Serial [CAP] lines
     bool showDrops = false;  // bottom bar shows framesDropped

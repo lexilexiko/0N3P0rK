@@ -98,6 +98,7 @@ static const Item RADIO[] = {
     {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
     {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
     {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    {"PCAP MAX",  Kind::VALUE,  47, 2, 16, 2},
     {"AUTO REPAIR",Kind::TOGGLE,43, 0, 1, 1},
     {"ROLLBACK",  Kind::TOGGLE, 44, 0, 1, 1},
     {"FRAME LIM", Kind::VALUE,  45, 256, 512, 256},
@@ -219,6 +220,7 @@ static const char* const H_RADIO[] = {
     "KICK BOTH WAYS AP<->STA.",           // BIDIR
     "AUTH+ASSOC FOR PMKID.",              // PMKID
     "RICH RADIOTAP CH/RSSI IN PCAP.",     // FAT PCAP
+    "MAX PCAP SIZE PER BSSID IN KB.",     // PCAP MAX
     "REPAIR INCOMPLETE PCAP TAIL.",       // AUTO REPAIR
     "ROLL BACK PARTIAL PACKET WRITE.",    // ROLLBACK
     "STORE 256 OR 512 BYTES PER FRAME.",  // FRAME LIM
@@ -490,6 +492,7 @@ static int getValue(const Item& it) {
             case 43: return r.autoRepair ? 1 : 0;
             case 44: return r.rollbackWrite ? 1 : 0;
             case 45: return r.frameLimit;
+            case 47: return r.pcapMaxKb;
             case 38: return r.logSd ? 1 : 0;
             case 39: return r.showDrops ? 1 : 0;
             default: return 0;
@@ -559,6 +562,8 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
+    } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 47) {
+        snprintf(raw, sizeof(raw), "%dK", getValue(it));
     } else if ((s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_PRO) && it.id == 21) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
@@ -822,6 +827,7 @@ static bool setValue(const Item& it, int v) {
             case 43: r.autoRepair = v != 0; break;
             case 44: r.rollbackWrite = v != 0; break;
             case 45: r.frameLimit = (uint16_t)v; break;
+            case 47: r.pcapMaxKb = (uint16_t)v; break;
             case 38: r.logSd = v != 0; break;
             case 39: r.showDrops = v != 0; break;
             default: return false;
@@ -1303,6 +1309,7 @@ void update() {
             r.autoRepair = true;
             r.rollbackWrite = true;
             r.frameLimit = 512;
+            r.pcapMaxKb = 4;
             r.ringSlots = 12;
             r.fatPcap = true;
             r.logSd = false;
