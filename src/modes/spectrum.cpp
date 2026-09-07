@@ -919,6 +919,12 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextColor(fg);
     c.drawString(line, 4, 40);
 
+    snprintf(line, sizeof(line), "ring %u/%u drop %u err %u",
+             (unsigned)cap.ringDepth, (unsigned)cap.ringHighWater,
+             (unsigned)cap.framesDropped, (unsigned)cap.writeErrors);
+    c.setTextColor(cap.writeErrors || cap.framesDropped ? UiStyle::PINK : UiStyle::DIM);
+    c.drawString(line, 4, 80);
+
     bool pair = Hc22000::hasHandshake(s_monBssid, s_huntDepth);
     uint8_t mask = Hc22000::handshakeMask(s_monBssid);
     c.setTextColor(pair ? UiStyle::GOLD : UiStyle::DIM);
@@ -944,7 +950,7 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     const char* st = "listening";
     if (Cap::isLocked()) st = "hold after M1";
     else if (cap.framesDeauth) st = "kicking + sniff";
-    c.drawString(st, 4, 80);
+    c.drawString(st, 4, 94);
 }
 
 void start() {

@@ -131,6 +131,7 @@ static const Item RADIO_PRO[] = {
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
     {"CAP TEST",  Kind::ACTION, 41, 0, 0, 0},
+    {"CAP READY", Kind::ACTION, 42, 0, 0, 0},
     {"CAP PERF",  Kind::ACTION, 46, 0, 0, 0},
     {"RESET PRO", Kind::ACTION, 29, 0, 0, 0},
 };
@@ -249,6 +250,7 @@ static const char* const H_RADIO_PRO[] = {
     "BOTTOM BAR SHOWS DROPPED FRAMES.",
     "FORCE FLUSH OPEN PCAP NOW.",
     "WRITE _SELFTEST.PCAP ON SD.",
+    "CHECK SD, PCAP, SAFETY AND RING HEALTH.",
     "CAPTURE 256 OR 512 BYTES PER FRAME.",
     "LOW-RAM CAPTURE PROFILE; RESET PRO RESTORES.",
     "RESET ALL PRO KNOBS TO DEFAULTS.",
@@ -1238,6 +1240,13 @@ void update() {
             bool ok = Cap::selfTestPcap();
             SFX::play(ok ? SFX::CONFIRM : SFX::ERROR);
             Display::showToast(ok ? "TEST PCAP OK" : "TEST FAIL", 1200);
+            return;
+        }
+        if (s_page == SettingsPage::RADIO_PRO && cur.id == 42) {
+            char report[24];
+            bool ok = Cap::readinessCheck(report, sizeof(report));
+            SFX::play(ok ? SFX::CONFIRM : SFX::ERROR);
+            Display::showToast(report, 1500);
             return;
         }
         if (s_page == SettingsPage::RADIO_PRO && cur.id == 46) {

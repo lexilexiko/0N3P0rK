@@ -15,6 +15,7 @@ struct BeaconSlot {
     uint8_t  channel;
     int8_t   rssi;
     uint16_t len;
+    uint32_t lastSeenMs;
     char     ssid[33];
     // Per-AP client list. Bumped from 4 -> 20 to match M5PORKCHOP's
     // MAX_CLIENTS_PER_NETWORK; busy APs (offices, cafes, classrooms) easily

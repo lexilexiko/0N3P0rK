@@ -89,6 +89,7 @@ static bool     s_pendingLearn = false;
 static portMUX_TYPE s_pendingMux = portMUX_INITIALIZER_UNLOCKED;
 
 static const uint8_t BEACON_SLOTS = 16;
+static const uint32_t BEACON_TTL_MS = 120000;
 // BeaconSlot itself now lives in beacon_slot.h (pulled in via
 // beacon_slot.h) so the capture methods can read it without depending on
 // sniffer.cpp's internals.
@@ -142,6 +143,19 @@ static bool     s_pinOk = false;
 static uint8_t  s_pinBssid[6] = {};
 static uint8_t  s_pinCh = 6;
 static char     s_pinSsid[33] = {};
+
+static uint16_t ringDepth() {
+    uint8_t write = s_write;
+    uint8_t read = s_read;
+    return write >= read ? (uint16_t)(write - read)
+                          : (uint16_t)(s_ringCap - read + write);
+}
+
+static void updateRingTelemetry() {
+    uint16_t depth = ringDepth();
+    s_cnt.ringDepth = depth;
+    if (depth > s_cnt.ringHighWater) s_cnt.ringHighWater = depth;
+}
 
 // ---- Lock-on-BSSID (Porkchop-style) -----------------------------------
 // When the first EAPOL M1 is seen for a target BSSID we want M2 (or M3/M4)
@@ -280,6 +294,10 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) return &s_beacons[i];
     }
     return nullptr;
+}
+
+static bool beaconFresh(const BeaconSlot& b) {
+    return b.lastSeenMs != 0 && (millis() - b.lastSeenMs) <= BEACON_TTL_MS;
 }
 
 static uint8_t s_methodCount = 0;
@@ -436,6 +454,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) {
             memcpy(s_beacons[i].frame, f, len);
             s_beacons[i].len = len;
+            s_beacons[i].lastSeenMs = millis();
             s_beacons[i].channel = s_cnt.currentChannel;
             s_beacons[i].rssi = rssi;
             s_beacons[i].pmfCapable = beaconHasPmf(f, len);
@@ -476,6 +495,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     memcpy(s_beacons[idx].bssid, bssid, 6);
     memcpy(s_beacons[idx].frame, f, len);
     s_beacons[idx].len = len;
+    s_beacons[idx].lastSeenMs = millis();
     s_beacons[idx].channel = s_cnt.currentChannel;
     s_beacons[idx].rssi = rssi;
     s_beacons[idx].pmfCapable = beaconHasPmf(f, len);
@@ -499,8 +519,6 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         uint8_t fc = f[0] & 0xFC;
         if (fc == 0x80 || fc == 0x50) {
             storeBeacon(f + 16, f, len, (int8_t)pkt->rx_ctrl.rssi);
-        } else if (fc == 0x10) {
-            Hc22000::feed(f, len);
         }
         return;
     }
@@ -595,6 +613,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     memcpy(s.frame, f, s.len);
     s_write = next;
     s_cnt.framesQueued++;
+    updateRingTelemetry();
 }
 
 // Preferred name: SSID_AABBCCDDEEFF.pcap (readable).
@@ -772,7 +791,9 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.origLen = ph.inclLen;
     size_t expect = sizeof(ph) + rtLen + flen;
 
-    // Build one buffer and write once (retry on short write = PRO W RETRY).
+    // Build one buffer. A short SD write advances the file position, so retry
+    // only the unwritten suffix; retrying the whole packet would duplicate the
+    // prefix and create a corrupt PCAP stream.
     // Stack buffer: FRAME_MAX + headers stays under ~600 bytes.
     uint8_t buf[sizeof(Pcap::PacketHeader) + Pcap::RADIOTAP_FAT_LEN + FRAME_MAX];
     if (expect > sizeof(buf)) return false;
@@ -780,17 +801,25 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     memcpy(buf + sizeof(ph), rt, rtLen);
     memcpy(buf + sizeof(ph) + rtLen, frame, flen);
 
-    size_t n = 0;
-    uint8_t tries = (uint8_t)(1 + s_writeRetry);
-    for (uint8_t ttry = 0; ttry < tries; ttry++) {
-        n = s_file.write(buf, expect);
-        if (n == expect) break;
+    size_t written = 0;
+    uint8_t retriesLeft = s_writeRetry;
+    while (written < expect) {
+        size_t n = s_file.write(buf + written, expect - written);
+        if (n > 0) {
+            written += n;
+            continue;
+        }
+        if (retriesLeft == 0) break;
+        retriesLeft--;
+        delay(2);
     }
-    if (n != expect) {
+    if (written != expect) {
+        s_cnt.writeErrors++;
         // A short write may leave a partial packet. Rebuild the file from the
         // last complete packet before the next append.
         if (Config::radio().logSd)
-            Serial.printf("[CAP] short write n=%u expect=%u\n", (unsigned)n, (unsigned)expect);
+            Serial.printf("[CAP] short write n=%u expect=%u\n",
+                          (unsigned)written, (unsigned)expect);
         closeFile();
         if (Config::radio().rollbackWrite) {
             char path[96];
@@ -973,7 +1002,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
     const BeaconSlot* bcn = findBeacon(bssid);
     if (bcn && (createdNew || s_fileSize < 80)) {
         writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi);
-        Hc22000::feed(bcn->frame, bcn->len);
     }
     return true;
 }
@@ -1095,6 +1123,8 @@ static void processPendingSsidLearn() {
 }
 
 static void drainRing() {
+    uint32_t started = millis();
+    s_cnt.drainCount++;
     // Process any pending "SSID just learned for a hidden BSSID" rename
     // FIRST, before writing this tick's queued frames. makeFilename() (via
     // ssidForBssid()) reads the SSID straight out of the live beacon table,
@@ -1113,8 +1143,13 @@ static void drainRing() {
         const Slot& s = s_ring[s_read];
         writeFrameToFile(s);
         s_read = (uint8_t)((s_read + 1) % s_ringCap);
+        yield();
     }
     if (s_fileOpen) s_file.flush();
+    s_cnt.ringDepth = ringDepth();
+    s_cnt.lastDrainMs = millis() - started;
+    if (s_cnt.lastDrainMs > s_cnt.maxDrainMs)
+        s_cnt.maxDrainMs = s_cnt.lastDrainMs;
 }
 
 static bool isOwnAp(const uint8_t* bssid) {
@@ -1189,6 +1224,7 @@ static bool apDone(const uint8_t* bssid) {
 }
 
 static bool apKickable(const BeaconSlot& b) {
+    if (!beaconFresh(b)) return false;
     if (isOwnAp(b.bssid)) return false;
     if (skipPin(b.bssid)) return false;
     if (isSessionSkipped(b.bssid)) return false;
@@ -1519,10 +1555,13 @@ void stop() {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(false, false);
     (void)hopped;
-    Serial.printf("[CAP] stopped seen=%u eapol=%u written=%u deauth=%u dropped=%u\n",
+    Serial.printf("[CAP] stopped seen=%u eapol=%u written=%u deauth=%u dropped=%u "
+                  "werr=%u ring=%u/%u drain=%ums max=%ums\n",
                   s_cnt.framesSeen, s_cnt.framesEapol,
                   s_cnt.framesWritten, s_cnt.framesDeauth,
-                  s_cnt.framesDropped);
+                  s_cnt.framesDropped, s_cnt.writeErrors,
+                  (unsigned)s_cnt.ringHighWater, (unsigned)s_ringCap,
+                  (unsigned)s_cnt.lastDrainMs, (unsigned)s_cnt.maxDrainMs);
 }
 
 bool isRunning() { return s_running; }
@@ -1647,10 +1686,8 @@ void loop() {
     }
 
     drainRing();
-    // Hc22000::feed() runs from the WiFi promiscuous IRQ; it only fills
-    // in-memory slots and marks them dirty. flushPending() is where the
-    // actual .22000 / .pmkid files are written to SD - safe to do here,
-    // never inside the ISR.
+    // Hc22000::feed() runs from the drained capture queue in loop context;
+    // flushPending() is where the actual .22000 / .pmkid files are written.
     Hc22000::flushPending();
     maybeRotateMethod();
 
@@ -1802,6 +1839,44 @@ bool selfTestPcap() {
     f.close();
     Serial.printf("[CAP] selfTest wrote %s (%u bytes)\n", path, (unsigned)sz);
     return sz >= sizeof(fh) + sizeof(ph) + 8;
+}
+
+bool readinessCheck(char* report, size_t reportLen) {
+    if (!report || reportLen == 0) return false;
+    report[0] = '\0';
+
+    if (s_running) {
+        snprintf(report, reportLen, "STOP CAP");
+        return false;
+    }
+    if (!Storage::begin()) {
+        snprintf(report, reportLen, "NO SD");
+        return false;
+    }
+    Storage::ensureDir(Storage::DIR_HS);
+    if (!selfTestPcap()) {
+        snprintf(report, reportLen, "PCAP FAIL");
+        return false;
+    }
+
+    const bool safe = Config::radio().autoRepair &&
+                      Config::radio().rollbackWrite &&
+                      Config::radio().protectPcap;
+    if (!safe) {
+        snprintf(report, reportLen, "SAFE OFF");
+        return false;
+    }
+    if (s_running && s_cnt.writeErrors > 0) {
+        snprintf(report, reportLen, "SD ERR %u", (unsigned)s_cnt.writeErrors);
+        return false;
+    }
+    if (s_running && s_cnt.ringHighWater >= s_ringCap - 1) {
+        snprintf(report, reportLen, "RING FULL");
+        return false;
+    }
+
+    snprintf(report, reportLen, "READY SD PCAP");
+    return true;
 }
 
 

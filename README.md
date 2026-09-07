@@ -212,11 +212,17 @@ The current radio design uses the two capture modes above plus shared RADIO and 
 
 - `AUTO REPAIR` repairs an incomplete PCAP tail before appending
 - `ROLLBACK` removes a partially written packet after a short SD write
+- Short SD writes resume from the unwritten packet suffix instead of duplicating
+  bytes; failed packets are then repaired or rolled back before the next append
 - `FRAME LIM` selects a 256- or 512-byte stored frame limit
 - `RING N`, `FLUSH N`, and `W RETRY` tune the capture ring and SD write behavior
 - `MAGIC CHK`, `SIZE VER`, `PROTECT`, `LEARN REN`, and `MIGRATE` protect and normalize capture files
 - `LOG SD` and `SHOW DROP` expose optional diagnostics
 - `FLUSH NOW` and `CAP TEST` provide maintenance and PCAP self-test actions
+- `CAP READY` checks SD access, PCAP creation, safety defaults, and capture state
+  before starting a session; it reports the reason when the device is not ready
+- Spectrum capture view reports ring pressure, dropped frames, and SD write errors
+  so RF overload can be separated from storage problems
 
 `AUTO REPAIR` and `ROLLBACK` are enabled by default. The `SAFE` pack is a selectable ready-made profile for conservative PCAP protection and frequent SD flushing. It is selected from the normal `PACK` control and applies the complete profile at once. `CAP PERF` is a selectable ON/OFF lower-memory capture profile: a 256-byte frame limit, a smaller ring, reduced radiotap/data-activity work, and fewer optional SD/UI diagnostics. Editing any pack knob changes the pack indicator to `CUSTOM`. `RESET PRO` restores the normal radio profile.
 

@@ -39,6 +39,7 @@ void loop();
 // PRO helpers (RADIO PRO actions)
 void flushNow();           // flush open pcap if any
 bool selfTestPcap();       // write tiny valid test pcap on SD
+bool readinessCheck(char* report, size_t reportLen); // SD + capture health check
 
 
 struct Counters {
@@ -49,6 +50,12 @@ struct Counters {
     uint32_t framesWritten;
     uint32_t framesDeauth;
     uint32_t filesOpened;
+    uint32_t writeErrors;
+    uint32_t drainCount;
+    uint16_t ringHighWater;
+    uint16_t ringDepth;
+    uint32_t lastDrainMs;
+    uint32_t maxDrainMs;
     uint8_t  currentChannel;
     char     currentBssid[18];
     char     currentSsid[33];
