@@ -668,7 +668,6 @@ static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPat
 }
 
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
-    if (!s_file) return false;
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
     uint8_t rtLen = Pcap::buildRadiotap(rt, ch ? ch : s_cnt.currentChannel, rssi, s_fatPcap);
     Pcap::PacketHeader ph;
@@ -676,37 +675,26 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.tsUsec  = (ts % 1000) * 1000;
     ph.inclLen = rtLen + flen;
     ph.origLen = ph.inclLen;
-    size_t expect = sizeof(ph) + rtLen + flen;
-    // Write as one shot where possible — partial write = corrupt packet boundary
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
     n += s_file.write(frame, flen);
+    size_t expect = sizeof(ph) + rtLen + flen;
     if (n != expect) return false;
     s_fileSize += expect;
-    // Flush every ~8 packets so a crash/power-loss does not leave a huge
-    // unflushed tail, and a second accidental open sees the real size.
-    static uint8_t s_pktSinceFlush = 0;
-    if (++s_pktSinceFlush >= 8) {
-        s_pktSinceFlush = 0;
-        s_file.flush();
-    }
     return true;
 }
 
 static void closeFile() {
-    // Always close the SD handle if present — even when s_fileOpen was lost
-    // (merge bugs). Double-open of the same path is a common source of
-    // large-but-corrupt pcaps (second global header mid-stream).
-    if (s_file) {
+    if (s_fileOpen) {
         s_file.flush();
         s_file.close();
+        s_fileOpen = false;
     }
-    s_fileOpen = false;
 }
 
 static bool openFileForBssid(const uint8_t* bssid) {
-    // Close any live handle (flag can be wrong after a bad merge).\n    closeFile();
+    if (s_fileOpen) closeFile();
 
     Storage::Stats st = Storage::stats();
     char name[Storage::FILE_NAME_MAX];
@@ -734,29 +722,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
             SD.remove(path);
             exists = false;
             preSize = 0;
-        } else if (preSize >= sizeof(Pcap::FileHeader)) {
-            // Large but invalid: wrong magic / half-written dual header.
-            // Quarantine and start a clean capture rather than append garbage.
-            File chk = SD.open(path, "r");
-            uint32_t magic = 0;
-            if (chk && chk.read((uint8_t*)&magic, 4) == 4) {
-                chk.close();
-                bool okMagic = (magic == 0xA1B2C3D4u || magic == 0xD4C3B2A1u ||
-                                magic == 0xA1B23C4Du || magic == 0x4D3CB2A1u);
-                if (!okMagic) {
-                    char bad[96];
-                    snprintf(bad, sizeof(bad), "%s.bad", path);
-                    SD.remove(bad);
-                    if (SD.rename(path, bad))
-                        Serial.printf("[CAP] quarantine bad magic -> %s\n", bad);
-                    else
-                        SD.remove(path);
-                    exists = false;
-                    preSize = 0;
-                }
-            } else if (chk) {
-                chk.close();
-            }
         }
     }
     if (!exists && st.handshakes >= MAX_FILES) {
@@ -820,7 +785,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
             return false;
         }
         s_fileSize = sizeof(fh);
-        s_file.flush();  // size visible to any later open; header durable
         s_cnt.filesOpened++;
         createdNew = true;
         XP::addXP(XPEvent::HANDSHAKE);
@@ -833,10 +797,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
             memcpy(s_keptLog, bssid, 6);
         }
     }
-    memcpy(s_fileBssid, bssid, 6);
-    memcpy(s_fileName, name, sizeof(s_fileName));
-    s_fileOpen = true;
-
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, name, ssid);
 
     const BeaconSlot* bcn = findBeacon(bssid);
