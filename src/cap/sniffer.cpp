@@ -1017,6 +1017,12 @@ static void writeFrameToFile(const Slot& s) {
         if (s_fileOpen && sameBssid(s_fileBssid, s.bssid)) closeFile();
         return;
     }
+
+    // Build the crackable 22000 record independently of PCAP storage.
+    // A capped, full, or temporarily unavailable PCAP must not discard a
+    // valid EAPOL handshake from the exporter.
+    Hc22000::feed(s.frame, s.len);
+
     if (s_fileOpen && !sameBssid(s_fileBssid, s.bssid)) {
         closeFile();
     }
@@ -1041,7 +1047,6 @@ static void writeFrameToFile(const Slot& s) {
         return;
     }
     s_cnt.framesWritten++;
-    Hc22000::feed(s.frame, s.len);
     memcpy(s_kickBssid, s.bssid, 6);
     memcpy(s_kickSta, s.station, 6);
     s_kickStaOk = (s.station[0] & 0x01) == 0;
