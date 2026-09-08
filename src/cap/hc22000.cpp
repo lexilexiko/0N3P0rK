@@ -24,6 +24,7 @@ struct Hs {
     uint8_t anonceReplay[8];  // M1's EAPOL key replay counter
     uint8_t m2Replay[8];      // M2's own EAPOL key replay counter (must equal M1's)
     uint8_t pmkid[16];
+    uint32_t lastPmkidCapture;
     uint8_t m2[MAX_EAPOL];
     uint16_t m2Len;
     bool used;
@@ -55,6 +56,8 @@ static void hexEnc(const uint8_t* in, size_t n, char* out) {
 }
 
 static uint32_t s_lastM1Ms = 0;
+static uint32_t s_pmkidAttempts = 0;
+static uint32_t s_pmkidRejected = 0;
 
 static void essidOf(const Hs* h, char ssid[33]) {
     ssid[0] = '\0';
@@ -212,15 +215,27 @@ static uint16_t hdrLen80211(const uint8_t* f, uint16_t len) {
     return off;
 }
 
+static bool isValidPmkid(const uint8_t pmkid[16]) {
+    bool allZero = true;
+    bool allOnes = true;
+    for (uint8_t i = 0; i < 16; i++) {
+        if (pmkid[i] != 0x00) allZero = false;
+        if (pmkid[i] != 0xFF) allOnes = false;
+    }
+    return !allZero && !allOnes;
+}
+
 static bool parseRsnPmkid(const uint8_t* ie, uint8_t ielen, uint8_t out[16]) {
     // version(2)+group(4)+pairCnt(2)+pair*4+akmCnt(2)+akm*4+caps(2)+pmkidCnt(2)+pmkid
     if (ielen < 20) return false;
     uint16_t off = 2 + 4;
     if (off + 2 > ielen) return false;
     uint16_t pairCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    if (pairCnt > (uint16_t)((ielen - off - 2) / 4)) return false;
     off = (uint16_t)(off + 2 + pairCnt * 4);
     if (off + 2 > ielen) return false;
     uint16_t akmCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    if (akmCnt > (uint16_t)((ielen - off - 2) / 4)) return false;
     off = (uint16_t)(off + 2 + akmCnt * 4);
     if (off + 2 > ielen) return false;
     off = (uint16_t)(off + 2); // rsn caps
@@ -237,10 +252,15 @@ static bool parseRsnPmkid(const uint8_t* ie, uint8_t ielen, uint8_t out[16]) {
 
 static void parseAssoc(const uint8_t* f, uint16_t len) {
     uint8_t subtype = (f[0] >> 4) & 0x0F;
-    if (subtype != 1) return; // association response
-    const uint8_t* bssid = f + 16;
-    const uint8_t* sta = f + 4;
-    uint16_t off = (uint16_t)(24 + 6);
+    if (subtype != 0 && subtype != 2) return; // association/reassociation request
+    const uint8_t* bssid = f + 4;   // destination is the AP
+    const uint8_t* sta = f + 10;    // source is the station
+    if ((bssid[0] & 0x01) || (sta[0] & 0x01) || memcmp(bssid, sta, 6) == 0) {
+        return;
+    }
+    uint16_t fixedLen = (subtype == 2) ? 10 : 4;
+    if (len < (uint16_t)(24 + fixedLen)) return;
+    uint16_t off = (uint16_t)(24 + fixedLen);
     while (off + 2 <= len) {
         uint8_t id = f[off];
         uint8_t l = f[off + 1];
@@ -248,12 +268,22 @@ static void parseAssoc(const uint8_t* f, uint16_t len) {
         if (id == 48) {
             uint8_t pmk[16];
             if (parseRsnPmkid(f + off + 2, l, pmk)) {
+                s_pmkidAttempts++;
+                if (!isValidPmkid(pmk)) {
+                    s_pmkidRejected++;
+                    off = (uint16_t)(off + 2 + l);
+                    continue;
+                }
                 Hs* h = slotFor(bssid);
-                memcpy(h->sta, sta, 6);
-                memcpy(h->pmkid, pmk, 16);
-                h->havePmkid = true;
-                // No SD I/O from the IRQ - flushPending() handles it.
-                h->dirty = true;
+                if (memcmp(h->pmkid, pmk, 16) != 0 ||
+                    (millis() - h->lastPmkidCapture) >= 5000) {
+                    memcpy(h->sta, sta, 6);
+                    memcpy(h->pmkid, pmk, 16);
+                    h->lastPmkidCapture = millis();
+                    h->havePmkid = true;
+                    // No SD I/O from the IRQ - flushPending() handles it.
+                    h->dirty = true;
+                }
             }
         }
         off = (uint16_t)(off + 2 + l);
@@ -391,6 +421,8 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
 void reset() {
     memset(s_hs, 0, sizeof(s_hs));
     s_lastM1Ms = 0;
+    s_pmkidAttempts = 0;
+    s_pmkidRejected = 0;
 }
 
 void flushPending() {
@@ -436,6 +468,14 @@ uint16_t pairCount() {
     return n;
 }
 
+uint32_t pmkidAttempts() {
+    return s_pmkidAttempts;
+}
+
+uint32_t pmkidRejected() {
+    return s_pmkidRejected;
+}
+
 uint8_t handshakeMask(const uint8_t* bssid) {
     if (!bssid) return 0;
     for (uint8_t i = 0; i < MAX_HS; i++) {
@@ -468,7 +508,7 @@ void feed(const uint8_t* frame, uint16_t len) {
     if (type == 0) {
         uint8_t subtype = (frame[0] >> 4) & 0x0F;
         if (subtype == 8 || subtype == 5) parseBeacon(frame, len);
-        else if (subtype == 1) parseAssoc(frame, len);
+        else if (subtype == 0 || subtype == 2) parseAssoc(frame, len);
     } else if (type == 2) parseEapol(frame, len);
 }
 

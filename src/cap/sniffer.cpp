@@ -1569,7 +1569,11 @@ bool isRunning() { return s_running; }
 RunMode runMode() { return s_mode; }
 bool isLocked() { return s_running && s_lockUntil != 0 && millis() < s_lockUntil && !lockStreakExpired(); }
 
-const Counters& counters() { return s_cnt; }
+const Counters& counters() {
+    s_cnt.pmkidAttempts = Hc22000::pmkidAttempts();
+    s_cnt.pmkidRejected = Hc22000::pmkidRejected();
+    return s_cnt;
+}
 
 bool isSkipped(const uint8_t* bssid) {
     return isSessionSkipped(bssid);

@@ -131,6 +131,8 @@ static const Item RADIO_PRO[] = {
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
     {"LOG SD",    Kind::TOGGLE, 38, 0, 1, 1},
     {"SHOW DROP", Kind::TOGGLE, 39, 0, 1, 1},
+    {"PMKID ATT", Kind::VALUE,  49, 0, 65535, 1},
+    {"PMKID REJ", Kind::VALUE,  50, 0, 65535, 1},
     {"FLUSH NOW", Kind::ACTION, 40, 0, 0, 0},
     {"CAP TEST",  Kind::ACTION, 41, 0, 0, 0},
     {"CAP PERF",  Kind::ACTION, 46, 0, 0, 0},
@@ -251,6 +253,8 @@ static const char* const H_RADIO_PRO[] = {
     "DEAUTH REASON CODE 1-8.",
     "EXTRA SERIAL [CAP] LOG LINES.",
     "BOTTOM BAR SHOWS DROPPED FRAMES.",
+    "PMKID ATTEMPTS FOUND (READ-ONLY).",
+    "PMKID REJECTED AS INVALID (READ-ONLY).",
     "FORCE FLUSH OPEN PCAP NOW.",
     "WRITE _SELFTEST.PCAP ON SD.",
     "CAPTURE 256 OR 512 BYTES PER FRAME.",
@@ -495,6 +499,8 @@ static int getValue(const Item& it) {
             case 47: return r.pcapMaxKb;
             case 38: return r.logSd ? 1 : 0;
             case 39: return r.showDrops ? 1 : 0;
+            case 49: return Cap::counters().pmkidAttempts;
+            case 50: return Cap::counters().pmkidRejected;
             default: return 0;
         }
     }
@@ -830,6 +836,9 @@ static bool setValue(const Item& it, int v) {
             case 47: r.pcapMaxKb = (uint16_t)v; break;
             case 38: r.logSd = v != 0; break;
             case 39: r.showDrops = v != 0; break;
+            case 49:
+            case 50:
+                return true;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

@@ -51,6 +51,8 @@ struct Counters {
     uint32_t framesDeauth;
     uint32_t filesOpened;
     uint32_t writeErrors;
+    uint32_t pmkidAttempts;
+    uint32_t pmkidRejected;
     uint32_t drainCount;
     uint16_t ringHighWater;
     uint16_t ringDepth;

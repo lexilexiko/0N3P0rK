@@ -17,6 +17,8 @@ void flushPending();
 bool shouldPauseDeauth();
 bool hasPair(const uint8_t* bssid);
 uint16_t pairCount();
+uint32_t pmkidAttempts();
+uint32_t pmkidRejected();
 uint16_t convertPcap(const char* pcapPath);
 uint16_t convertAllPcaps();
 
