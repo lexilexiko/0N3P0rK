@@ -699,19 +699,11 @@ uint16_t convertPcap(const char* pcapPath) {
         uint32_t flen = incl - rtLen;
 if (flen > 1100) {
     uint8_t dump[64];
-    bool fullySkipped = true;
     while (flen) {
         size_t c = flen > sizeof(dump) ? sizeof(dump) : flen;
-        if (f.read(dump, c) != c) {
-            fullySkipped = false;
-            break;
-        }
+        if (f.read(dump, c) != c) break;
         flen -= c;
     }
-    // If the oversized frame could not be consumed completely, the file
-    // cursor is no longer trustworthy. Stop instead of parsing from the
-    // middle of a corrupted record.
-    if (!fullySkipped) break;
     continue;
 }
 uint8_t frame[1100];

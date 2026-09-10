@@ -711,27 +711,12 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.inclLen = rtLen + flen;
     // Checklist §7: Use original length for origLen field, or flen if no truncation
     ph.origLen = (origLen > 0) ? (rtLen + origLen) : (rtLen + flen);
-    // Keep the file size before this packet. SD writes can be partial; if
-    // any of the three writes fails, roll the file back so a half-written
-    // PCAP record is never left behind.
-    const size_t packetStart = s_fileSize;
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
     n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
-    if (n != expect) {
-        // Arduino-ESP32 fs::File has no truncate() API. If a write is short,
-        // do not pretend the file was rolled back: flush and close it so no
-        // further PCAP records are appended to a potentially partial record.
-        Serial.printf("[CAP] PCAP short write: %u/%u bytes; closing file\n",
-                      (unsigned)n, (unsigned)expect);
-        s_file.flush();
-        s_file.close();
-        s_fileOpen = false;
-        s_fileSize = packetStart;
-        return false;
-    }
+    if (n != expect) return false;
     s_fileSize += expect;
     return true;
 }
