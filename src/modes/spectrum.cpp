@@ -407,7 +407,8 @@ static void onData(const uint8_t* p, uint16_t len, int8_t rssi) {
     bool eapol = p[bodyOff] == 0xAA && p[bodyOff + 1] == 0xAA && p[bodyOff + 2] == 0x03 &&
                  p[bodyOff + 6] == 0x88 && p[bodyOff + 7] == 0x8E;
     if (!eapol) return;
-    Hc22000::feed(p, len);
+    // Detection only — do NOT Hc22000::feed() here (WiFi callback).
+    // Cap:: writes pcap/.22000 from loop after HUNT starts.
     if (!s_hsSeenLock) {
         s_hsSeenLock = true;
         Display::showToast("EAPOL seen - hunting...");
@@ -1122,7 +1123,8 @@ void update() {
     }
 
     if (s_phase == HUNT) {
-        Cap::loop();
+        // Cap::loop() already runs from main.cpp every tick. Calling it
+        // here doubled hop/kick/flush and raced SD writes.
     } else {
         hopTick();
         prune();

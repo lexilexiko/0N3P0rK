@@ -96,6 +96,7 @@ static const Item RADIO[] = {
     {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
     {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
     {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
+    {"AUTO STOP", Kind::VALUE,  50, 0, 60, 1},     // sec after pair → auto-stop (0=off)
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
@@ -186,6 +187,7 @@ static const char* const H_RADIO[] = {
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
     "EXTRA SEC HOLD AFTER PAIR.",
+    "SEC AFTER PAIR THEN STOP. 0=OFF.",
     "HOW LONG YOU SIT ON A CH.",
     "HOLD CHANNEL AFTER EAPOL.",
     "LOCK WHEN HANDSHAKE LANDS.",
@@ -400,6 +402,7 @@ static int getValue(const Item& it) {
             case 25: return r.dataAct ? 1 : 0;
             case 26: return r.strictLock ? 1 : 0;
             case 27: return r.depthHoldSec;
+            case 50: return r.autoStopSec;
             default: return 0;
         }
     }
@@ -694,6 +697,7 @@ static bool setValue(const Item& it, int v) {
             case 25: r.dataAct = (uint8_t)(v != 0 ? 1 : 0); break;
             case 26: r.strictLock = v != 0; break;
             case 27: r.depthHoldSec = (uint8_t)v; break;
+            case 50: r.autoStopSec = (uint8_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

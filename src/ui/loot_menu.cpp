@@ -583,79 +583,227 @@ void LootMenu::runDiag() {
 }
 
 
-static bool readPcapPacket(fs::File& f, size_t pos, size_t fileSize,
-                           uint32_t& packets, uint32_t& beacons,
-                           uint32_t& eapol, uint32_t& bad) {
-    if (pos + sizeof(Cap::Pcap::PacketHeader) > fileSize) return false;
+static void fmtMac6(const uint8_t* m, char* out, size_t n) {
+    if (!out || n < 18 || !m) return;
+    snprintf(out, n, "%02X:%02X:%02X:%02X:%02X:%02X",
+             m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+static bool pcapReadPacket(fs::File& f, size_t pos, size_t fileSize,
+                           Cap::Pcap::PacketHeader& ph, size_t& nextPos) {
+    if (pos > fileSize || sizeof(ph) > fileSize - pos) return false;
     if (!f.seek(pos)) return false;
-
-    Cap::Pcap::PacketHeader ph{};
     if (f.read(reinterpret_cast<uint8_t*>(&ph), sizeof(ph)) != sizeof(ph)) return false;
-
     const size_t dataPos = pos + sizeof(ph);
-    const size_t incl = ph.inclLen;
-    if (incl < 8 || dataPos > fileSize || incl > fileSize - dataPos) {
-        bad++;
-        return false;
-    }
+    const size_t incl = (size_t)ph.inclLen;
+    if (dataPos > fileSize || incl > fileSize - dataPos) return false;
+    nextPos = dataPos + incl;
+    return nextPos > pos;
+}
 
-    uint8_t rt4[4];
-    if (!f.seek(dataPos) || f.read(rt4, sizeof(rt4)) != sizeof(rt4)) {
-        bad++;
-        return false;
+// Structural PCAP inspector. It deliberately does not derive passwords or
+// generate cracking material; it only validates what the capture actually
+// contains and reports useful diagnostics to the LOOT screen.
+// Checklist §15-17: field-by-field .22000 validation. Prefix matching
+// alone ("WPA*02*" == valid) accepts truncated/malformed lines that will
+// fail on wpa-sec or silently never crack — every field's presence,
+// length, and hex-ness has to hold, not just the first 7 characters.
+static bool isHexChars(const char* s, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!ok) return false;
     }
-    const uint16_t rtLen = (uint16_t)rt4[2] | ((uint16_t)rt4[3] << 8);
-    if (rtLen < 8 || rtLen > incl || rtLen > 256) {
-        bad++;
-        return false;
+    return true;
+}
+
+// Splits `line` in place on '*'. Returns field count (capped at maxFields);
+// a line with more than maxFields-1 stars still reports maxFields, which
+// fails the exact-9 check below rather than silently truncating fields.
+static int splitStar(char* line, char** fields, int maxFields) {
+    int n = 0;
+    char* p = line;
+    fields[n++] = p;
+    while (*p) {
+        if (*p == '*') {
+            *p = '\0';
+            if (n < maxFields) fields[n] = p + 1;
+            n++;
+        }
+        p++;
+    }
+    return n;
+}
+
+// Returns nullptr if `line` is a fully well-formed WPA*01/WPA*02 record,
+// otherwise a short reason string for the diagnostic screen.
+static const char* validate22000Line(char* line) {
+    char* f[10];
+    int n = splitStar(line, f, 10);
+    if (n != 9) return "FIELD COUNT";
+    if (strcmp(f[0], "WPA") != 0) return "PREFIX";
+    bool isPmkid = strcmp(f[1], "01") == 0;
+    bool isEapol = strcmp(f[1], "02") == 0;
+    if (!isPmkid && !isEapol) return "TYPE";
+    size_t l2 = strlen(f[2]);
+    if (l2 != 32 || !isHexChars(f[2], l2)) return isPmkid ? "PMKID LEN" : "MIC LEN";
+    if (strlen(f[3]) != 12 || !isHexChars(f[3], 12)) return "MAC_AP";
+    if (strlen(f[4]) != 12 || !isHexChars(f[4], 12)) return "MAC_STA";
+    size_t l5 = strlen(f[5]);
+    if (l5 > 64 || (l5 & 1) != 0 || !isHexChars(f[5], l5)) return "ESSID";
+    if (isPmkid) {
+        if (f[6][0] || f[7][0]) return "PMKID EXTRA FIELDS";
+    } else {
+        size_t l6 = strlen(f[6]);
+        if (l6 != 64 || !isHexChars(f[6], l6)) return "ANONCE";
+        size_t l7 = strlen(f[7]);
+        // 97-byte minimum EAPOL-Key frame = 194 hex chars.
+        if (l7 < 194 || (l7 & 1) != 0 || !isHexChars(f[7], l7)) return "EAPOL";
+    }
+    size_t l8 = strlen(f[8]);
+    if (l8 != 2 || !isHexChars(f[8], 2)) return "MESSAGEPAIR";
+    return nullptr; // fully valid
+}
+
+
+                              uint32_t& packets, uint32_t& beacons,
+                              uint32_t& probes, uint32_t& eapol,
+                              uint32_t& malformed, uint32_t& truncated,
+                              uint32_t& mgmt, uint32_t& data,
+                              uint32_t& control, uint32_t& m1,
+                              uint32_t& m2, uint32_t& m3, uint32_t& m4,
+                              uint32_t& maxFrame, char* bssid, char* sta,
+                              char* ssid, size_t ssidLen) {
+    if (incl < 8) { malformed++; return false; }
+    if (!f.seek(dataPos)) { malformed++; return false; }
+
+    uint8_t rt[8];
+    if (f.read(rt, sizeof(rt)) != sizeof(rt)) { malformed++; return false; }
+    const uint16_t rtLen = (uint16_t)rt[2] | ((uint16_t)rt[3] << 8);
+    if (rt[0] != 0 || rt[1] != 0 || rtLen < 8 || rtLen > incl || rtLen > 512) {
+        malformed++; return false;
     }
 
     const size_t framePos = dataPos + rtLen;
     const size_t frameLen = incl - rtLen;
-    if (frameLen < 2 || !f.seek(framePos)) {
-        bad++;
-        return false;
-    }
+    if (frameLen < 2) { malformed++; return false; }
+    if (frameLen > maxFrame) maxFrame = (uint32_t)frameLen;
 
     uint8_t fc[2];
-    if (f.read(fc, sizeof(fc)) != sizeof(fc)) {
-        bad++;
-        return false;
+    if (!f.seek(framePos) || f.read(fc, sizeof(fc)) != sizeof(fc)) {
+        malformed++; return false;
     }
     packets++;
 
     const uint8_t type = fc[0] & 0x0C;
-    const uint8_t mgmtSubtype = fc[0] & 0xFC;
-    if (type == 0x00 && (mgmtSubtype == 0x80 || mgmtSubtype == 0x50)) {
-        beacons++;
-        return true;
-    }
-    if (type != 0x08 || frameLen < 24) return true;
-
+    const uint8_t subtype = (fc[0] >> 4) & 0x0F;
     const bool toDs = (fc[1] & 0x01) != 0;
     const bool fromDs = (fc[1] & 0x02) != 0;
+
+    if (type == 0x00) mgmt++;
+    else if (type == 0x08) data++;
+    else if (type == 0x04) control++;
+    else { malformed++; return true; }
+
+    if (type == 0x00) {
+        if (frameLen < 24) { malformed++; return true; }
+        uint8_t a3[6];
+        if (!f.seek(framePos + 16) || f.read(a3, 6) != 6) { malformed++; return false; }
+        if (!bssid[0]) fmtMac6(a3, bssid, 18);
+
+        // Beacon (8) / Probe Response (5): fixed fields are 24+12 bytes,
+        // followed by tagged parameters. Extract only the SSID for diagnostics.
+        if (subtype == 8 || subtype == 5) {
+            if (subtype == 8) beacons++; else probes++;
+            const size_t iePos = framePos + 36;
+            if (frameLen >= 36 && !ssid[0]) {
+                size_t off = 36;
+                while (off + 2 <= frameLen) {
+                    uint8_t ieh[2];
+                    if (!f.seek(framePos + off) || f.read(ieh, 2) != 2) { malformed++; return false; }
+                    const size_t elen = ieh[1];
+                    if (off + 2 + elen > frameLen) { malformed++; return true; }
+                    if (ieh[0] == 0 && elen < ssidLen) {
+                        if (elen) {
+                            if (!f.seek(framePos + off + 2) || f.read(reinterpret_cast<uint8_t*>(ssid), elen) != elen) {
+                                malformed++; return false;
+                            }
+                            ssid[elen] = '\0';
+                        } else {
+                            strncpy(ssid, "<hidden>", ssidLen - 1);
+                            ssid[ssidLen - 1] = '\0';
+                        }
+                        break;
+                    }
+                    off += 2 + elen;
+                }
+            }
+        }
+        return true;
+    }
+
+    if (type != 0x08) return true;
+    if (frameLen < 24) { malformed++; return true; }
+
+    // Report an association endpoint without assuming that a 4-address/WDS
+    // frame is a normal AP<->STA exchange.
+    uint8_t a1[6], a2[6], a3[6];
+    if (!f.seek(framePos + 4) || f.read(a1, 6) != 6 ||
+        f.read(a2, 6) != 6 || f.read(a3, 6) != 6) {
+        malformed++; return false;
+    }
+    if (!toDs && !fromDs) {
+        if (!bssid[0]) fmtMac6(a3, bssid, 18);
+    } else if (toDs && !fromDs) {
+        if (!bssid[0]) fmtMac6(a1, bssid, 18);
+        if (!sta[0]) fmtMac6(a2, sta, 18);
+    } else if (!toDs && fromDs) {
+        if (!bssid[0]) fmtMac6(a2, bssid, 18);
+        if (!sta[0]) fmtMac6(a1, sta, 18);
+    }
+
     uint16_t bodyOff = (toDs && fromDs) ? 30 : 24;
-    const uint8_t subtype = (fc[0] >> 4) & 0x0F;
     const bool qos = (subtype & 0x08) != 0;
     if (qos) bodyOff += 2;
     if (qos && (fc[1] & 0x80)) bodyOff += 4;
-    if (bodyOff + 12 > frameLen) return true;
+    if (bodyOff + 8 > frameLen) { malformed++; return true; }
 
-    uint8_t llc[12];
+    uint8_t llc[8];
     if (!f.seek(framePos + bodyOff) || f.read(llc, sizeof(llc)) != sizeof(llc)) {
-        bad++;
-        return false;
+        malformed++; return false;
     }
+    if (!(llc[0] == 0xAA && llc[1] == 0xAA && llc[2] == 0x03 &&
+          llc[3] == 0x00 && llc[4] == 0x00 && llc[5] == 0x00 &&
+          llc[6] == 0x88 && llc[7] == 0x8E)) return true;
 
-    // LLC/SNAP + EAPOL-Key. We deliberately use the same wire-level
-    // signature as the capture pipeline, but do not touch Hc22000 state.
-    if (llc[0] == 0xAA && llc[1] == 0xAA && llc[2] == 0x03 &&
-        llc[3] == 0x00 && llc[4] == 0x00 && llc[5] == 0x00 &&
-        llc[6] == 0x88 && llc[7] == 0x8E && llc[9] == 0x03) {
-        const uint16_t plen = ((uint16_t)llc[10] << 8) | llc[11];
-        if (plen >= 95 && (uint32_t)bodyOff + 8u + 4u + plen <= frameLen)
-            eapol++;
+    if (bodyOff + 12 > frameLen) { truncated++; return true; }
+    uint8_t eh[4];
+    if (!f.seek(framePos + bodyOff + 8) || f.read(eh, sizeof(eh)) != sizeof(eh)) {
+        malformed++; return false;
     }
+    if (eh[0] != 2 || eh[1] != 3) return true;
+    const uint16_t eLen = ((uint16_t)eh[2] << 8) | eh[3];
+    const size_t eapolTotal = 4u + (size_t)eLen;
+    if (eLen < 95 || bodyOff + 8 + eapolTotal > frameLen) {
+        truncated++; return true;
+    }
+    eapol++;
+
+    // EAPOL-Key Key Information is at EAPOL offset 5. Classification is only
+    // for diagnostics; it is intentionally not used to produce cracking data.
+    uint8_t ki[2];
+    if (!f.seek(framePos + bodyOff + 8 + 5) || f.read(ki, 2) != 2) {
+        malformed++; return false;
+    }
+    const uint16_t keyInfo = ((uint16_t)ki[0] << 8) | ki[1];
+    const bool ack = (keyInfo & 0x0080) != 0;
+    const bool mic = (keyInfo & 0x0100) != 0;
+    const bool install = (keyInfo & 0x0040) != 0;
+    const bool secure = (keyInfo & 0x0200) != 0;
+    if (ack && !mic && !install) m1++;
+    else if (!ack && mic && !install) m2++;
+    else if (ack && mic && install) m3++;
+    else if (!ack && mic && secure) m4++;
     return true;
 }
 
@@ -663,98 +811,127 @@ void LootMenu::runCaptureTest() {
     s_diagN = 0;
     s_diagScroll = 0;
     diagModal = true;
-    addDiag("CAPTURE DATA TEST");
+    addDiag("CAPTURE INSPECTOR");
 
     if (tab != Tab::WPASEC) {
-        addDiag("PWNCRACK: hash tab");
-        if (!count || selected >= count) {
-            addDiag("NO FILE SELECTED");
-            return;
-        }
+        addDiag("PWNCRACK: HASH FILE");
+        if (!count || selected >= count) { addDiag("NO FILE SELECTED"); return; }
         const char* name = s_rows[selected].filename;
         char path[96];
         snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
         File f = SD.open(path, "r");
-        if (!f) {
-            addDiag("OPEN FAIL");
-            return;
-        }
-        uint32_t sz = (uint32_t)f.size();
+        if (!f) { addDiag("OPEN FAIL"); return; }
+        const uint32_t sz = (uint32_t)f.size();
         char line[42];
-        snprintf(line, sizeof(line), "FILE %uB", (unsigned)sz);
-        addDiag(line);
-        char probe[32] = {0};
-        size_t n = f.readBytesUntil('\n', probe, sizeof(probe) - 1);
-        probe[n] = '\0';
+        snprintf(line, sizeof(line), "FILE %uB", (unsigned)sz); addDiag(line);
+
+        // Validate EVERY line — first-line-only misses truncated later entries.
+        uint32_t nTotal = 0, nOk = 0, nBad = 0;
+        char probe[600];
+        while (f.available() && nTotal < 64) {
+            size_t n = f.readBytesUntil('\n', probe, sizeof(probe) - 1);
+            probe[n] = '\0';
+            if (n > 0 && probe[n-1] == '\r') probe[--n] = '\0';
+            if (n == 0) continue;
+            nTotal++;
+            const char* reason = validate22000Line(probe);
+            if (!reason) {
+                nOk++;
+            } else {
+                nBad++;
+                char msg[52];
+                snprintf(msg, sizeof(msg), "L%u BAD: %s", (unsigned)nTotal, reason);
+                addDiag(msg);
+                if (nBad >= 3) { addDiag("...more errors"); break; }
+            }
+        }
         f.close();
-        if (strstr(probe, "WPA*01*") == probe || strstr(probe, "WPA*02*") == probe)
-            addDiag("22000 LINE OK");
-        else
-            addDiag("22000 FORMAT ?");
+        char summary[36];
+        snprintf(summary, sizeof(summary), "LINES %u  OK %u  BAD %u",
+                 (unsigned)nTotal, (unsigned)nOk, (unsigned)nBad);
+        addDiag(summary);
+        addDiag(nBad == 0 && nOk > 0 ? "22000 VALID" : nOk == 0 ? "22000 EMPTY/BAD" : "22000 PARTIAL");
         return;
     }
 
-    if (!count || selected >= count) {
-        addDiag("NO PCAP SELECTED");
-        return;
-    }
-
+    if (!count || selected >= count) { addDiag("NO PCAP SELECTED"); return; }
     const char* name = s_rows[selected].filename;
     char path[96];
     snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
     File f = SD.open(path, "r");
-    if (!f) {
-        addDiag("OPEN FAIL");
-        return;
-    }
+    if (!f) { addDiag("OPEN FAIL"); return; }
 
-    const size_t fileSize = f.size();
+    const size_t fileSize = (size_t)f.size();
     char line[42];
-    snprintf(line, sizeof(line), "FILE %uB", (unsigned)fileSize);
-    addDiag(line);
+    snprintf(line, sizeof(line), "FILE %uB", (unsigned)fileSize); addDiag(line);
     if (fileSize < sizeof(Cap::Pcap::FileHeader)) {
-        addDiag("BAD: <24 BYTE HEADER");
-        f.close();
-        return;
+        addDiag("BAD: HEADER <24B"); f.close(); return;
     }
 
     Cap::Pcap::FileHeader fh{};
     if (f.read(reinterpret_cast<uint8_t*>(&fh), sizeof(fh)) != sizeof(fh)) {
-        addDiag("BAD: HEADER READ");
-        f.close();
-        return;
+        addDiag("BAD: HEADER READ"); f.close(); return;
     }
     const bool headerOk = fh.magic == 0xA1B2C3D4 && fh.versionMajor == 2 &&
-                          fh.versionMinor == 4 && fh.linktype == 127;
-    addDiag(headerOk ? "PCAP HEADER OK" : "BAD PCAP HEADER");
+                          fh.versionMinor == 4 && fh.snaplen > 0 && fh.linktype == 127;
     if (!headerOk) {
-        f.close();
-        return;
+        addDiag("BAD PCAP HEADER");
+        f.close(); return;
     }
+    addDiag("PCAP HEADER OK");
 
-    uint32_t packets = 0, beacons = 0, eapol = 0, bad = 0;
+    uint32_t packets=0, beacons=0, probes=0, eapol=0, malformed=0, truncated=0;
+    uint32_t mgmt=0, data=0, control=0, m1=0, m2=0, m3=0, m4=0, maxFrame=0;
+    char bssid[18] = {0}, sta[18] = {0}, ssid[33] = {0};
     size_t pos = sizeof(Cap::Pcap::FileHeader);
-    while (pos < fileSize && packets < 4096) {
-        size_t before = pos;
-        if (!readPcapPacket(f, pos, fileSize, packets, beacons, eapol, bad)) break;
+    bool stopped = false;
+
+    while (pos < fileSize && packets < 10000) {
         Cap::Pcap::PacketHeader ph{};
-        if (!f.seek(before) || f.read(reinterpret_cast<uint8_t*>(&ph), sizeof(ph)) != sizeof(ph)) break;
-        size_t next = before + sizeof(ph) + (size_t)ph.inclLen;
-        if (next <= before || next > fileSize) break;
+        size_t next = 0;
+        if (!pcapReadPacket(f, pos, fileSize, ph, next)) {
+            malformed++;
+            stopped = true;
+            break;
+        }
+        const size_t dataPos = pos + sizeof(ph);
+        const size_t incl = (size_t)ph.inclLen;
+        if (ph.inclLen != ph.origLen) truncated++;
+        if (!inspectPcapPacket(f, dataPos, incl, packets, beacons, probes, eapol,
+                               malformed, truncated, mgmt, data, control,
+                               m1, m2, m3, m4, maxFrame, bssid, sta,
+                               ssid, sizeof(ssid))) {
+            stopped = true;
+            break;
+        }
         pos = next;
     }
     f.close();
 
-    snprintf(line, sizeof(line), "PKT %u  BCN %u", (unsigned)packets, (unsigned)beacons);
-    addDiag(line);
-    snprintf(line, sizeof(line), "EAPOL %u  BAD %u", (unsigned)eapol, (unsigned)bad);
-    addDiag(line);
-    if (bad) addDiag("WARNING: TRUNCATED PACKET");
-    if (eapol >= 2) addDiag("HANDSHAKE DATA: YES");
-    else if (eapol == 1) addDiag("HANDSHAKE DATA: PARTIAL");
-    else addDiag("HANDSHAKE DATA: NO");
-    if (packets && !bad) addDiag("PCAP DATA: OK");
-    else addDiag("PCAP DATA: CHECK");
+    snprintf(line, sizeof(line), "PKT %u  M%u D%u C%u", (unsigned)packets,
+             (unsigned)mgmt, (unsigned)data, (unsigned)control); addDiag(line);
+    snprintf(line, sizeof(line), "BCN %u  PROBE %u", (unsigned)beacons, (unsigned)probes); addDiag(line);
+    snprintf(line, sizeof(line), "EAPOL %u  M1/%u M2/%u", (unsigned)eapol,
+             (unsigned)m1, (unsigned)m2); addDiag(line);
+    snprintf(line, sizeof(line), "M3/%u M4/%u  MAX %uB", (unsigned)m3,
+             (unsigned)m4, (unsigned)maxFrame); addDiag(line);
+    if (bssid[0]) { snprintf(line, sizeof(line), "BSSID %s", bssid); addDiag(line); }
+    if (sta[0]) { snprintf(line, sizeof(line), "STA %s", sta); addDiag(line); }
+    if (ssid[0]) { snprintf(line, sizeof(line), "SSID %.31s", ssid); addDiag(line); }
+    snprintf(line, sizeof(line), "BAD %u  TRUNC %u", (unsigned)malformed, (unsigned)truncated); addDiag(line);
+
+    if (stopped) addDiag("STOP: FILE STRUCTURE BAD");
+    else if (pos != fileSize) addDiag("WARNING: UNREAD TAIL");
+    else addDiag("PCAP WALK: COMPLETE");
+
+    if (m2 && (m1 || m3 || m4)) addDiag("EAPOL: MESSAGES FOUND");
+    else if (eapol) addDiag("EAPOL: PARTIAL / CHECK");
+    else addDiag("EAPOL: NONE");
+
+    if (malformed) addDiag("RESULT: MALFORMED");
+    else if (truncated) addDiag("RESULT: TRUNCATED");
+    else if (packets == 0) addDiag("RESULT: EMPTY");
+    else addDiag("RESULT: STRUCTURE OK");
 }
 
 void LootMenu::startSync(bool oneFile) {

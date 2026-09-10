@@ -12,7 +12,7 @@
 namespace Hc22000 {
 
 static const uint8_t MAX_HS = 12;
-static const uint16_t MAX_EAPOL = 192;
+static const uint16_t MAX_EAPOL = 256;
 
 struct Hs {
     uint8_t bssid[6];
@@ -36,11 +36,8 @@ struct Hs {
     bool haveM4;      // M4 carries no nonce we need, just note it arrived
     bool wrotePmkid;
     bool wroteEapol;
-    // Set true by feed() (which can run from the WiFi promiscuous IRQ) when
-    // an in-memory slot field changed. Cleared by flushPending() in loop()
-    // after maybeWrite() has had a chance to actually open the SD file.
-    // Without this, maybeWrite() would SD.open()/write()/close() straight
-    // from the ISR on every beacon/EAPOL - guaranteed WDT/panic under load.
+    // Set true by feed() from loop-context drainRing() (never the WiFi IRQ).
+    // Cleared by flushPending() in Cap::loop() after maybeWrite() opens SD.
     bool dirty;
 };
 
@@ -308,8 +305,10 @@ static bool pair02Chained(const Hs* h) {
 }
 
 static void maybeWrite(Hs* h) {
+    // wpa-sec / hashcat 22000 need a real ESSID. Empty essid = rejected file.
     if (!h || !h->haveEssid || h->essidLen == 0) return;
     if (macZero(h->sta)) return;
+
     char ap[13], sta[13], ess[65];
     hexEnc(h->bssid, 6, ap);
     hexEnc(h->sta, 6, sta);
@@ -319,7 +318,6 @@ static void maybeWrite(Hs* h) {
     if (!h->wroteEapol && h->haveM2 && h->m2Len >= 97) {
         uint8_t pair = 0xFF;
         const uint8_t* nonce = nullptr;
-        // Pair 00: M1 and M2 same replay counter.
         if (h->haveAnonce && memcmp(h->anonceReplay, h->m2Replay, 8) == 0) {
             pair = 0x00;
             nonce = h->anonce;
@@ -332,15 +330,16 @@ static void maybeWrite(Hs* h) {
             eapolLen = (uint16_t)(eapolLen + 4);
             if (eapolLen > h->m2Len) eapolLen = h->m2Len;
             if (eapolLen >= 97 && eapolLen <= MAX_EAPOL) {
-                uint8_t eapol[MAX_EAPOL];
+                // Static: ~1.3KB must not live on the Arduino loop stack.
+                static uint8_t eapol[MAX_EAPOL];
+                static char ehex[MAX_EAPOL * 2 + 1];
+                static char line[768];
                 memcpy(eapol, h->m2, eapolLen);
                 memset(eapol + 81, 0, 16);
                 char mic[33], an[65];
                 hexEnc(h->m2 + 81, 16, mic);
                 hexEnc(nonce, 32, an);
-                char ehex[MAX_EAPOL * 2 + 1];
                 hexEnc(eapol, eapolLen, ehex);
-                char line[768];
                 snprintf(line, sizeof(line), "WPA*02*%s*%s*%s*%s*%s*%s*%02x",
                          mic, ap, sta, ess, an, ehex, (unsigned)pair);
                 if (writeLine(h, "_hs.22000", line)) h->wroteEapol = true;
@@ -604,9 +603,8 @@ void flushPending() {
         if (!s_hs[i].dirty) continue;
         s_hs[i].dirty = false;
         inheritEssid(&s_hs[i]);
-        if (s_hs[i].haveEssid && s_hs[i].essidLen > 0) {
+        if (s_hs[i].haveEssid && s_hs[i].essidLen > 0)
             maybeWrite(&s_hs[i]);
-        }
     }
 }
 
@@ -699,18 +697,26 @@ uint16_t convertPcap(const char* pcapPath) {
             if (f.read(extra, nskip) != nskip) break;
         }
         uint32_t flen = incl - rtLen;
-        if (flen > 400) {
-            uint8_t dump[64];
-            while (flen) {
-                size_t c = flen > sizeof(dump) ? sizeof(dump) : flen;
-                if (f.read(dump, c) != c) break;
-                flen -= c;
-            }
-            continue;
+if (flen > 1100) {
+    uint8_t dump[64];
+    bool fullySkipped = true;
+    while (flen) {
+        size_t c = flen > sizeof(dump) ? sizeof(dump) : flen;
+        if (f.read(dump, c) != c) {
+            fullySkipped = false;
+            break;
         }
-        uint8_t frame[400];
-        if (f.read(frame, flen) != (int)flen) break;
-        feed(frame, (uint16_t)flen);
+        flen -= c;
+    }
+    // If the oversized frame could not be consumed completely, the file
+    // cursor is no longer trustworthy. Stop instead of parsing from the
+    // middle of a corrupted record.
+    if (!fullySkipped) break;
+    continue;
+}
+uint8_t frame[1100];
+if (f.read(frame, flen) != (int)flen) break;
+feed(frame, (uint16_t)flen);
         yield();
     }
     f.close();

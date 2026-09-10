@@ -27,7 +27,7 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 
 namespace Cap {
 
-static const uint16_t FRAME_MAX = 512;
+static const uint16_t FRAME_MAX = 1100;
 static const uint8_t  RING_SLOTS = 12;
 static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
 static const uint16_t MAX_FILES = 200;
@@ -137,6 +137,8 @@ static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
 static bool     s_dataAct = false;     // count data frames for FOCUS activity
 static bool     s_strictLock = true;   // FOCUS ignores score while lock-on-BSSID
 static uint8_t  s_depthHoldSec = 0;    // extra sec hold after pair when hsDepth>0
+static uint8_t  s_autoStopSec = 0;     // seconds after pair → auto-stop capture
+static uint32_t s_autoStopAt = 0;      // millis() deadline for auto-stop (0=not armed)
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
@@ -445,7 +447,6 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             bool learned = ssid[0] && !s_beacons[i].ssid[0];
             if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
             if (learned) {
-                Hc22000::feed(f, len);
                 // Runs from the WiFi promiscuous callback (IRAM). The
                 // consumer (processPendingSsidLearn in loop) reads both
                 // s_pendingLearn and s_pendingLearnBssid as a pair, so
@@ -484,7 +485,23 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     s_beacons[idx].pmfCapable = beaconHasPmf(f, len);
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
-    Hc22000::feed(f, len);
+}
+
+static bool IRAM_ATTR queueAssocFrame(const uint8_t* f, uint16_t len) {
+    if (len > FRAME_MAX) return false;
+    uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
+    if (next == s_read) return false;
+    Slot& s = s_ring[s_write];
+    memcpy(s.bssid, f + 4, 6);
+    memcpy(s.station, f + 10, 6);
+    s.len = len;
+    s.originalLen = len;
+    s.ts = millis();
+    s.rssi = -50;
+    s.channel = s_cnt.currentChannel;
+    memcpy(s.frame, f, len);
+    s_write = next;
+    return true;
 }
 
 static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -505,8 +522,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         } else if (fc == 0x00 || fc == 0x20) {
             // Assoc Request (0x00) / Reassoc Request (0x20) — a station
             // offering a cached PMKID lives here, not in the AP's response.
-            // hc22000.cpp's feed() only looks at these two subtypes now.
-            Hc22000::feed(f, len);
+            queueAssocFrame(f, len);
         }
         return;
     }
@@ -695,12 +711,26 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.inclLen = rtLen + flen;
     // Checklist §7: Use original length for origLen field, or flen if no truncation
     ph.origLen = (origLen > 0) ? (rtLen + origLen) : (rtLen + flen);
+    // Keep the file size before this packet. SD writes can be partial; if
+    // any of the three writes fails, roll the file back so a half-written
+    // PCAP record is never left behind.
+    const size_t packetStart = s_fileSize;
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
     n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
-    if (n != expect) return false;
+    if (n != expect) {
+        // ESP32 Arduino File::truncate() restores the last known-good EOF.
+        // Ignore rollback failure here; the caller closes the file and marks
+        // the frame dropped, so a later capture cannot trust this file.
+        s_file.flush();
+        if (!s_file.truncate(packetStart)) {
+            Serial.println("[CAP] PCAP write failed and rollback failed");
+        }
+        s_fileSize = packetStart;
+        return false;
+    }
     s_fileSize += expect;
     return true;
 }
@@ -1202,6 +1232,7 @@ static void startCommon(RunMode mode) {
 
     if (s_running) stop();
 
+    Hc22000::reset();
     s_write = 0;
     s_read = 0;
     s_cnt = {};
@@ -1261,6 +1292,9 @@ static void startCommon(RunMode mode) {
     s_strictLock = Config::radio().strictLock;
     s_depthHoldSec = Config::radio().depthHoldSec;
     if (s_depthHoldSec > 30) s_depthHoldSec = 30;
+    s_autoStopSec = Config::radio().autoStopSec;
+    if (s_autoStopSec > 60) s_autoStopSec = 60;
+    s_autoStopAt = 0;  // clear any leftover armed timer
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
     // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
@@ -1357,6 +1391,7 @@ void stop() {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     drainRing();
+    Hc22000::flushPending();
     closeFile();
     Storage::compactLoot();
     WiFi.softAPdisconnect(true);
@@ -1491,10 +1526,9 @@ void loop() {
     }
 
     drainRing();
-    // Hc22000::feed() runs from the WiFi promiscuous IRQ; it only fills
-    // in-memory slots and marks them dirty. flushPending() is where the
-    // actual .22000 / .pmkid files are written to SD - safe to do here,
-    // never inside the ISR.
+    // Hc22000::feed() runs from loop context via drainRing().
+    // The WiFi promiscuous callback only queues captured frames.
+    // flushPending() performs the resulting .22000 / .pmkid SD writes.
     Hc22000::flushPending();
     maybeRotateMethod();
 
@@ -1538,6 +1572,29 @@ void loop() {
     }
 
     uint32_t now = millis();
+
+    // AUTO-STOP after pair: arm the timer the first time a pair lands on SD.
+    // Once armed, stop() is called after autoStopSec. This keeps PCAP small
+    // so wpa-sec doesn't reject it for oversized EAPOL (observed >800 bytes).
+    if (s_autoStopSec > 0) {
+        if (s_autoStopAt == 0 && Hc22000::pairCount() > 0) {
+            s_autoStopAt = now + (uint32_t)s_autoStopSec * 1000u;
+            Serial.printf("[CAP] auto-stop armed: %us\n", (unsigned)s_autoStopSec);
+        }
+        if (s_autoStopAt != 0 && now >= s_autoStopAt) {
+            Serial.println("[CAP] auto-stop fired");
+            s_autoStopAt = 0;
+            // Add the captured BSSID to the session skip-list BEFORE stop()
+            // so if the user immediately restarts, this AP is not revisited.
+            // This mirrors what 'Z' does manually: locks the pair we got,
+            // removes the target from the beacon table, and moves on.
+            if (!isZeroMac(s_lockBssid)) addSkip(s_lockBssid);
+            else if (!isZeroMac(s_lastHsBssid)) addSkip(s_lastHsBssid);
+            else if (!isZeroMac(s_fileBssid)) addSkip(s_fileBssid);
+            stop();
+            return;
+        }
+    }
 
     // Porkchop-style lock-on-BSSID: if we caught an EAPOL and the target's
     // pair isn't on file yet, park on its channel so M2 (sent back from the
