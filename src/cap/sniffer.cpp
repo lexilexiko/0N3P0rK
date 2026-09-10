@@ -721,13 +721,14 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
     if (n != expect) {
-        // ESP32 Arduino File::truncate() restores the last known-good EOF.
-        // Ignore rollback failure here; the caller closes the file and marks
-        // the frame dropped, so a later capture cannot trust this file.
+        // Arduino-ESP32 fs::File has no truncate() API. If a write is short,
+        // do not pretend the file was rolled back: flush and close it so no
+        // further PCAP records are appended to a potentially partial record.
+        Serial.printf("[CAP] PCAP short write: %u/%u bytes; closing file\n",
+                      (unsigned)n, (unsigned)expect);
         s_file.flush();
-        if (!s_file.truncate(packetStart)) {
-            Serial.println("[CAP] PCAP write failed and rollback failed");
-        }
+        s_file.close();
+        s_fileOpen = false;
         s_fileSize = packetStart;
         return false;
     }
