@@ -37,8 +37,7 @@ static const uint8_t HOP_CORE[] = {1, 6, 11};
 struct Slot {
     uint8_t  bssid[6];
     uint8_t  station[6];
-    uint16_t len;           // captured/stored length (may be truncated to FRAME_MAX)
-    uint16_t originalLen;   // original frame length before truncation (Checklist §7)
+    uint16_t len;
     uint32_t ts;
     int8_t   rssi;
     uint8_t  channel;
@@ -55,15 +54,6 @@ static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
-// True once a Beacon/Probe Response has actually been written into the
-// currently-open file. openFileForBssid() only has a shot at writing one
-// if a beacon happens to be cached (limited slots, evicted round-robin) at
-// the exact instant the file is created — on a busy channel that's often
-// not the case, and wpa-sec/hcxpcapngtool can't derive a hash from a file
-// with EAPOL but no ESSID. writeFrameToFile() backfills a beacon the
-// moment one becomes available, however late, so this only needs to
-// happen once per file-open span.
-static bool     s_fileHasBeacon = false;
 // One-shot log dedup for the "file is already at MAX_FILE_SIZE" branch
 // in openFileForBssid() — without this, the Serial would see one
 // "[CAP] full" line per EAPOL frame, drowning out useful output. Reset
@@ -447,6 +437,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             bool learned = ssid[0] && !s_beacons[i].ssid[0];
             if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
             if (learned) {
+                Hc22000::feed(f, len);
                 // Runs from the WiFi promiscuous callback (IRAM). The
                 // consumer (processPendingSsidLearn in loop) reads both
                 // s_pendingLearn and s_pendingLearnBssid as a pair, so
@@ -485,23 +476,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     s_beacons[idx].pmfCapable = beaconHasPmf(f, len);
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
-}
-
-static bool IRAM_ATTR queueAssocFrame(const uint8_t* f, uint16_t len) {
-    if (len > FRAME_MAX) return false;
-    uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
-    if (next == s_read) return false;
-    Slot& s = s_ring[s_write];
-    memcpy(s.bssid, f + 4, 6);
-    memcpy(s.station, f + 10, 6);
-    s.len = len;
-    s.originalLen = len;
-    s.ts = millis();
-    s.rssi = -50;
-    s.channel = s_cnt.currentChannel;
-    memcpy(s.frame, f, len);
-    s_write = next;
-    return true;
+    Hc22000::feed(f, len);
 }
 
 static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -519,10 +494,8 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         uint8_t fc = f[0] & 0xFC;
         if (fc == 0x80 || fc == 0x50) {
             storeBeacon(f + 16, f, len, (int8_t)pkt->rx_ctrl.rssi);
-        } else if (fc == 0x00 || fc == 0x20) {
-            // Assoc Request (0x00) / Reassoc Request (0x20) — a station
-            // offering a cached PMKID lives here, not in the AP's response.
-            queueAssocFrame(f, len);
+        } else if (fc == 0x10) {
+            Hc22000::feed(f, len);
         }
         return;
     }
@@ -558,16 +531,18 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
 
     if (bssid && station) noteClient(bssid, station);
 
-    // Position-exact LLC/SNAP+EAPOL check only. A "scan for 0x88 0x8E
-    // anywhere in the rest of the frame" fallback used to sit here — on
-    // random/encrypted payload bytes that pattern turns up by chance often
-    // enough to occasionally misfire, and a garbage frame that slips into
-    // the EAPOL pipeline can produce a syntactically-valid-looking but
-    // uncrackable hash line. Wrong bodyOff on some nonstandard frame means
-    // we miss it, not that we should go looking for a false match instead.
-    bool eapol = bodyOff + 8 <= len &&
-                 f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA && f[bodyOff + 2] == 0x03 &&
-                 f[bodyOff + 6] == 0x88 && f[bodyOff + 7] == 0x8E;
+    bool eapol = false;
+    if (bodyOff + 8 <= len &&
+        f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA && f[bodyOff + 2] == 0x03 &&
+        f[bodyOff + 6] == 0x88 && f[bodyOff + 7] == 0x8E) {
+        eapol = true;
+    }
+    if (!eapol) {
+        uint16_t lim = len;
+        for (uint16_t i = bodyOff; i + 1 < lim; i++) {
+            if (f[i] == 0x88 && f[i + 1] == 0x8E) { eapol = true; break; }
+        }
+    }
     // DATA ACT (RADIO): count non-EAPOL data toward BeaconSlot::dataRecent
     // so FOCUS can score real traffic instead of beacon-only activity.
     if (!eapol && s_dataAct && bssid) {
@@ -603,19 +578,11 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
     if (next == s_read) {
         s_cnt.framesDropped++;
-        // Checklist §4: eapolDropped only when THIS frame is EAPOL.
-        // This path is EAPOL-only (non-EAPOL returned above); still gated
-        // so a later shared enqueue cannot inflate the counter.
-        if (eapol) s_cnt.eapolDropped++;
         return;
     }
     Slot& s = s_ring[s_write];
     memcpy(s.bssid, bssid, 6);
     memcpy(s.station, station, 6);
-    // §6: count silent truncation (no silent discard — just cap and count)
-    if (len > FRAME_MAX) s_cnt.framesTruncated++;
-    // Checklist §7: Store original length before truncation so PCAP can record it
-    s.originalLen = len;
     s.len = (len > FRAME_MAX) ? FRAME_MAX : len;
     s.ts  = millis();
     s.rssi = (int8_t)pkt->rx_ctrl.rssi;
@@ -702,36 +669,20 @@ static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPat
     }
 }
 
-static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi, uint16_t origLen = 0) {
+static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
     uint8_t rtLen = Pcap::buildRadiotap(rt, ch ? ch : s_cnt.currentChannel, rssi, s_fatPcap);
     Pcap::PacketHeader ph;
     ph.tsSec   = ts / 1000;
     ph.tsUsec  = (ts % 1000) * 1000;
     ph.inclLen = rtLen + flen;
-    // Checklist §7: Use original length for origLen field, or flen if no truncation
-    ph.origLen = (origLen > 0) ? (rtLen + origLen) : (rtLen + flen);
-    // Keep the file size before this packet. SD writes can be partial; if
-    // any of the three writes fails, roll the file back so a half-written
-    // PCAP record is never left behind.
-    const size_t packetStart = s_fileSize;
+    ph.origLen = ph.inclLen;
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
     n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
-    if (n != expect) {
-        // Arduino-ESP32 fs::File has no truncate() API. If a write is short,
-        // do not pretend the file was rolled back: flush and close it so no
-        // further PCAP records are appended to a potentially partial record.
-        Serial.printf("[CAP] PCAP short write: %u/%u bytes; closing file\n",
-                      (unsigned)n, (unsigned)expect);
-        s_file.flush();
-        s_file.close();
-        s_fileOpen = false;
-        s_fileSize = packetStart;
-        return false;
-    }
+    if (n != expect) return false;
     s_fileSize += expect;
     return true;
 }
@@ -773,31 +724,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
             SD.remove(path);
             exists = false;
             preSize = 0;
-        } else if (preSize >= sizeof(Pcap::FileHeader)) {
-            // Large but invalid: wrong magic (torn write, half-finished
-            // header from a prior session cut short). Quarantine instead
-            // of appending EAPOL after a header wpa-sec's tooling can't
-            // even parse, or refusing this BSSID forever.
-            File chk = SD.open(path, "r");
-            uint32_t magic = 0;
-            if (chk && chk.read((uint8_t*)&magic, 4) == 4) {
-                chk.close();
-                bool okMagic = (magic == 0xA1B2C3D4u || magic == 0xD4C3B2A1u ||
-                                magic == 0xA1B23C4Du || magic == 0x4D3CB2A1u);
-                if (!okMagic) {
-                    char bad[96];
-                    snprintf(bad, sizeof(bad), "%s.bad", path);
-                    SD.remove(bad);
-                    if (SD.rename(path, bad))
-                        Serial.printf("[CAP] quarantine bad magic -> %s\n", bad);
-                    else
-                        SD.remove(path);
-                    exists = false;
-                    preSize = 0;
-                }
-            } else if (chk) {
-                chk.close();
-            }
         }
     }
     if (!exists && st.handshakes >= MAX_FILES) {
@@ -875,28 +801,10 @@ static bool openFileForBssid(const uint8_t* bssid) {
     }
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, name, ssid);
 
-    // THE critical fix: this was never set anywhere before, which meant
-    // every single caught frame re-probed and re-opened the file from
-    // scratch (writeFrameToFile()'s "if (!s_fileOpen)" was always true)
-    // instead of keeping one handle open for the session — the SD/flush
-    // overhead aside, that let a stale/unflushed size reading race the
-    // next open's "is this a brand-new empty file?" check, the plausible
-    // way a second pcap global header ends up mid-stream.
-    memcpy(s_fileBssid, bssid, 6);
-    strncpy(s_fileName, name, sizeof(s_fileName) - 1);
-    s_fileName[sizeof(s_fileName) - 1] = '\0';
-    s_fileOpen = true;
-
     const BeaconSlot* bcn = findBeacon(bssid);
-    s_fileHasBeacon = false;
     if (bcn && (createdNew || s_fileSize < 80)) {
-        // Checklist §6: Check writePcapPacket() result before marking success.
-        // Without this, a failed write still marks the beacon as written,
-        // corrupting file state.
-        if (writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi)) {
-            Hc22000::feed(bcn->frame, bcn->len);
-            s_fileHasBeacon = true;
-        }
+        writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi);
+        Hc22000::feed(bcn->frame, bcn->len);
     }
     return true;
 }
@@ -930,25 +838,13 @@ static void writeFrameToFile(const Slot& s) {
             return;
         }
     }
-    if (!writePcapPacket(s.frame, s.len, s.ts, s.channel, s.rssi, s.originalLen)) {
+    if (!writePcapPacket(s.frame, s.len, s.ts, s.channel, s.rssi)) {
         s_cnt.framesDropped++;
         closeFile();
         return;
     }
     s_cnt.framesWritten++;
     Hc22000::feed(s.frame, s.len);
-    // Backfill a Beacon the moment one is cached for this BSSID, however
-    // late — without it this pcap has no ESSID and wpa-sec/hcxpcapngtool
-    // can't turn the EAPOL data into a crackable hash line.
-    if (!s_fileHasBeacon) {
-        const BeaconSlot* bcn = findBeacon(s.bssid);
-        if (bcn && bcn->len > 0) {
-            if (writePcapPacket(bcn->frame, bcn->len, millis(), bcn->channel, bcn->rssi)) {
-                Hc22000::feed(bcn->frame, bcn->len);
-                s_fileHasBeacon = true;
-            }
-        }
-    }
     memcpy(s_kickBssid, s.bssid, 6);
     memcpy(s_kickSta, s.station, 6);
     s_kickStaOk = (s.station[0] & 0x01) == 0;
@@ -1233,7 +1129,6 @@ static void startCommon(RunMode mode) {
 
     if (s_running) stop();
 
-    Hc22000::reset();
     s_write = 0;
     s_read = 0;
     s_cnt = {};
@@ -1392,7 +1287,6 @@ void stop() {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     drainRing();
-    Hc22000::flushPending();
     closeFile();
     Storage::compactLoot();
     WiFi.softAPdisconnect(true);
@@ -1527,9 +1421,10 @@ void loop() {
     }
 
     drainRing();
-    // Hc22000::feed() runs from loop context via drainRing().
-    // The WiFi promiscuous callback only queues captured frames.
-    // flushPending() performs the resulting .22000 / .pmkid SD writes.
+    // Hc22000::feed() runs from the WiFi promiscuous IRQ; it only fills
+    // in-memory slots and marks them dirty. flushPending() is where the
+    // actual .22000 / .pmkid files are written to SD - safe to do here,
+    // never inside the ISR.
     Hc22000::flushPending();
     maybeRotateMethod();
 
