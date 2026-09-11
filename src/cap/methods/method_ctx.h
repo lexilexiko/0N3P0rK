@@ -128,7 +128,6 @@ struct Entry {
     void      (*kick) (const Ctx& ctx);     // required, runs every kick tick
     void      (*probe)(const Ctx& ctx);     // optional, nullptr if N/A
     void      (*reset)();                   // optional, nullptr if N/A
-    bool        minimumWpaCapture;          // PCAP filter: only valid M1/M2
 };
 typedef void (*probe_fn)(const Ctx&);
 typedef void (*reset_fn)();
@@ -156,18 +155,7 @@ void add(const Entry& e);
             (NAME), \
             (Cap::Methods::probe_fn)(uintptr_t)(KICK), \
             (Cap::Methods::probe_fn)(uintptr_t)(PROBE), \
-            (Cap::Methods::reset_fn)(uintptr_t)(RESET), \
-            false }), \
-        0);
-
-#define CAP_METHOD_REGISTER_MIN_WPA(NAME, KICK, PROBE, RESET) \
-    static int register_min_wpa_##KICK = ( \
-        Cap::Methods::add(Cap::Methods::Entry{ \
-            (NAME), \
-            (Cap::Methods::probe_fn)(uintptr_t)(KICK), \
-            (Cap::Methods::probe_fn)(uintptr_t)(PROBE), \
-            (Cap::Methods::reset_fn)(uintptr_t)(RESET), \
-            true }), \
+            (Cap::Methods::reset_fn)(uintptr_t)(RESET) }), \
         0);
 
 } // namespace Methods

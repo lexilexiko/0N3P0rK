@@ -48,7 +48,6 @@ struct Hs {
 
 static Hs s_hs[MAX_HS];
 static portMUX_TYPE s_hsMux = portMUX_INITIALIZER_UNLOCKED;
-static bool s_minimumWpaCapture = false;
 
 static bool isZeroMac(const uint8_t* mac) {
     if (!mac) return true;
@@ -238,18 +237,27 @@ static bool writeLine(Hs* h, const char* suffix, const char* line) {
 static void seedEssid(const uint8_t* bssid, const char* ssid) {
     if (!bssid || !ssid || !ssid[0]) return;
     if (strcasecmp(ssid, "HIDDEN") == 0 || strcmp(ssid, "[UNKNOWN]") == 0) return;
-    Hs* h = slotFor(bssid);
-    if (!h) return;
-    if (h->haveEssid && h->essidLen > 0) {
-        maybeWrite(h);
-        return;
-    }
     size_t n = strlen(ssid);
     if (n > 32) n = 32;
-    memcpy(h->essid, ssid, n);
-    h->essidLen = (uint8_t)n;
-    h->haveEssid = true;
-    maybeWrite(h);
+    bool found = false;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        Hs* h = &s_hs[i];
+        if (!h->used || memcmp(h->bssid, bssid, 6) != 0) continue;
+        memcpy(h->essid, ssid, n);
+        h->essidLen = (uint8_t)n;
+        h->haveEssid = true;
+        h->dirty = false;
+        maybeWrite(h);
+        found = true;
+    }
+    if (!found) {
+        Hs* h = slotFor(bssid);
+        if (!h) return;
+        memcpy(h->essid, ssid, n);
+        h->essidLen = (uint8_t)n;
+        h->haveEssid = true;
+        maybeWrite(h);
+    }
 }
 
 static void maybeWrite(Hs* h) {
@@ -353,7 +361,7 @@ static void parseAssoc(const uint8_t* f, uint16_t len) {
             uint8_t pmk[16];
             if (parseRsnPmkid(f + off + 2, l, pmk)) {
                 Hs* h = slotForStation(bssid, sta);
-                if (!h || s_minimumWpaCapture) {
+                if (!h) {
                     off = (uint16_t)(off + 2 + l);
                     continue;
                 }
@@ -382,14 +390,31 @@ static void parseBeacon(const uint8_t* f, uint16_t len) {
         uint8_t l = f[off + 1];
         if (off + 2 + l > len) break;
         if (id == 0 && l > 0 && l <= 32) {
-            Hs* h = slotFor(bssid);
-            if (!h) return;
-            memcpy(h->essid, f + off + 2, l);
-            h->essidLen = l;
-            h->haveEssid = true;
-            // No SD I/O here - this runs from the WiFi promiscuous IRQ.
-            // flushPending() in loop() will call maybeWrite() shortly.
-            h->dirty = true;
+            for (uint8_t i = 0; i < MAX_HS; i++) {
+                Hs* h = &s_hs[i];
+                if (!h->used || memcmp(h->bssid, bssid, 6) != 0) continue;
+                memcpy(h->essid, f + off + 2, l);
+                h->essidLen = l;
+                h->haveEssid = true;
+                // No SD I/O here - this runs from the WiFi promiscuous IRQ.
+                // flushPending() in loop() will call maybeWrite() shortly.
+                h->dirty = true;
+            }
+            bool found = false;
+            for (uint8_t i = 0; i < MAX_HS; i++) {
+                if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                Hs* h = slotFor(bssid);
+                if (!h) return;
+                memcpy(h->essid, f + off + 2, l);
+                h->essidLen = l;
+                h->haveEssid = true;
+                h->dirty = true;
+            }
             return;
         }
         off = (uint16_t)(off + 2 + l);
@@ -455,8 +480,8 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
         memcpy(sta, srcMac, 6);
     }
 
-    Hs* h = slotFor(bssid);
-    if (!selectStation(h, sta)) return;
+    Hs* h = slotForStation(bssid, sta);
+    if (!h) return;
 
     // First copy of each message wins — retransmit can change nonce/MIC.
     // Key replay counter (e[9..16]) ties M1 and M2 to the *same* handshake attempt:
@@ -504,12 +529,6 @@ void reset() {
     portENTER_CRITICAL(&s_hsMux);
     memset(s_hs, 0, sizeof(s_hs));
     s_lastM1Ms = 0;
-    portEXIT_CRITICAL(&s_hsMux);
-}
-
-void setMinimumWpaCapture(bool enabled) {
-    portENTER_CRITICAL(&s_hsMux);
-    s_minimumWpaCapture = enabled;
     portEXIT_CRITICAL(&s_hsMux);
 }
 
