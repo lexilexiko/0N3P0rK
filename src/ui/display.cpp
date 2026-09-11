@@ -635,7 +635,7 @@ void Display::drawBottomBar() {
                 strncpy(left, LootMenu::getBottomHint(), sizeof(left) - 1);
                 break;
             case AppMode::ATTACK:
-                strncpy(left, "LIGHT  AGGRO  STOP", sizeof(left) - 1);
+                strncpy(left, "LIGHT  WPASEC STOP", sizeof(left) - 1);
                 break;
             case AppMode::WIFI:
             case AppMode::PIG:
