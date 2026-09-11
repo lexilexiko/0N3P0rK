@@ -352,8 +352,6 @@ static int getValue(const Item& it) {
             case 4: return r.randomMac ? 1 : 0;
             case 5: return r.minRssi;
             case 6: return r.hopSet;
-            case 17: return r.fatPcap ? 1 : 0;
-            case 24: return r.hsDepth;
             case 7: return r.hsMethod;
             case 8: return r.fallbackSec;
             case 9: return r.kickBurst;
