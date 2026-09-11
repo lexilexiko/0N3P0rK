@@ -8,10 +8,12 @@
 #include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 
 namespace Hc22000 {
 
-static const uint8_t MAX_HS = 12;
+static const uint8_t MAX_HS = 24;
 static const uint16_t MAX_EAPOL = 512;
 
 struct Hs {
@@ -35,6 +37,7 @@ struct Hs {
     bool haveM4;      // M4 carries no nonce we need, just note it arrived
     bool wrotePmkid;
     bool wroteEapol;
+    uint32_t lastSeenMs;
     // Set true by feed() (which can run from the WiFi promiscuous IRQ) when
     // an in-memory slot field changed. Cleared by flushPending() in loop()
     // after maybeWrite() has had a chance to actually open the SD file.
@@ -44,6 +47,8 @@ struct Hs {
 };
 
 static Hs s_hs[MAX_HS];
+static portMUX_TYPE s_hsMux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_minimumWpaCapture = false;
 
 static bool isZeroMac(const uint8_t* mac) {
     if (!mac) return true;
@@ -121,10 +126,71 @@ static Hs* slotFor(const uint8_t* bssid) {
             return &s_hs[i];
         }
     }
-    memset(&s_hs[0], 0, sizeof(Hs));
-    memcpy(s_hs[0].bssid, bssid, 6);
-    s_hs[0].used = true;
-    return &s_hs[0];
+    Hs* oldest = nullptr;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (!s_hs[i].wroteEapol && !s_hs[i].wrotePmkid &&
+            (!oldest || s_hs[i].lastSeenMs < oldest->lastSeenMs)) {
+            oldest = &s_hs[i];
+        }
+    }
+    if (!oldest) return nullptr;
+    memset(oldest, 0, sizeof(Hs));
+    memcpy(oldest->bssid, bssid, 6);
+    oldest->used = true;
+    return oldest;
+}
+
+static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0 &&
+            memcmp(s_hs[i].sta, sta, 6) == 0) return &s_hs[i];
+    }
+    Hs* h = nullptr;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0 &&
+            isZeroMac(s_hs[i].sta)) {
+            h = &s_hs[i];
+            break;
+        }
+    }
+    if (!h) {
+        for (uint8_t i = 0; i < MAX_HS; i++) {
+            if (!s_hs[i].used) {
+                memset(&s_hs[i], 0, sizeof(Hs));
+                memcpy(s_hs[i].bssid, bssid, 6);
+                s_hs[i].used = true;
+                h = &s_hs[i];
+                break;
+            }
+        }
+    }
+    if (!h) {
+        Hs* oldest = nullptr;
+        for (uint8_t i = 0; i < MAX_HS; i++) {
+            if (!s_hs[i].wroteEapol && !s_hs[i].wrotePmkid &&
+                (!oldest || s_hs[i].lastSeenMs < oldest->lastSeenMs)) {
+                oldest = &s_hs[i];
+            }
+        }
+        if (oldest) {
+            memset(oldest, 0, sizeof(Hs));
+            memcpy(oldest->bssid, bssid, 6);
+            oldest->used = true;
+            h = oldest;
+        }
+    }
+    if (!h) return nullptr;
+    memcpy(h->sta, sta, 6);
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (&s_hs[i] != h && s_hs[i].used &&
+            memcmp(s_hs[i].bssid, bssid, 6) == 0 && s_hs[i].haveEssid) {
+            memcpy(h->essid, s_hs[i].essid, sizeof(h->essid));
+            h->essidLen = s_hs[i].essidLen;
+            h->haveEssid = true;
+            break;
+        }
+    }
+    return h;
 }
 
 static void maybeWrite(Hs* h);
@@ -173,6 +239,7 @@ static void seedEssid(const uint8_t* bssid, const char* ssid) {
     if (!bssid || !ssid || !ssid[0]) return;
     if (strcasecmp(ssid, "HIDDEN") == 0 || strcmp(ssid, "[UNKNOWN]") == 0) return;
     Hs* h = slotFor(bssid);
+    if (!h) return;
     if (h->haveEssid && h->essidLen > 0) {
         maybeWrite(h);
         return;
@@ -285,7 +352,11 @@ static void parseAssoc(const uint8_t* f, uint16_t len) {
         if (id == 48) {
             uint8_t pmk[16];
             if (parseRsnPmkid(f + off + 2, l, pmk)) {
-                Hs* h = slotFor(bssid);
+                Hs* h = slotForStation(bssid, sta);
+                if (!h || s_minimumWpaCapture) {
+                    off = (uint16_t)(off + 2 + l);
+                    continue;
+                }
                 if (!selectStation(h, sta)) {
                     off = (uint16_t)(off + 2 + l);
                     continue;
@@ -312,6 +383,7 @@ static void parseBeacon(const uint8_t* f, uint16_t len) {
         if (off + 2 + l > len) break;
         if (id == 0 && l > 0 && l <= 32) {
             Hs* h = slotFor(bssid);
+            if (!h) return;
             memcpy(h->essid, f + off + 2, l);
             h->essidLen = l;
             h->haveEssid = true;
@@ -425,11 +497,20 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     // EAPOL frame. Mark the slot dirty and let flushPending() in loop()
     // call maybeWrite() instead.
     h->dirty = true;
+    h->lastSeenMs = millis();
 }
 
 void reset() {
+    portENTER_CRITICAL(&s_hsMux);
     memset(s_hs, 0, sizeof(s_hs));
     s_lastM1Ms = 0;
+    portEXIT_CRITICAL(&s_hsMux);
+}
+
+void setMinimumWpaCapture(bool enabled) {
+    portENTER_CRITICAL(&s_hsMux);
+    s_minimumWpaCapture = enabled;
+    portEXIT_CRITICAL(&s_hsMux);
 }
 
 void flushPending() {
@@ -440,14 +521,28 @@ void flushPending() {
     // SD isn't ISR-safe and the radio would WDT the moment any beacon or
     // EAPOL arrived under load.
     for (uint8_t i = 0; i < MAX_HS; i++) {
-        if (!s_hs[i].used) continue;
-        if (!s_hs[i].dirty) continue;
+        Hs snapshot;
+        portENTER_CRITICAL(&s_hsMux);
+        if (!s_hs[i].used || !s_hs[i].dirty) {
+            portEXIT_CRITICAL(&s_hsMux);
+            continue;
+        }
+        snapshot = s_hs[i];
         s_hs[i].dirty = false;
+        portEXIT_CRITICAL(&s_hsMux);
         // haveEssid is required by maybeWrite() anyway, and we want to
         // drop the dirty bit even if no write was actually performed,
         // otherwise we'd re-check the same slot every loop tick forever.
-        if (s_hs[i].haveEssid && s_hs[i].essidLen > 0) {
-            maybeWrite(&s_hs[i]);
+        if (snapshot.haveEssid && snapshot.essidLen > 0) {
+            maybeWrite(&snapshot);
+            portENTER_CRITICAL(&s_hsMux);
+            if (s_hs[i].used &&
+                memcmp(s_hs[i].bssid, snapshot.bssid, 6) == 0 &&
+                memcmp(s_hs[i].sta, snapshot.sta, 6) == 0) {
+                s_hs[i].wroteEapol |= snapshot.wroteEapol;
+                s_hs[i].wrotePmkid |= snapshot.wrotePmkid;
+            }
+            portEXIT_CRITICAL(&s_hsMux);
         }
     }
 }
@@ -455,39 +550,51 @@ void flushPending() {
 bool shouldPauseDeauth() {
     uint16_t pause = Config::radio().pauseMs;
     if (pause < 200) pause = 200;
-    return s_lastM1Ms != 0 && (millis() - s_lastM1Ms) < pause;
+    portENTER_CRITICAL(&s_hsMux);
+    uint32_t lastM1 = s_lastM1Ms;
+    portEXIT_CRITICAL(&s_hsMux);
+    return lastM1 != 0 && (millis() - lastM1) < pause;
 }
 
 bool hasPair(const uint8_t* bssid) {
     if (!bssid) return false;
+    portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0)
-            return s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
+        {
+            bool result = s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
+            portEXIT_CRITICAL(&s_hsMux);
+            return result;
+        }
     }
+    portEXIT_CRITICAL(&s_hsMux);
     return false;
 }
 
 uint16_t pairCount() {
     uint16_t n = 0;
+    portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
     }
+    portEXIT_CRITICAL(&s_hsMux);
     return n;
 }
 
 uint8_t handshakeMask(const uint8_t* bssid) {
     if (!bssid) return 0;
+    portENTER_CRITICAL(&s_hsMux);
+    uint8_t result = 0;
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
-            uint8_t m = 0;
-            if (s_hs[i].haveAnonce)  m |= 0x01; // M1
-            if (s_hs[i].haveM2)      m |= 0x02; // M2
-            if (s_hs[i].haveAnonce3) m |= 0x04; // M3
-            if (s_hs[i].haveM4)      m |= 0x08; // M4
-            return m;
+            if (s_hs[i].haveAnonce)  result |= 0x01; // M1
+            if (s_hs[i].haveM2)      result |= 0x02; // M2
+            if (s_hs[i].haveAnonce3) result |= 0x04; // M3
+            if (s_hs[i].haveM4)      result |= 0x08; // M4
         }
     }
-    return 0;
+    portEXIT_CRITICAL(&s_hsMux);
+    return result;
 }
 
 bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
@@ -503,12 +610,14 @@ bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
 
 void feed(const uint8_t* frame, uint16_t len) {
     if (!frame || len < 24) return;
+    portENTER_CRITICAL(&s_hsMux);
     uint8_t type = (frame[0] >> 2) & 0x03;
     if (type == 0) {
         uint8_t subtype = (frame[0] >> 4) & 0x0F;
         if (subtype == 8 || subtype == 5) parseBeacon(frame, len);
         else if (subtype == 1) parseAssoc(frame, len);
     } else if (type == 2) parseEapol(frame, len);
+    portEXIT_CRITICAL(&s_hsMux);
 }
 
 uint16_t convertPcap(const char* pcapPath) {

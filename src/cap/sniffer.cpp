@@ -1272,6 +1272,7 @@ static void startCommon(RunMode mode) {
     s_pairAtSwitch = Hc22000::pairCount();
     Methods::resetAll();
     setMethodTag();
+    Hc22000::setMinimumWpaCapture(s_minimumWpaCapture);
     if (s_hopMs < 50) s_hopMs = 50;
 
     // SoftAP iface must exist or 802.11 TX / promiscuous often stay dead

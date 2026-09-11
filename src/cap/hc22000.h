@@ -7,6 +7,7 @@
 namespace Hc22000 {
 
 void reset();
+void setMinimumWpaCapture(bool enabled);
 void feed(const uint8_t* frame, uint16_t len);
 // Drains the in-memory dirty slots built up by feed() and writes any
 // .22000 / .pmkid files to SD. Must be called from loop() context - it
