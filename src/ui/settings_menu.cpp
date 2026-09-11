@@ -72,10 +72,35 @@ static const Item SYSTEM[] = {
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
+    {"PACK",      Kind::VALUE,  18, 0, 0, 1},   // dynamic: 0=STOCK, 1..N, CUSTOM
+    {"HS METHOD", Kind::VALUE,  7,  0, 0, 1},   // dynamic: AUTO + registry
     {"HOP MS",    Kind::VALUE,  0, 50, 2000, 50},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
-    {"HS DEPTH",  Kind::VALUE, 24, 0, 2, 1},
-    {"FAT PCAP",  Kind::TOGGLE,17, 0, 1, 1},
+    {"LOCK MS",   Kind::VALUE,  1, 0, 15000, 500},
+    {"LOCK ON HS",Kind::TOGGLE, 2,  0, 1, 1},
+    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
+    {"RANDOM MAC",Kind::TOGGLE, 4,  0, 1, 1},
+    {"MIN RSSI",  Kind::VALUE,  5, -90, -50, 5},
+    {"FALLBACK",  Kind::VALUE,  8, 10, 90, 5},
+    {"KICK BURST",Kind::VALUE,  9, 1, 6, 1},
+    {"BIDIR KICK",Kind::TOGGLE, 10, 0, 1, 1},
+    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
+    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
+    {"CSA HERD",  Kind::TOGGLE, 13, 0, 1, 1},
+    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
+    {"DEAUTH RSN",Kind::VALUE,  15, 1, 8, 1},
+    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 100},
+    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},
+    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},
+    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10},
+    {"DWELL MIN", Kind::VALUE,  23, 50, 600, 10},
+    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},
+    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},
+    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
+    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},
+    {"AUTO STOP", Kind::VALUE,  50, 0, 30, 1},
+    {"RESET",     Kind::ACTION, 19, 0, 0, 0},
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -140,7 +165,13 @@ static const char* const H_SYSTEM[] = {
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",
     "AUTO / ALL / CLIENTS / FOCUS / HERD.",
-    "ENT = BACK TO STOCK RADIO.",
+    "MS PER CHANNEL DWELL.",
+    "ALL 1-13 / PRI 1-6-11 / CORE.",
+    "HOLD CHANNEL AFTER EAPOL (0=OFF).",
+    "LOCK WHEN HANDSHAKE LANDS.",
+    "KICK CLIENTS ON AGGRO / EP.",
+    "NEW MAC EACH ATTACK START.",
+    "SKIP WEAK APS FOR KICK.",
     "AUTO: SEC THEN NEXT METHOD.",
     "DEAUTH ROUNDS PER AP.",
     "KICK BOTH WAYS AP<->STA.",
@@ -159,13 +190,8 @@ static const char* const H_RADIO[] = {
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
     "EXTRA SEC HOLD AFTER PAIR.",
-    "HOW LONG YOU SIT ON A CH.",
-    "HOLD CHANNEL AFTER EAPOL.",
-    "LOCK WHEN HANDSHAKE LANDS.",
-    "KICK CLIENTS ON AGGRO / EP.",
-    "NEW MAC EACH ATTACK START.",
-    "SKIP WEAK APS FOR KICK.",
-    "ALL / PRI 1-6-11 FIRST / CORE."
+    "STOP AFTER PAIR (0=NEVER).",
+    "ENT = BACK TO STOCK RADIO."
 };
 
 static const char* const H_BLE[] = {
