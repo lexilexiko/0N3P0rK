@@ -85,6 +85,7 @@ static const Item RADIO[] = {
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
     {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
     {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    {"HS FILE B", Kind::VALUE,  28, 370, 2580, 370},
     // Porkchop-style knobs. ID 20+ keeps them out of the way of the
     // legacy IDs already on disk; legacy fields stay exactly the same
     // bytes for backwards compatibility with saved NVS configs.
@@ -96,7 +97,7 @@ static const Item RADIO[] = {
     {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
     {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
     {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
-    {"AUTO STOP", Kind::VALUE,  50, 0, 60, 1},     // sec after pair → auto-stop (0=off)
+    {"AUTO SKIP", Kind::VALUE,  50, 0, 60, 1},     // sec after pair → skip AP (0=off)
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
@@ -179,6 +180,7 @@ static const char* const H_RADIO[] = {
     "802.11 DEAUTH REASON CODE.",
     "LISTEN AFTER M1, NO KICK.",
     "RICH RADIOTAP CH/RSSI IN PCAP.",
+    "MAX HANDSHAKE PCAP SIZE: 370/740/1240/2580 B.",
     "ANTI-WIDS GAP BETWEEN MGMT.",
     "SEC COOLDOWN AFTER KICK/AP.",
     "MIN SCORE TO ATTACK (FOCUS).",
@@ -187,7 +189,7 @@ static const char* const H_RADIO[] = {
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
     "EXTRA SEC HOLD AFTER PAIR.",
-    "SEC AFTER PAIR THEN STOP. 0=OFF.",
+    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
     "HOW LONG YOU SIT ON A CH.",
     "HOLD CHANNEL AFTER EAPOL.",
     "LOCK WHEN HANDSHAKE LANDS.",
@@ -392,6 +394,7 @@ static int getValue(const Item& it) {
             case 15: return r.deauthReason;
             case 16: return r.pauseMs;
             case 17: return r.fatPcap ? 1 : 0;
+            case 28: return r.hsFileBytes;
             case 18: return r.pack;
             // Porkchop-style knobs (IDs 20..23).
             case 20: return r.jitterMs;
@@ -461,6 +464,8 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (s_page == SettingsPage::RADIO && it.id == 24) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::RADIO && it.id == 28) {
+        snprintf(raw, sizeof(raw), "%dB", getValue(it));
     } else if (s_page == SettingsPage::RADIO && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
     } else if (s_page == SettingsPage::RADIO && it.id == 27) {
@@ -517,6 +522,25 @@ static bool setValue(const Item& it, int v) {
         uint8_t resolved = (nextSlot == lastSlot) ? RADIO_PACK_CUSTOM : (uint8_t)nextSlot;
         Config::applyRadioPack(resolved);
         Display::showToast(radioPackName(resolved), 900);
+        return true;
+    }
+
+    // HS FILE B has four intentional sizes rather than a linear range.
+    if (s_page == SettingsPage::RADIO && it.id == 28) {
+        static const uint16_t sizes[] = {370, 740, 1240, 2580};
+        int current = (int)r.hsFileBytes;
+        uint8_t slot = 1;
+        for (uint8_t i = 0; i < 4; i++) {
+            if (sizes[i] == current) {
+                slot = i;
+                break;
+            }
+        }
+        slot = (v > current) ? (uint8_t)((slot + 1) % 4)
+                             : (uint8_t)((slot + 3) % 4);
+        r.hsFileBytes = sizes[slot];
+        Config::markRadioCustom();
+        Config::save();
         return true;
     }
 
@@ -688,6 +712,7 @@ static bool setValue(const Item& it, int v) {
             case 15: r.deauthReason = (uint8_t)v; break;
             case 16: r.pauseMs = (uint16_t)v; break;
             case 17: r.fatPcap = v != 0; break;
+            case 28: r.hsFileBytes = (uint16_t)v; break;
             // Porkchop-style knobs (IDs 20..23) + handshake depth (24).
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;

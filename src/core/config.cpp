@@ -83,6 +83,7 @@ bool Config::init() {
     r.deauthReason = s_prefs.getUChar("dreason", r.deauthReason);
     r.pauseMs = s_prefs.getUShort("pausems", r.pauseMs);
     r.fatPcap = s_prefs.getBool("fatpcap", r.fatPcap);
+    r.hsFileBytes = s_prefs.getUShort("hsfileb", r.hsFileBytes);
     r.pack = s_prefs.getUChar("rpack", r.pack);
     // Porkchop-style knobs — same load pattern as everything above.
     r.jitterMs = s_prefs.getUChar("jitms", r.jitterMs);
@@ -152,6 +153,9 @@ bool Config::init() {
     if (r.deauthReason > 8) r.deauthReason = 7;
     if (r.pauseMs < 400) r.pauseMs = 400;
     if (r.pauseMs > 3000) r.pauseMs = 3000;
+    if (r.hsFileBytes != 370 && r.hsFileBytes != 740 &&
+        r.hsFileBytes != 1240 && r.hsFileBytes != 2580)
+        r.hsFileBytes = 740;
     // pack lives in its own registry (Cap::Packs), separate bound from
     // hsMethod's - CUSTOM is the one value allowed above that bound
     // (fixed sentinel).
@@ -215,6 +219,7 @@ bool Config::save() {
     s_prefs.putUChar("dreason", r.deauthReason);
     s_prefs.putUShort("pausems", r.pauseMs);
     s_prefs.putBool("fatpcap", r.fatPcap);
+    s_prefs.putUShort("hsfileb", r.hsFileBytes);
     s_prefs.putUChar("rpack", r.pack);
     // Porkchop-style knobs — same save pattern as everything above.
     s_prefs.putUChar("jitms", r.jitterMs);

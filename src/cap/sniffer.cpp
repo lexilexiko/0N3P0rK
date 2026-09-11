@@ -29,7 +29,7 @@ namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
 static const uint8_t  RING_SLOTS = 12;
-static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
+static const uint32_t DEFAULT_MAX_FILE_SIZE = 740UL;
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 static const uint8_t HOP_CORE[] = {1, 6, 11};
@@ -53,6 +53,7 @@ static uint8_t  s_fileBssid[6];
 static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
+static uint32_t s_maxFileSize = DEFAULT_MAX_FILE_SIZE;
 static char     s_fileName[Storage::FILE_NAME_MAX];
 // One-shot log dedup for the "file is already at MAX_FILE_SIZE" branch
 // in openFileForBssid() — without this, the Serial would see one
@@ -127,8 +128,9 @@ static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
 static bool     s_dataAct = false;     // count data frames for FOCUS activity
 static bool     s_strictLock = true;   // FOCUS ignores score while lock-on-BSSID
 static uint8_t  s_depthHoldSec = 0;    // extra sec hold after pair when hsDepth>0
-static uint8_t  s_autoStopSec = 0;     // seconds after pair → auto-stop capture
-static uint32_t s_autoStopAt = 0;      // millis() deadline for auto-stop (0=not armed)
+static uint8_t  s_autoStopSec = 0;     // seconds after pair → skip that AP
+static uint32_t s_autoStopAt = 0;      // millis() deadline for auto-skip (0=not armed)
+static uint8_t  s_autoStopBssid[6] = {};
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
@@ -677,6 +679,7 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     ph.tsUsec  = (ts % 1000) * 1000;
     ph.inclLen = rtLen + flen;
     ph.origLen = ph.inclLen;
+    if (s_fileSize + sizeof(ph) + rtLen + flen > s_maxFileSize) return false;
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
@@ -750,7 +753,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
         preSize = s_fileSize;
     }
     bool createdNew = false;
-    if (s_fileSize >= MAX_FILE_SIZE) {
+    if (s_fileSize >= s_maxFileSize) {
         s_file.close();
         if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
             Serial.printf("[CAP] pcap at cap (%u bytes), skipping %s\n",
@@ -823,12 +826,12 @@ static void writeFrameToFile(const Slot& s) {
     if (s_fileOpen && !sameBssid(s_fileBssid, s.bssid)) {
         closeFile();
     }
-    if (s_fileOpen && s_fileSize >= MAX_FILE_SIZE) {
+    if (s_fileOpen && s_fileSize >= s_maxFileSize) {
         closeFile();
     }
     if (!s_fileOpen) {
         // openFileForBssid() can refuse for two reasons:
-        //   - cap on the existing file (>= MAX_FILE_SIZE) - logged inside
+        //   - cap on the existing file (>= configured HS FILE B) - logged inside
         //   - too many pcaps on SD already (>= MAX_FILES) - logged inside
         // In both cases we silently used to drop the frame WITHOUT
         // bumping framesDropped, so the user couldn't tell from the
@@ -1176,6 +1179,11 @@ static void startCommon(RunMode mode) {
     s_authFlood = Config::radio().authFlood;
     s_deauthReason = Config::radio().deauthReason;
     s_fatPcap = Config::radio().fatPcap;
+    uint16_t hsFileBytes = Config::radio().hsFileBytes;
+    if (hsFileBytes != 370 && hsFileBytes != 740 &&
+        hsFileBytes != 1240 && hsFileBytes != 2580)
+        hsFileBytes = 740;
+    s_maxFileSize = hsFileBytes;
     // Porkchop-style knobs.
     s_jitterMs = Config::radio().jitterMs;
     s_cooldownSec = Config::radio().cooldownMs;
@@ -1191,6 +1199,7 @@ static void startCommon(RunMode mode) {
     s_autoStopSec = Config::radio().autoStopSec;
     if (s_autoStopSec > 60) s_autoStopSec = 60;
     s_autoStopAt = 0;  // clear any leftover armed timer
+    memset(s_autoStopBssid, 0, sizeof(s_autoStopBssid));
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
     // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
@@ -1469,26 +1478,27 @@ void loop() {
 
     uint32_t now = millis();
 
-    // AUTO-STOP after pair: arm the timer the first time a pair lands on SD.
-    // Once armed, stop() is called after autoStopSec. This keeps PCAP small
-    // so wpa-sec doesn't reject it for oversized EAPOL (observed >800 bytes).
+    // AUTO-SKIP after pair: keep attacking this AP for the selected delay,
+    // then add only this BSSID to the session skip-list and continue hunting.
     if (s_autoStopSec > 0) {
         if (s_autoStopAt == 0 && Hc22000::pairCount() > 0) {
-            s_autoStopAt = now + (uint32_t)s_autoStopSec * 1000u;
-            Serial.printf("[CAP] auto-stop armed: %us\n", (unsigned)s_autoStopSec);
+            const uint8_t* target = nullptr;
+            if (!isZeroMac(s_lastHsBssid)) target = s_lastHsBssid;
+            else if (!isZeroMac(s_lockBssid)) target = s_lockBssid;
+            if (target) {
+                memcpy(s_autoStopBssid, target, sizeof(s_autoStopBssid));
+                s_autoStopAt = now + (uint32_t)s_autoStopSec * 1000u;
+                Serial.printf("[CAP] auto-skip armed: %us\n", (unsigned)s_autoStopSec);
+            }
         }
         if (s_autoStopAt != 0 && now >= s_autoStopAt) {
-            Serial.println("[CAP] auto-stop fired");
+            Serial.println("[CAP] auto-skip fired");
             s_autoStopAt = 0;
-            // Add the captured BSSID to the session skip-list BEFORE stop()
-            // so if the user immediately restarts, this AP is not revisited.
-            // This mirrors what 'Z' does manually: locks the pair we got,
-            // removes the target from the beacon table, and moves on.
-            if (!isZeroMac(s_lockBssid)) addSkip(s_lockBssid);
-            else if (!isZeroMac(s_lastHsBssid)) addSkip(s_lastHsBssid);
-            else if (!isZeroMac(s_fileBssid)) addSkip(s_fileBssid);
-            stop();
-            return;
+            // Reuse the complete manual-Z cleanup path, but force it to the
+            // BSSID whose pair started this timer.
+            memcpy(s_lockBssid, s_autoStopBssid, sizeof(s_lockBssid));
+            skipCurrent();
+            memset(s_autoStopBssid, 0, sizeof(s_autoStopBssid));
         }
     }
 
