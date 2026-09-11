@@ -49,7 +49,7 @@ struct Item {
 };
 
 static const char* const H_ATTACK[] = {
-    "LIGHT LISTEN OR AGGRO HUNT.",
+    "LIGHT LISTEN OR WPASEC CAPTURE.",
     "RINGS ON THE SNOUT. LOOT ON SD."
 };
 static const char* const H_LOOT[] = {
@@ -73,8 +73,8 @@ static const char* const H_STAT[] = {
     "READ ONLY. ` BACK."
 };
 static const char* const H_RADIO[] = {
-    "HOP LOCK DEAUTH RSSI MAC.",
-    "AGGRO AND EVILPIG READ THIS."
+    "HOPPING AND HANDSHAKE DEPTH.",
+    "WPASEC CAPTURE SETTINGS."
 };
 static const char* const H_BLESET[] = {
     "BURST AND ADV TIME.",
@@ -126,8 +126,8 @@ static const char* const H_LIGHT[] = {
     "INCOMING RINGS. UI STAYS CALM."
 };
 static const char* const H_AGGRO[] = {
-    "HOP 1-13. KICK. CATCH.",
-    "OUTGOING RINGS. SSID HUNT."
+    "HOP 1-13. PASSIVE. CATCH.",
+    "PCAP + 22000. NEVER STOPS."
 };
 static const char* const H_STOP[] = {
     "RADIO SLEEP. RINGS DIE.",
@@ -169,7 +169,7 @@ static const uint8_t ROOT_COUNT = 5;
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
-    {"!!", "AGGRO",   2,  H_AGGRO, 2},
+    {"!!", "WPASEC",  2,  H_AGGRO, 2},
     {"EP", "EVILPIG", 9,  H_EVIL,  2},
     {"PP", "PIGPASS", 10, H_PASS,  2},
     {"BL", "BLE",     13, H_BLE,   2},
@@ -246,11 +246,11 @@ static void doAction(uint8_t id) {
         case 2:
             if (Cap::isRunning() && Cap::runMode() == Cap::RunMode::Aggressive) {
                 Cap::stop();
-                Display::showToast("AGGRO OFF", 900);
+                Display::showToast("WPASEC OFF", 900);
             } else {
                 Cap::startAggressive();
                 App::setMode(AppMode::FARM);
-                Display::showToast("AGGRO", 900);
+                Display::showToast("WPASEC", 900);
             }
             break;
         case 3:

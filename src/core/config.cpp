@@ -98,7 +98,7 @@ bool Config::init() {
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
 
-    HotkeyConfig def{};
+    HotkeyConfig def;
     hotkeyConfig = def;
     char raw[HOTKEY_COUNT];
     size_t got = s_prefs.getBytes("hotk", raw, HOTKEY_COUNT);

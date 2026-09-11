@@ -5,6 +5,7 @@
 #include "sniffer.h"
 #include "pcap.h"
 #include "capture_name.h"
+#include "hc22000.h"
 #include "../storage/littlefs_ops.h"
 #include "../core/config.h"
 #include <WiFi.h>
@@ -207,6 +208,7 @@ static void setChannel(uint8_t channel) {
 void begin() {
     Storage::begin();
     Storage::ensureDir(Storage::DIR_HANDSHAKES);
+    Hc22000::reset();
     s_count = {};
 }
 
@@ -217,6 +219,7 @@ static void start(RunMode mode) {
     s_hopping = mode != RunMode::Pinned;
     s_write = s_read = 0;
     s_count = {};
+    Hc22000::reset();
     s_channelIndex = 0;
     s_hopSet = Config::radio().hopSet;
     s_hopMs = Config::radio().hopMs < 100 ? 100 : Config::radio().hopMs;
@@ -250,9 +253,11 @@ void stop() {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     while (s_read != s_write) {
+        Hc22000::feed(s_ring[s_read].frame, s_ring[s_read].len);
         writeFrame(s_ring[s_read]);
         s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
     }
+    Hc22000::flushPending();
     closeCapture();
     s_mode = RunMode::Off;
     s_hopping = false;

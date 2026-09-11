@@ -74,6 +74,8 @@ static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 static const Item RADIO[] = {
     {"HOP MS",    Kind::VALUE,  0, 50, 2000, 50},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"HS DEPTH",  Kind::VALUE, 24, 0, 2, 1},
+    {"FAT PCAP",  Kind::TOGGLE,17, 0, 1, 1},
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -85,7 +87,7 @@ static const Item BLE[] = {
 static const uint8_t BLE_N = sizeof(BLE) / sizeof(BLE[0]);
 
 static const Item KEYS[] = {
-    {"AGGRO",    Kind::BIND, 0, 0, 0, 0},
+    {"WPASEC",   Kind::BIND, 0, 0, 0, 0},
     {"LIGHT",    Kind::BIND, 1, 0, 0, 0},
     {"PIGPASS",  Kind::BIND, 2, 0, 0, 0},
     {"EVILPIG",  Kind::BIND, 3, 0, 0, 0},
@@ -350,6 +352,8 @@ static int getValue(const Item& it) {
             case 4: return r.randomMac ? 1 : 0;
             case 5: return r.minRssi;
             case 6: return r.hopSet;
+            case 17: return r.fatPcap ? 1 : 0;
+            case 24: return r.hsDepth;
             case 7: return r.hsMethod;
             case 8: return r.fallbackSec;
             case 9: return r.kickBurst;
