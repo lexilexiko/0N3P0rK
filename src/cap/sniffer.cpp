@@ -783,6 +783,10 @@ static bool openFileForBssid(const uint8_t* bssid) {
         s_file.close();
         return false;
     }
+    s_fileOpen = true;
+    memcpy(s_fileBssid, bssid, sizeof(s_fileBssid));
+    strncpy(s_fileName, name, sizeof(s_fileName) - 1);
+    s_fileName[sizeof(s_fileName) - 1] = '\0';
     // If we believed the file was empty but open shows data, trust disk:
     // never write a second global header into an existing stream.
     if (preSize == 0 && s_fileSize > 0) {
@@ -790,7 +794,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
     }
     bool createdNew = false;
     if (s_fileSize >= s_maxFileSize) {
-        s_file.close();
+        closeFile();
         if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
             Serial.printf("[CAP] pcap at cap (%u bytes), skipping %s\n",
                           (unsigned)s_fileSize, name);
@@ -815,7 +819,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
         fh.snaplen      = 65535;
         fh.linktype     = 127;
         if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
-            s_file.close();
+            closeFile();
             // Only remove if we created an empty/new failure — not a prior good file.
             if (SD.exists(path)) {
                 File chk = SD.open(path, "r");
@@ -957,10 +961,23 @@ static void processPendingSsidLearn() {
     ph.tsUsec  = (ts % 1000) * 1000;
     ph.inclLen = (uint32_t)(rtLen + b->len);
     ph.origLen = ph.inclLen;
-    f.write((uint8_t*)&ph, sizeof(ph));
-    f.write(rt, rtLen);
-    f.write(b->frame, b->len);
+    size_t currentSize = f.size();
+    size_t packetSize = sizeof(ph) + rtLen + b->len;
+    if (currentSize + packetSize > s_maxFileSize) {
+        Serial.printf("[CAP] SSID beacon does not fit limit: %s (%u/%u)\n",
+                      newName, (unsigned)currentSize, (unsigned)s_maxFileSize);
+        f.close();
+        return;
+    }
+    size_t written = 0;
+    written += f.write((uint8_t*)&ph, sizeof(ph));
+    written += f.write(rt, rtLen);
+    written += f.write(b->frame, b->len);
     f.close();
+    if (written != packetSize) {
+        Serial.printf("[CAP] short SSID beacon write: %s (%u/%u)\n",
+                      newName, (unsigned)written, (unsigned)packetSize);
+    }
 }
 
 static void drainRing() {
@@ -1167,6 +1184,7 @@ static void startCommon(RunMode mode) {
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
     if (s_running) stop();
+    Hc22000::reset();
 
     s_write = 0;
     s_read = 0;
@@ -1332,6 +1350,7 @@ void stop() {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     drainRing();
+    Hc22000::flushPending();
     closeFile();
     Storage::compactLoot();
     WiFi.softAPdisconnect(true);
