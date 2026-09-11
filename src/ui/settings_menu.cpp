@@ -72,37 +72,7 @@ static const Item SYSTEM[] = {
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
-    {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
-    {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
-    {"RESET",     Kind::ACTION, 19, 0, 0, 0}, // stock radio — next to method
-    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
-    {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
-    {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
-    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
-    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
-    {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
-    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
-    {"REASON",    Kind::VALUE,  15, 1, 8, 1},
-    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
-    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
-    // Porkchop-style knobs. ID 20+ keeps them out of the way of the
-    // legacy IDs already on disk; legacy fields stay exactly the same
-    // bytes for backwards compatibility with saved NVS configs.
-    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},     // random ms between mgmt frames
-    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},     // seconds per-AP after kick
-    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
-    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
-    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},      // 0=PAIR 1=+M3 2=FULL
-    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
-    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
-    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
-    {"AUTO STOP", Kind::VALUE,  50, 0, 60, 1},     // sec after pair → auto-stop (0=off)
-    {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
-    {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
-    {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
-    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
-    {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
-    {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
+    {"HOP MS",    Kind::VALUE,  0, 50, 2000, 50},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
 };
 
@@ -187,7 +157,6 @@ static const char* const H_RADIO[] = {
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
     "EXTRA SEC HOLD AFTER PAIR.",
-    "SEC AFTER PAIR THEN STOP. 0=OFF.",
     "HOW LONG YOU SIT ON A CH.",
     "HOLD CHANNEL AFTER EAPOL.",
     "LOCK WHEN HANDSHAKE LANDS.",

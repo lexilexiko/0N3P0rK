@@ -309,6 +309,7 @@ void Config::applyRadioPack(uint8_t pack) {
         r.dataAct      = pr.dataAct;
         r.strictLock   = pr.strictLock;
         r.depthHoldSec = pr.depthHoldSec;
+        r.autoStopSec  = pr.autoStopSec;
     }
     r.pack = pack;
     radioConfig = r;
