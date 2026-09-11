@@ -138,6 +138,9 @@ static uint8_t  s_pinBssid[6] = {};
 static uint8_t  s_pinCh = 6;
 static char     s_pinSsid[33] = {};
 
+static uint8_t IRAM_ATTR strictEapolMessage(const uint8_t* f, uint16_t len,
+                                            uint16_t bodyOff);
+
 // ---- Lock-on-BSSID (Porkchop-style) -----------------------------------
 // When the first EAPOL M1 is seen for a target BSSID we want M2 (or M3/M4)
 // from the same handshake. M2 is sent by the STATION back to the AP, on the
