@@ -279,6 +279,7 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
 // maybeRotateMethod().
 
 static uint8_t s_methodCount = 0;
+static bool s_minimumWpaCapture = false;
 
 static const Methods::Entry* methodTable() {
     return Methods::table(&s_methodCount);
@@ -290,6 +291,7 @@ static void setMethodTag() {
     const char* n = tbl[idx].name;
     strncpy(s_cnt.methodTag, n, sizeof(s_cnt.methodTag) - 1);
     s_cnt.methodTag[sizeof(s_cnt.methodTag) - 1] = '\0';
+    s_minimumWpaCapture = tbl[idx].minimumWpaCapture;
 }
 
 static void noteClient(const uint8_t* bssid, const uint8_t* sta) {
@@ -481,6 +483,33 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     Hc22000::feed(f, len);
 }
 
+// Minimum WPA-sec capture: accept only valid EAPOL-Key M1 or M2.
+// Keep this in IRAM because it is called by the promiscuous RX callback.
+static uint8_t IRAM_ATTR strictEapolMessage(const uint8_t* f, uint16_t len,
+                                            uint16_t bodyOff) {
+    if (!f || bodyOff + 8 + 99 > len) return 0;
+    if (f[bodyOff] != 0xAA || f[bodyOff + 1] != 0xAA ||
+        f[bodyOff + 2] != 0x03 || f[bodyOff + 6] != 0x88 ||
+        f[bodyOff + 7] != 0x8E) {
+        return 0;
+    }
+
+    const uint8_t* e = f + bodyOff + 8;
+    if ((e[0] != 1 && e[0] != 2) || e[1] != 3) return 0;
+    uint16_t eapolLen = (uint16_t)((e[2] << 8) | e[3]);
+    if (eapolLen < 95 || (uint32_t)eapolLen + 4 > len - bodyOff - 8)
+        return 0;
+
+    uint16_t keyInfo = (uint16_t)((e[5] << 8) | e[6]);
+    bool keyAck = (keyInfo & (1u << 7)) != 0;
+    bool keyMic = (keyInfo & (1u << 8)) != 0;
+    bool secure = (keyInfo & (1u << 9)) != 0;
+
+    if (keyAck && !keyMic) return 1;       // M1
+    if (!keyAck && keyMic && !secure) return 2; // M2
+    return 0;
+}
+
 static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
     const wifi_promiscuous_pkt_t* pkt = (const wifi_promiscuous_pkt_t*)buf;
     if (!pkt || !s_running) return;
@@ -534,15 +563,19 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     if (bssid && station) noteClient(bssid, station);
 
     bool eapol = false;
-    if (bodyOff + 8 <= len &&
-        f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA && f[bodyOff + 2] == 0x03 &&
-        f[bodyOff + 6] == 0x88 && f[bodyOff + 7] == 0x8E) {
+    if (s_minimumWpaCapture) {
+        eapol = strictEapolMessage(f, len, bodyOff) != 0;
+    } else if (bodyOff + 8 <= len &&
+               f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA &&
+               f[bodyOff + 2] == 0x03 && f[bodyOff + 6] == 0x88 &&
+               f[bodyOff + 7] == 0x8E) {
         eapol = true;
-    }
-    if (!eapol) {
-        uint16_t lim = len;
-        for (uint16_t i = bodyOff; i + 1 < lim; i++) {
-            if (f[i] == 0x88 && f[i + 1] == 0x8E) { eapol = true; break; }
+    } else {
+        for (uint16_t i = bodyOff; i + 1 < len; i++) {
+            if (f[i] == 0x88 && f[i + 1] == 0x8E) {
+                eapol = true;
+                break;
+            }
         }
     }
     // DATA ACT (RADIO): count non-EAPOL data toward BeaconSlot::dataRecent

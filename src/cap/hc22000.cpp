@@ -12,7 +12,7 @@
 namespace Hc22000 {
 
 static const uint8_t MAX_HS = 12;
-static const uint16_t MAX_EAPOL = 192;
+static const uint16_t MAX_EAPOL = 512;
 
 struct Hs {
     uint8_t bssid[6];
@@ -44,6 +44,43 @@ struct Hs {
 };
 
 static Hs s_hs[MAX_HS];
+
+static bool isZeroMac(const uint8_t* mac) {
+    if (!mac) return true;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (mac[i] != 0) return false;
+    }
+    return true;
+}
+
+static void resetHandshakeForStation(Hs* h, const uint8_t* sta) {
+    if (!h || !sta) return;
+    memset(h->sta, 0, sizeof(h->sta));
+    memset(h->anonce, 0, sizeof(h->anonce));
+    memset(h->anonce3, 0, sizeof(h->anonce3));
+    memset(h->anonceReplay, 0, sizeof(h->anonceReplay));
+    memset(h->m2Replay, 0, sizeof(h->m2Replay));
+    memset(h->pmkid, 0, sizeof(h->pmkid));
+    memset(h->m2, 0, sizeof(h->m2));
+    h->m2Len = 0;
+    h->haveAnonce = false;
+    h->haveAnonce3 = false;
+    h->havePmkid = false;
+    h->haveM2 = false;
+    h->haveM4 = false;
+    memcpy(h->sta, sta, 6);
+}
+
+static bool selectStation(Hs* h, const uint8_t* sta) {
+    if (!h || !sta) return false;
+    if (isZeroMac(h->sta) || memcmp(h->sta, sta, 6) == 0) {
+        memcpy(h->sta, sta, 6);
+        return true;
+    }
+    if (h->wroteEapol || h->wrotePmkid) return false;
+    resetHandshakeForStation(h, sta);
+    return true;
+}
 
 static void hexEnc(const uint8_t* in, size_t n, char* out) {
     static const char* H = "0123456789abcdef";
@@ -249,7 +286,10 @@ static void parseAssoc(const uint8_t* f, uint16_t len) {
             uint8_t pmk[16];
             if (parseRsnPmkid(f + off + 2, l, pmk)) {
                 Hs* h = slotFor(bssid);
-                memcpy(h->sta, sta, 6);
+                if (!selectStation(h, sta)) {
+                    off = (uint16_t)(off + 2 + l);
+                    continue;
+                }
                 memcpy(h->pmkid, pmk, 16);
                 h->havePmkid = true;
                 // No SD I/O from the IRQ - flushPending() handles it.
@@ -316,8 +356,7 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
 
     uint16_t body = (uint16_t)((e[2] << 8) | e[3]);
     uint16_t total = (uint16_t)(4 + body);
-    if (total > elen) total = elen;
-    if (total > MAX_EAPOL) total = MAX_EAPOL;
+    if (total > elen || total > MAX_EAPOL) return;
 
     // keyInfo at EAPOL payload[5..6]
     uint16_t ki = (uint16_t)((e[5] << 8) | e[6]);
@@ -345,7 +384,7 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     }
 
     Hs* h = slotFor(bssid);
-    memcpy(h->sta, sta, 6);
+    if (!selectStation(h, sta)) return;
 
     // First copy of each message wins — retransmit can change nonce/MIC.
     // Key replay counter (e[9..16]) ties M1 and M2 to the *same* handshake attempt:
