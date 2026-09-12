@@ -21,11 +21,14 @@ Secret menu codes are **not** listed here (keep them private).
 5. [Farm & pig](#farm--pig)
 6. [Seasons & unlock roadmap](#seasons--unlock-roadmap)
 7. [Radio & tools](#radio--tools)
-8. [PigPass](#pigpass)
-9. [SD layout](#sd-layout)
-10. [Web site](#web-site)
-11. [Version history](#version-history)
-12. [Legal & credits](#legal--credits)
+8. [BadUSB and BadBLE](#badusb-and-badble)
+9. [LED indicator](#led-indicator)
+10. [XFER file transfer](#xfer-file-transfer)
+11. [PigPass](#pigpass)
+12. [SD layout](#sd-layout)
+13. [Web site](#web-site)
+14. [Version history](#version-history)
+15. [Legal & credits](#legal--credits)
 
 ---
 
@@ -53,7 +56,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.8_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -264,6 +267,128 @@ points, clients, channels, authentication type, and PMF information. Press
 `ENTER` on a network to lock its view. Spectrum can suspend the farm scene to
 reduce CPU work while it is active.
 
+## BadUSB and BadBLE
+
+The **CONNECT → BADUSB** tool provides authorized HID automation over either
+USB HID or BLE HID. Use it only with computers and phones that you own or are
+explicitly authorized to test.
+
+### Tabs and controls
+
+| Key | Action |
+| --- | --- |
+| `1` | Scripts tab |
+| `2` | Live typing tab |
+| `3` | Preset panel |
+| `U` | Select USB HID |
+| `B` | Select BLE HID |
+| `P` | Toggle PC / phone preset profile |
+| `C` | Connect or advertise the selected HID transport |
+| `R` | Rescan `/0N3P0rK/badusb/` for scripts |
+| `;` / `,` | Move selection up |
+| `.` / `/` | Move selection down |
+| `ENTER` | Run a script, arm Live typing, or execute a preset |
+| `FN` + `` ` `` | Disarm Live typing |
+| `` ` `` | Exit BadUSB |
+
+The screen shows the selected transport, profile, connection status, and a
+small status indicator. USB mode waits for a mounted USB HID host. BLE mode
+advertises as `0N3P0rK` and may display a pairing PIN.
+
+### Script files
+
+Scripts are plain UTF-8 text files stored in:
+
+```text
+/0N3P0rK/badusb/
+```
+
+Only `.txt` files are listed. The parser supports comments, text, delays,
+default delays, repeated actions, modifier combinations, and common special
+keys:
+
+```text
+REM Open Notepad on a Windows test machine
+DEFAULT_DELAY 80
+GUI R
+DELAY 400
+STRING notepad
+ENTER
+STRING Hello from 0N3P0rK
+```
+
+Supported timing commands include `DELAY`, `DEFAULT_DELAY` (also
+`DEFAULTDELAY`), and `REPEAT`. Keep scripts short and test them on a
+non-production device first. Leaving the BadUSB screen or pressing its exit
+key stops the HID session and releases pressed keys.
+
+## LED indicator
+
+The Cardputer status LED is a built-in WS2812 RGB LED on GPIO 21. LED behavior
+is controlled under **SET → SYSTEM**:
+
+- **LED** enables or disables the indicator.
+- **LED BRIGHT** sets brightness from 0 to 100 percent.
+
+The LED is intentionally quiet to save battery:
+
+| Device state | LED behavior |
+| --- | --- |
+| Normal farm / menu | Soft ambient color based on the selected season |
+| Light capture | Off except for a short green blink when a handshake file is written |
+| Aggressive or pinned capture | Off except for three green blinks when a handshake file is written |
+| Loot, Wi-Fi, and other utility screens | Off |
+| Disabled in `SET → SYSTEM` | Always off |
+
+Brightness changes are applied immediately and are saved in the device
+configuration. The LED is a status hint only; the display and serial log
+remain the authoritative source for errors and connection details.
+
+## XFER file transfer
+
+**XFER** is the device's local Wi-Fi file manager. It creates a temporary
+access point and serves a browser-based "0N3P0rK Commander" for managing the
+SD card without removing it from the Cardputer.
+
+### Starting XFER
+
+1. Open **CONNECT → XFER**.
+2. Connect a phone or computer to the Wi-Fi network shown on the Cardputer.
+3. Open `http://192.168.4.1` in a browser.
+4. Browse directories, download files, upload files, or delete files.
+5. Press `` ` `` on the Cardputer to stop XFER and turn off its access point.
+
+The default network credentials are:
+
+```text
+SSID: 0N3P0rK
+Password: 0N3-P0rK
+Address: http://192.168.4.1
+```
+
+If the credentials were changed in the device configuration, always use the
+SSID and password displayed on the XFER screen. The screen also shows the
+number of connected stations and browser requests.
+
+### File operations and safety
+
+The web interface provides:
+
+- directory browsing from the SD root;
+- file downloads;
+- multiple-file uploads into the current directory;
+- file and empty-directory deletion;
+- refresh and parent-directory navigation.
+
+XFER is local to its temporary access point. It does not connect the device to
+the home network or provide Internet access. The path handler rejects
+`..` traversal and refuses deletion of the SD root, but the interface still
+has write and delete access to SD files. Use a private test network and keep
+important captures backed up before deleting or replacing them.
+
+Starting XFER stops an active capture session and suspends the farm scene to
+free radio and memory resources. Stop XFER before starting another Wi-Fi mode.
+
 ### Other modes
 
 | Mode | Role |
@@ -394,6 +519,13 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Improved status bars, target locking, session skip behavior, and capture
   lifecycle feedback.
 - Added runtime heap cleanup for offline 22000 conversion and synchronization.
+- Documented the BadUSB / BadBLE Scripts, Live, and Panel workflows, including
+  USB/BLE transport selection and SD script storage.
+- Documented the configurable WS2812 status LED, seasonal ambient indication,
+  and green handshake-capture flashes.
+- Documented the local XFER access point and browser-based SD file manager,
+  including its default address, credentials, upload/download actions, and
+  safe shutdown behavior.
 
 #### Compatibility and build
 
