@@ -137,7 +137,7 @@ struct RadioConfig {
     uint8_t deauthReason = 7;
     uint16_t pauseMs = 1200;   // listen after M1, don't kick
     bool fatPcap = true;       // radiotap with ch / rate / rssi
-    uint16_t hsFileBytes = 740; // maximum handshake PCAP size: 370/740/1240/2580 bytes
+    uint16_t hsFileBytes = 2048; // maximum handshake PCAP size: 1024/2048/4096/8192 bytes
     uint8_t pack = 0;          // RadioPack last applied
     // Porkchop-style knobs. All default off / safe so existing installs
     // keep their old behavior unless a user opts in.

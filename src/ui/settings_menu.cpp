@@ -85,7 +85,7 @@ static const Item RADIO[] = {
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
     {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
     {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
-    {"HS FILE B", Kind::VALUE,  28, 370, 2580, 370},
+    {"HS FILE B", Kind::VALUE,  28, 1024, 8192, 1024},
     // Porkchop-style knobs. ID 20+ keeps them out of the way of the
     // legacy IDs already on disk; legacy fields stay exactly the same
     // bytes for backwards compatibility with saved NVS configs.
@@ -180,7 +180,7 @@ static const char* const H_RADIO[] = {
     "802.11 DEAUTH REASON CODE.",
     "LISTEN AFTER M1, NO KICK.",
     "RICH RADIOTAP CH/RSSI IN PCAP.",
-    "MAX HANDSHAKE PCAP SIZE: 370/740/1240/2580 B.",
+    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
     "ANTI-WIDS GAP BETWEEN MGMT.",
     "SEC COOLDOWN AFTER KICK/AP.",
     "MIN SCORE TO ATTACK (FOCUS).",
@@ -527,7 +527,7 @@ static bool setValue(const Item& it, int v) {
 
     // HS FILE B has four intentional sizes rather than a linear range.
     if (s_page == SettingsPage::RADIO && it.id == 28) {
-        static const uint16_t sizes[] = {370, 740, 1240, 2580};
+        static const uint16_t sizes[] = {1024, 2048, 4096, 8192};
         int current = (int)r.hsFileBytes;
         uint8_t slot = 1;
         for (uint8_t i = 0; i < 4; i++) {

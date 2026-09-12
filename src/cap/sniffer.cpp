@@ -1334,9 +1334,9 @@ static void startCommon(RunMode mode) {
     s_deauthReason = Config::radio().deauthReason;
     s_fatPcap = Config::radio().fatPcap;
     uint16_t hsFileBytes = Config::radio().hsFileBytes;
-    if (hsFileBytes != 370 && hsFileBytes != 740 &&
-        hsFileBytes != 1240 && hsFileBytes != 2580)
-        hsFileBytes = 740;
+    if (hsFileBytes != 1024 && hsFileBytes != 2048 &&
+        hsFileBytes != 4096 && hsFileBytes != 8192)
+        hsFileBytes = 2048;
     s_maxFileSize = hsFileBytes;
     // Porkchop-style knobs.
     s_jitterMs = Config::radio().jitterMs;

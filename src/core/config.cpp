@@ -153,9 +153,9 @@ bool Config::init() {
     if (r.deauthReason > 8) r.deauthReason = 7;
     if (r.pauseMs < 400) r.pauseMs = 400;
     if (r.pauseMs > 3000) r.pauseMs = 3000;
-    if (r.hsFileBytes != 370 && r.hsFileBytes != 740 &&
-        r.hsFileBytes != 1240 && r.hsFileBytes != 2580)
-        r.hsFileBytes = 740;
+    if (r.hsFileBytes != 1024 && r.hsFileBytes != 2048 &&
+        r.hsFileBytes != 4096 && r.hsFileBytes != 8192)
+        r.hsFileBytes = 2048;
     // pack lives in its own registry (Cap::Packs), separate bound from
     // hsMethod's - CUSTOM is the one value allowed above that bound
     // (fixed sentinel).
