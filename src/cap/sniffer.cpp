@@ -31,7 +31,7 @@ namespace Cap {
 static const uint16_t FRAME_MAX = 1100;
 // Keep the capture queue bounded so WPA-sec sync still has a large
 // contiguous heap block available after radio capture.
-static const uint8_t  RING_SLOTS = 8;
+static const uint8_t  RING_SLOTS = 16;
 // Minimum PCAP for wpa-sec: GlobalHdr(24) + Beacon(~282) + M1(~171) + M2(~217) ≈ 694 B
 // Cap at 800 to allow slight variance while rejecting over-sized files.
 // hasPair() closes the file early anyway, so in practice it stays ~700 B.
@@ -52,9 +52,10 @@ struct Slot {
 };
 
 static Slot* s_ring = nullptr;
+static uint8_t s_ringCapacity = 0;
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
-static const uint8_t PENDING_SLOTS = 4;
+static const uint8_t PENDING_SLOTS = 6;
 
 struct PendingCapture {
     bool used;
@@ -71,6 +72,7 @@ struct PendingCapture {
 };
 
 static PendingCapture* s_pending = nullptr;
+static uint8_t s_pendingCapacity = 0;
 
 static File     s_file;
 static uint8_t  s_fileBssid[6];
@@ -104,11 +106,12 @@ static bool     s_pendingLearn = false;
 // a fresh entry right after the loop side reset the flag.
 static portMUX_TYPE s_pendingMux = portMUX_INITIALIZER_UNLOCKED;
 
-static const uint8_t BEACON_SLOTS = 16;
+static const uint8_t BEACON_SLOTS = 24;
 // BeaconSlot itself now lives in methods/beacon_slot.h (pulled in via
 // method_ctx.h) so the capture methods can read it without depending on
 // sniffer.cpp's internals.
 static BeaconSlot* s_beacons = nullptr;
+static uint8_t s_beaconCapacity = 0;
 static uint8_t s_beaconCount = 0;
 static uint8_t s_beaconClock = 0;
 
@@ -185,11 +188,32 @@ static uint8_t s_skipList[SKIP_MAX][6];
 static uint8_t s_skipN = 0;
 static bool    s_skipKeyWas = false;
 
+static uint8_t ringSlots() {
+    uint8_t n = Config::radio().capRingSlots;
+    n = n < 8 ? 8 : (n > RING_SLOTS ? RING_SLOTS : n);
+    return s_ringCapacity && n > s_ringCapacity ? s_ringCapacity : n;
+}
+
+static uint8_t pendingSlots() {
+    uint8_t n = Config::radio().capPendingSlots;
+    n = n < 4 ? 4 : (n > PENDING_SLOTS ? PENDING_SLOTS : n);
+    return s_pendingCapacity && n > s_pendingCapacity ? s_pendingCapacity : n;
+}
+
+static uint8_t beaconSlots() {
+    uint8_t n = Config::radio().capBeaconSlots;
+    n = n < 16 ? 16 : (n > BEACON_SLOTS ? BEACON_SLOTS : n);
+    return s_beaconCapacity && n > s_beaconCapacity ? s_beaconCapacity : n;
+}
+
 static bool allocateCaptureMemory() {
     if (s_ring && s_pending && s_beacons) return true;
-    if (!s_ring) s_ring = new (std::nothrow) Slot[RING_SLOTS];
-    if (!s_pending) s_pending = new (std::nothrow) PendingCapture[PENDING_SLOTS];
-    if (!s_beacons) s_beacons = new (std::nothrow) BeaconSlot[BEACON_SLOTS];
+    const uint8_t ringN = ringSlots();
+    const uint8_t pendingN = pendingSlots();
+    const uint8_t beaconN = beaconSlots();
+    if (!s_ring) s_ring = new (std::nothrow) Slot[ringN];
+    if (!s_pending) s_pending = new (std::nothrow) PendingCapture[pendingN];
+    if (!s_beacons) s_beacons = new (std::nothrow) BeaconSlot[beaconN];
     if (!s_ring || !s_pending || !s_beacons) {
         delete[] s_ring;
         delete[] s_pending;
@@ -197,8 +221,14 @@ static bool allocateCaptureMemory() {
         s_ring = nullptr;
         s_pending = nullptr;
         s_beacons = nullptr;
+        s_ringCapacity = 0;
+        s_pendingCapacity = 0;
+        s_beaconCapacity = 0;
         return false;
     }
+    s_ringCapacity = ringN;
+    s_pendingCapacity = pendingN;
+    s_beaconCapacity = beaconN;
     return true;
 }
 
@@ -506,10 +536,10 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
         }
     }
     uint8_t idx;
-    if (s_beaconCount < BEACON_SLOTS) {
+    if (s_beaconCount < beaconSlots()) {
         idx = s_beaconCount++;
     } else {
-        idx = s_beaconClock++ % BEACON_SLOTS;
+        idx = s_beaconClock++ % beaconSlots();
     }
     memset(&s_beacons[idx], 0, sizeof(s_beacons[idx]));
     memcpy(s_beacons[idx].bssid, bssid, 6);
@@ -615,7 +645,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         armLockOnBssid(bssid, s_cnt.currentChannel);
     }
 
-    uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
+    uint8_t next = (uint8_t)((s_write + 1) % ringSlots());
     if (next == s_read) {
         s_cnt.framesDropped++;
         return;
@@ -904,14 +934,14 @@ static uint8_t classifyPendingEapol(const Slot& s) {
 }
 
 static PendingCapture* pendingFor(const Slot& s) {
-    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+    for (uint8_t i = 0; i < pendingSlots(); i++) {
         if (s_pending[i].used &&
             sameBssid(s_pending[i].bssid, s.bssid) &&
             sameBssid(s_pending[i].station, s.station)) {
             return &s_pending[i];
         }
     }
-    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+    for (uint8_t i = 0; i < pendingSlots(); i++) {
         if (!s_pending[i].used) {
             memset(&s_pending[i], 0, sizeof(s_pending[i]));
             s_pending[i].used = true;
@@ -1010,7 +1040,7 @@ static void writeFrameToFile(const Slot& s) {
 }
 
 static void commitPendingCaptures() {
-    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+    for (uint8_t i = 0; i < pendingSlots(); i++) {
         PendingCapture& p = s_pending[i];
         if (!p.used || !p.haveM1 || !p.haveM2) continue;
         if (s_hsDepth >= 1 && !p.haveM3) continue;
@@ -1153,7 +1183,7 @@ static void drainRing() {
         const Slot& s = s_ring[s_read];
         // Checklist: feed() from loop context ONLY
         writeFrameToFile(s);
-        s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
+        s_read = (uint8_t)((s_read + 1) % ringSlots());
     }
     if (s_fileOpen) s_file.flush();
 }
@@ -1352,6 +1382,9 @@ static void startCommon(RunMode mode) {
         s_ring = nullptr;
         s_pending = nullptr;
         s_beacons = nullptr;
+        s_ringCapacity = 0;
+        s_pendingCapacity = 0;
+        s_beaconCapacity = 0;
         s_mode = RunMode::Off;
         return;
     }
@@ -1359,7 +1392,7 @@ static void startCommon(RunMode mode) {
 
     s_write = 0;
     s_read = 0;
-    memset(s_pending, 0, sizeof(PendingCapture) * PENDING_SLOTS);
+    memset(s_pending, 0, sizeof(PendingCapture) * pendingSlots());
     s_cnt = {};
     memset(s_seqTable, 0, sizeof(s_seqTable));
     s_pendingLearn = false;
@@ -1542,6 +1575,9 @@ void stop() {
     s_ring = nullptr;
     s_pending = nullptr;
     s_beacons = nullptr;
+    s_ringCapacity = 0;
+    s_pendingCapacity = 0;
+    s_beaconCapacity = 0;
     s_write = 0;
     s_read = 0;
     s_beaconCount = 0;

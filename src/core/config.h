@@ -171,6 +171,16 @@ struct RadioConfig {
     // Prevents PCAP from growing too large (wpa-sec rejects >800-byte EAPOL).
     // 0 = never auto-stop. Suggested: 3-10 sec.
     uint8_t autoStopSec = 0;
+    // Capture/spectrum performance tuning. Defaults match the compiled
+    // baseline; values are applied when the corresponding mode starts.
+    uint8_t capRingSlots = 8;
+    uint8_t capPendingSlots = 4;
+    uint8_t capBeaconSlots = 16;
+    uint8_t capMaxHs = 24;
+    uint8_t spectrumNetworks = 24;
+    uint8_t spectrumClients = 8;
+    uint8_t spectrumWaterfall = 12;
+    uint16_t spectrumHopMs = 220;
 };
 
 struct BleConfig {

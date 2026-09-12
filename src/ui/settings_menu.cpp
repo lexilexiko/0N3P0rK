@@ -105,9 +105,23 @@ static const Item RADIO[] = {
     {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
     {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"PERF",      Kind::ACTION, 30, 0, 0, 0},
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
+
+static const Item RADIO_PERF[] = {
+    {"RING SLOTS", Kind::VALUE, 60, 8, 16, 1},
+    {"PENDING",    Kind::VALUE, 61, 4, 6, 1},
+    {"BEACONS",    Kind::VALUE, 62, 16, 24, 1},
+    {"MAX HS",     Kind::VALUE, 63, 24, 32, 1},
+    {"SPEC NETS",  Kind::VALUE, 64, 24, 48, 8},
+    {"SPEC CLIENT",Kind::VALUE, 65, 8, 16, 4},
+    {"WATERFALL",  Kind::VALUE, 66, 12, 24, 4},
+    {"SPEC HOP",   Kind::VALUE, 67, 120, 500, 20},
+    {"RESET PERF", Kind::ACTION, 68, 0, 0, 0},
+};
+static const uint8_t RADIO_PERF_N = sizeof(RADIO_PERF) / sizeof(RADIO_PERF[0]);
 
 static const Item BLE[] = {
     {"BLE BURST", Kind::VALUE, 0, 50, 500, 50},
@@ -198,6 +212,17 @@ static const char* const H_RADIO[] = {
     "SKIP WEAK APS FOR KICK.",
     "ALL / PRI 1-6-11 FIRST / CORE."
 };
+static const char* const H_RADIO_PERF[] = {
+    "CAPTURE RING. MORE = FEWER DROPS, MORE RAM.",
+    "PENDING HANDSHAKES. MORE = MORE RAM.",
+    "TRACKED AP BEACONS. MORE = MORE RAM.",
+    "Hc22000 NETWORK TABLE. MORE = MORE RAM.",
+    "SPECTRUM AP LIST CAPACITY.",
+    "SPECTRUM CLIENTS PER AP.",
+    "SPECTRUM WATERFALL HISTORY.",
+    "SPECTRUM CHANNEL DWELL. LOWER = FASTER SWEEP.",
+    "RESTORE ONLY RADIO PERF DEFAULTS."
+};
 
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
@@ -247,6 +272,7 @@ static bool s_scanning = false;
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
+    if (s_page == SettingsPage::RADIO_PERF) { *n = RADIO_PERF_N; return RADIO_PERF; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
@@ -374,6 +400,19 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
+    if (s_page == SettingsPage::RADIO_PERF) {
+        switch (it.id) {
+            case 60: return r.capRingSlots;
+            case 61: return r.capPendingSlots;
+            case 62: return r.capBeaconSlots;
+            case 63: return r.capMaxHs;
+            case 64: return r.spectrumNetworks;
+            case 65: return r.spectrumClients;
+            case 66: return r.spectrumWaterfall;
+            case 67: return r.spectrumHopMs;
+            default: return 0;
+        }
+    }
     if (s_page == SettingsPage::RADIO) {
         switch (it.id) {
             case 0: return r.hopMs;
@@ -489,6 +528,21 @@ static bool setValue(const Item& it, int v) {
     PersonalityConfig& p = Config::personality();
     RadioConfig& r = Config::radio();
     BleConfig& b = Config::ble();
+    if (s_page == SettingsPage::RADIO_PERF) {
+        switch (it.id) {
+            case 60: r.capRingSlots = (uint8_t)v; break;
+            case 61: r.capPendingSlots = (uint8_t)v; break;
+            case 62: r.capBeaconSlots = (uint8_t)v; break;
+            case 63: r.capMaxHs = (uint8_t)v; break;
+            case 64: r.spectrumNetworks = (uint8_t)v; break;
+            case 65: r.spectrumClients = (uint8_t)v; break;
+            case 66: r.spectrumWaterfall = (uint8_t)v; break;
+            case 67: r.spectrumHopMs = (uint16_t)v; break;
+            default: return false;
+        }
+        Config::save();
+        return true;
+    }
 
     // HS METHOD (RADIO id 7) is the only item whose max grows with the
     // method registry — clamp it explicitly so the rest of the function
@@ -955,6 +1009,15 @@ void update() {
     if (!list || n == 0) return;
     const Item& cur = list[s_idx < n ? s_idx : 0];
 
+    if (s_page == SettingsPage::RADIO && !s_editing && !s_text && !s_bind &&
+        keys.enter && cur.id == 30) {
+        s_page = SettingsPage::RADIO_PERF;
+        s_idx = 0;
+        s_scroll = 0;
+        SFX::play(SFX::MENU_CLICK);
+        return;
+    }
+
     if (s_text) {
         if (keys.enter) {
             if (cur.id == 16) {
@@ -1064,6 +1127,13 @@ void update() {
             SFX::play(SFX::BACK_NAV);
             return;
         }
+        if (s_page == SettingsPage::RADIO_PERF) {
+            s_page = SettingsPage::RADIO;
+            s_idx = 0;
+            s_scroll = 0;
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
         hide();
         return;
     }
@@ -1104,6 +1174,19 @@ void update() {
             Config::resetRadio();
             SFX::play(SFX::CONFIRM);
             Display::showToast("RADIO RESET", 1000);
+        } else if (s_page == SettingsPage::RADIO_PERF && cur.id == 68) {
+            RadioConfig& r = Config::radio();
+            r.capRingSlots = 8;
+            r.capPendingSlots = 4;
+            r.capBeaconSlots = 16;
+            r.capMaxHs = 24;
+            r.spectrumNetworks = 24;
+            r.spectrumClients = 8;
+            r.spectrumWaterfall = 12;
+            r.spectrumHopMs = 220;
+            Config::save();
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("PERF DEFAULTS", 1000);
         }
         return;
     }
@@ -1297,6 +1380,7 @@ void draw(M5Canvas& canvas) {
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
+    else if (s_page == SettingsPage::RADIO_PERF) title = "RADIO PERF";
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
 
@@ -1340,6 +1424,7 @@ void draw(M5Canvas& canvas) {
     const char* const* hints = H_SCENE;
     if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
+    else if (s_page == SettingsPage::RADIO_PERF) hints = H_RADIO_PERF;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
     else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
     if (s_idx < n) {

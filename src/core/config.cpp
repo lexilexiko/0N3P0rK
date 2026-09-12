@@ -94,6 +94,14 @@ bool Config::init() {
     r.dataAct = s_prefs.getUChar("dataact", r.dataAct);
     r.strictLock = s_prefs.getBool("strlock", r.strictLock);
     r.depthHoldSec = s_prefs.getUChar("dphold", r.depthHoldSec);
+    r.capRingSlots = s_prefs.getUChar("capring", r.capRingSlots);
+    r.capPendingSlots = s_prefs.getUChar("cappend", r.capPendingSlots);
+    r.capBeaconSlots = s_prefs.getUChar("capbeac", r.capBeaconSlots);
+    r.capMaxHs = s_prefs.getUChar("capmhs", r.capMaxHs);
+    r.spectrumNetworks = s_prefs.getUChar("specnet", r.spectrumNetworks);
+    r.spectrumClients = s_prefs.getUChar("speccli", r.spectrumClients);
+    r.spectrumWaterfall = s_prefs.getUChar("specwf", r.spectrumWaterfall);
+    r.spectrumHopMs = s_prefs.getUShort("spechop", r.spectrumHopMs);
 
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
@@ -163,6 +171,22 @@ bool Config::init() {
     if (r.hsDepth > 2) r.hsDepth = 2;
     if (r.dataAct > 1) r.dataAct = 1;
     if (r.depthHoldSec > 30) r.depthHoldSec = 30;
+    if (r.capRingSlots < 8) r.capRingSlots = 8;
+    if (r.capRingSlots > 16) r.capRingSlots = 16;
+    if (r.capPendingSlots < 4) r.capPendingSlots = 4;
+    if (r.capPendingSlots > 6) r.capPendingSlots = 6;
+    if (r.capBeaconSlots < 16) r.capBeaconSlots = 16;
+    if (r.capBeaconSlots > 24) r.capBeaconSlots = 24;
+    if (r.capMaxHs < 24) r.capMaxHs = 24;
+    if (r.capMaxHs > 32) r.capMaxHs = 32;
+    if (r.spectrumNetworks < 24) r.spectrumNetworks = 24;
+    if (r.spectrumNetworks > 48) r.spectrumNetworks = 48;
+    if (r.spectrumClients < 8) r.spectrumClients = 8;
+    if (r.spectrumClients > 16) r.spectrumClients = 16;
+    if (r.spectrumWaterfall < 12) r.spectrumWaterfall = 12;
+    if (r.spectrumWaterfall > 24) r.spectrumWaterfall = 24;
+    if (r.spectrumHopMs < 120) r.spectrumHopMs = 120;
+    if (r.spectrumHopMs > 500) r.spectrumHopMs = 500;
     if (b.burstMs < 50) b.burstMs = 50;
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
@@ -230,6 +254,14 @@ bool Config::save() {
     s_prefs.putUChar("dataact", r.dataAct);
     s_prefs.putBool("strlock", r.strictLock);
     s_prefs.putUChar("dphold", r.depthHoldSec);
+    s_prefs.putUChar("capring", r.capRingSlots);
+    s_prefs.putUChar("cappend", r.capPendingSlots);
+    s_prefs.putUChar("capbeac", r.capBeaconSlots);
+    s_prefs.putUChar("capmhs", r.capMaxHs);
+    s_prefs.putUChar("specnet", r.spectrumNetworks);
+    s_prefs.putUChar("speccli", r.spectrumClients);
+    s_prefs.putUChar("specwf", r.spectrumWaterfall);
+    s_prefs.putUShort("spechop", r.spectrumHopMs);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
