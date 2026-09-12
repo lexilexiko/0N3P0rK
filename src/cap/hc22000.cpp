@@ -14,7 +14,7 @@
 
 namespace Hc22000 {
 
-static const uint8_t MAX_HS = 32;
+static const uint8_t MAX_HS = 24;
 static const uint16_t MAX_EAPOL = 512;
 
 struct Hs {
@@ -48,14 +48,7 @@ struct Hs {
 };
 
 static Hs* s_hs = nullptr;
-static uint8_t s_hsCapacity = 0;
 static portMUX_TYPE s_hsMux = portMUX_INITIALIZER_UNLOCKED;
-
-static uint8_t hsSlots() {
-    uint8_t n = Config::radio().capMaxHs;
-    n = n < 24 ? 24 : (n > MAX_HS ? MAX_HS : n);
-    return s_hsCapacity && n > s_hsCapacity ? s_hsCapacity : n;
-}
 
 static bool isZeroMac(const uint8_t* mac) {
     if (!mac) return true;
@@ -122,10 +115,10 @@ static void makePath(const Hs* h, const char* suffix, char* path, size_t pathLen
 }
 
 static Hs* slotFor(const uint8_t* bssid) {
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) return &s_hs[i];
     }
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (!s_hs[i].used) {
             memset(&s_hs[i], 0, sizeof(Hs));
             memcpy(s_hs[i].bssid, bssid, 6);
@@ -134,7 +127,7 @@ static Hs* slotFor(const uint8_t* bssid) {
         }
     }
     Hs* oldest = nullptr;
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (!s_hs[i].wroteEapol && !s_hs[i].wrotePmkid &&
             (!oldest || s_hs[i].lastSeenMs < oldest->lastSeenMs)) {
             oldest = &s_hs[i];
@@ -148,12 +141,12 @@ static Hs* slotFor(const uint8_t* bssid) {
 }
 
 static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0 &&
             memcmp(s_hs[i].sta, sta, 6) == 0) return &s_hs[i];
     }
     Hs* h = nullptr;
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0 &&
             isZeroMac(s_hs[i].sta)) {
             h = &s_hs[i];
@@ -161,7 +154,7 @@ static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
         }
     }
     if (!h) {
-        for (uint8_t i = 0; i < hsSlots(); i++) {
+        for (uint8_t i = 0; i < MAX_HS; i++) {
             if (!s_hs[i].used) {
                 memset(&s_hs[i], 0, sizeof(Hs));
                 memcpy(s_hs[i].bssid, bssid, 6);
@@ -173,7 +166,7 @@ static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
     }
     if (!h) {
         Hs* oldest = nullptr;
-        for (uint8_t i = 0; i < hsSlots(); i++) {
+        for (uint8_t i = 0; i < MAX_HS; i++) {
             if (!s_hs[i].wroteEapol && !s_hs[i].wrotePmkid &&
                 (!oldest || s_hs[i].lastSeenMs < oldest->lastSeenMs)) {
                 oldest = &s_hs[i];
@@ -188,7 +181,7 @@ static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
     }
     if (!h) return nullptr;
     memcpy(h->sta, sta, 6);
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (&s_hs[i] != h && s_hs[i].used &&
             memcmp(s_hs[i].bssid, bssid, 6) == 0 && s_hs[i].haveEssid) {
             memcpy(h->essid, s_hs[i].essid, sizeof(h->essid));
@@ -248,7 +241,7 @@ static void seedEssid(const uint8_t* bssid, const char* ssid) {
     size_t n = strlen(ssid);
     if (n > 32) n = 32;
     bool found = false;
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         Hs* h = &s_hs[i];
         if (!h->used || memcmp(h->bssid, bssid, 6) != 0) continue;
         memcpy(h->essid, ssid, n);
@@ -404,7 +397,7 @@ static void parseBeacon(const uint8_t* f, uint16_t len) {
         uint8_t l = f[off + 1];
         if (off + 2 + l > len) break;
         if (id == 0 && l > 0 && l <= 32) {
-            for (uint8_t i = 0; i < hsSlots(); i++) {
+            for (uint8_t i = 0; i < MAX_HS; i++) {
                 Hs* h = &s_hs[i];
                 if (!h->used || memcmp(h->bssid, bssid, 6) != 0) continue;
                 memcpy(h->essid, f + off + 2, l);
@@ -415,7 +408,7 @@ static void parseBeacon(const uint8_t* f, uint16_t len) {
                 h->dirty = true;
             }
             bool found = false;
-            for (uint8_t i = 0; i < hsSlots(); i++) {
+            for (uint8_t i = 0; i < MAX_HS; i++) {
                 if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
                     found = true;
                     break;
@@ -542,21 +535,19 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
 void reset() {
     if (!s_hs) return;
     portENTER_CRITICAL(&s_hsMux);
-    memset(s_hs, 0, sizeof(Hs) * s_hsCapacity);
+    memset(s_hs, 0, sizeof(Hs) * MAX_HS);
     s_lastM1Ms = 0;
     portEXIT_CRITICAL(&s_hsMux);
 }
 
 bool allocateMemory() {
     if (s_hs) return true;
-    const uint8_t slots = hsSlots();
-    s_hs = new (std::nothrow) Hs[slots];
+    s_hs = new (std::nothrow) Hs[MAX_HS];
     if (!s_hs) {
         Serial.println("[22000] handshake table allocation failed");
         return false;
     }
-    s_hsCapacity = slots;
-    memset(s_hs, 0, sizeof(Hs) * s_hsCapacity);
+    memset(s_hs, 0, sizeof(Hs) * MAX_HS);
     return true;
 }
 
@@ -564,7 +555,6 @@ void releaseMemory() {
     portENTER_CRITICAL(&s_hsMux);
     Hs* table = s_hs;
     s_hs = nullptr;
-    s_hsCapacity = 0;
     s_lastM1Ms = 0;
     portEXIT_CRITICAL(&s_hsMux);
     delete[] table;
@@ -577,7 +567,7 @@ void flushPending() {
     // would have to do SD I/O directly from the promiscuous callback -
     // SD isn't ISR-safe and the radio would WDT the moment any beacon or
     // EAPOL arrived under load.
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         Hs snapshot;
         portENTER_CRITICAL(&s_hsMux);
         if (!s_hs[i].used || !s_hs[i].dirty) {
@@ -616,7 +606,7 @@ bool shouldPauseDeauth() {
 bool hasPair(const uint8_t* bssid) {
     if (!bssid) return false;
     portENTER_CRITICAL(&s_hsMux);
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0)
         {
             bool result = s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
@@ -631,7 +621,7 @@ bool hasPair(const uint8_t* bssid) {
 uint16_t pairCount() {
     uint16_t n = 0;
     portENTER_CRITICAL(&s_hsMux);
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
     }
     portEXIT_CRITICAL(&s_hsMux);
@@ -642,7 +632,7 @@ uint8_t handshakeMask(const uint8_t* bssid) {
     if (!bssid) return 0;
     portENTER_CRITICAL(&s_hsMux);
     uint8_t result = 0;
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
             if (s_hs[i].haveAnonce)  result |= 0x01; // M1
             if (s_hs[i].haveM2)      result |= 0x02; // M2
@@ -668,7 +658,7 @@ bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
 bool hasHandshakeForStation(const uint8_t* bssid, const uint8_t* sta, uint8_t depth) {
     if (!bssid || !sta) return false;
     portENTER_CRITICAL(&s_hsMux);
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         const Hs& h = s_hs[i];
         if (!h.used || memcmp(h.bssid, bssid, 6) != 0 ||
             memcmp(h.sta, sta, 6) != 0) continue;
@@ -762,7 +752,7 @@ uint16_t convertPcap(const char* pcapPath) {
     }
 
     uint16_t n = 0;
-    for (uint8_t i = 0; i < hsSlots(); i++) {
+    for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
     }
     return n;

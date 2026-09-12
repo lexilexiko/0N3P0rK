@@ -26,7 +26,7 @@ static const int W = R - L;
 static const int TOP = 2;
 static const int BOT = 46;
 static const int WF_TOP = 48;
-static const int WF_ROWS = 24;
+static const int WF_ROWS = 12;
 static const int CH_Y = 62;
 static const int INFO_Y = 72;
 static const int LIST_Y = 82;
@@ -39,14 +39,14 @@ static const int8_t NOISE = -92;
 static const float CENTER0 = 2442.0f;
 static const float WIDTH0 = 72.0f;
 
-static const uint8_t MAX_NETS = 48;
-static const uint8_t MAX_CLI = 16;
+static const uint8_t MAX_NETS = 24;
+static const uint8_t MAX_CLI = 8;
 static const uint8_t VIS_CLI = 5;
 static const uint32_t STALE_NET = 12000;
 static const uint32_t STALE_CLI = 25000;
 static const uint8_t HOP[] = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 static const uint8_t HOP_N = 13;
-static const uint16_t HOP_MS = 500;
+static const uint16_t HOP_MS = 220;
 
 enum Auth : uint8_t { A_OPEN = 0, A_WEP, A_WPA, A_WPA2, A_WPA3, A_MIX };
 enum Filt : uint8_t { F_ALL = 0, F_VULN, F_SOFT, F_HIDDEN };
@@ -149,26 +149,6 @@ static uint16_t s_chRate[14];
 static uint32_t s_chHit[14];
 static uint32_t s_chSnap[14];
 static uint32_t s_rateT0 = 0;
-
-static uint8_t spectrumNetworks() {
-    uint8_t n = Config::radio().spectrumNetworks;
-    return n < 24 ? 24 : (n > MAX_NETS ? MAX_NETS : n);
-}
-
-static uint8_t spectrumClients() {
-    uint8_t n = Config::radio().spectrumClients;
-    return n < 8 ? 8 : (n > MAX_CLI ? MAX_CLI : n);
-}
-
-static uint8_t spectrumWaterfall() {
-    uint8_t n = Config::radio().spectrumWaterfall;
-    return n < 12 ? 12 : (n > WF_ROWS ? WF_ROWS : n);
-}
-
-static uint16_t spectrumHopMs() {
-    uint16_t n = Config::radio().spectrumHopMs;
-    return n < 120 ? 120 : (n > HOP_MS ? HOP_MS : n);
-}
 
 static bool allocateRuntimeBuffers() {
     if (s_net && s_wf) return true;
@@ -351,7 +331,7 @@ static void onBeacon(const uint8_t* bssid, uint8_t rxCh, uint8_t ds, int8_t rssi
     if (s_busy) return;
     int idx = findNet(bssid);
     if (idx < 0) {
-        if (s_nNet >= spectrumNetworks()) {
+        if (s_nNet >= MAX_NETS) {
             int worst = -1;
             for (uint8_t i = 0; i < s_nNet; i++) {
                 if (netHeld((int)i)) continue;
@@ -398,7 +378,7 @@ static void trackCli(const uint8_t* bssid, const uint8_t* mac, int8_t rssi) {
     for (uint8_t i = 0; i < n.nCli; i++)
         if (macEq(n.cli[i].mac, mac)) { c = (int)i; break; }
     if (c < 0) {
-        if (n.nCli >= spectrumClients()) return;
+        if (n.nCli >= MAX_CLI) return;
         c = (int)n.nCli++;
         memset(&n.cli[c], 0, sizeof(Client));
         memcpy(n.cli[c].mac, mac, 6);
@@ -490,7 +470,7 @@ static void radioOff() {
 static void hopTick() {
     if (s_phase != SWEEP) return;
     uint32_t now = millis();
-    if (now - s_lastHop < spectrumHopMs()) return;
+    if (now - s_lastHop < HOP_MS) return;
     s_lastHop = now;
     s_hopI = (uint8_t)((s_hopI + 1) % HOP_N);
     s_ch = HOP[s_hopI];
@@ -671,7 +651,7 @@ static void updateBuf() {
             if (in > 255) in = 255;
             s_wf[(size_t)s_wfRow * W + x] = (uint8_t)in;
         }
-        s_wfRow = (uint8_t)((s_wfRow + 1) % spectrumWaterfall());
+        s_wfRow = (uint8_t)((s_wfRow + 1) % WF_ROWS);
     }
     if (now - s_rateT0 >= 1000) {
         s_rateT0 = now;
@@ -756,9 +736,8 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     }
 
     c.drawFastHLine(L, WF_TOP - 1, W, fg);
-    uint8_t wfRows = spectrumWaterfall();
-    for (int row = 0; row < wfRows; row++) {
-        int br = (s_wfRow + row) % wfRows;
+    for (int row = 0; row < WF_ROWS; row++) {
+        int br = (s_wfRow + row) % WF_ROWS;
         int y = WF_TOP + row;
         for (int x = 0; x < W; x++) {
             uint8_t in = s_wf[(size_t)br * W + x];
