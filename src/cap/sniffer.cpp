@@ -1119,6 +1119,13 @@ static void drainRing() {
     // the rename first means any name that's about to change has already
     // changed by the time we compute paths for this tick's frames.
     processPendingSsidLearn();
+    // Beacon frames are kept in the callback-owned table rather than the
+    // EAPOL ring. Feed them from loop context so Hc22000 learns the ESSID
+    // before flushPending()/commitPendingCaptures() checks readiness.
+    for (uint8_t i = 0; i < s_beaconCount; i++) {
+        const BeaconSlot& b = s_beacons[i];
+        if (b.len > 0) Hc22000::feed(b.frame, b.len);
+    }
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
         // Checklist: feed() from loop context ONLY
