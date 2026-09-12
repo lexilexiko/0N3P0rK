@@ -198,7 +198,6 @@ static const char* const H_RADIO[] = {
     "SKIP WEAK APS FOR KICK.",
     "ALL / PRI 1-6-11 FIRST / CORE."
 };
-
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
     "MS EACH ADVERTISEMENT."
@@ -489,7 +488,6 @@ static bool setValue(const Item& it, int v) {
     PersonalityConfig& p = Config::personality();
     RadioConfig& r = Config::radio();
     BleConfig& b = Config::ble();
-
     // HS METHOD (RADIO id 7) is the only item whose max grows with the
     // method registry — clamp it explicitly so the rest of the function
     // can keep using a single minV/maxV range.

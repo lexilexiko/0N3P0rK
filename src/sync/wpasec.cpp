@@ -18,8 +18,6 @@ static const char* WPASEC_HOST = "wpa-sec.stanev.org";
 static const uint16_t WPASEC_PORT = 443;
 static const char* WPASEC_UPLOAD_PATH = "/";
 static const char* WPASEC_POTFILE_PATH = "/?api&dl=1";
-// Keep the in-memory indexes bounded. The complete data remains on SD;
-// this limit only controls how many entries are kept resident during sync.
 static const size_t WPASEC_MAX_CACHE = 512;
 static const char* WPA_PENDING = "/0N3P0rK/wpa-sec/_pending.txt";
 
@@ -97,10 +95,9 @@ bool WPASec::canSync() {
 }
 
 void WPASec::freeCacheMemory() {
-    // clear() keeps vector capacity allocated. Swap with empty vectors so the
-    // cache storage is actually returned before TLS/WiFiClientSecure starts.
-    std::vector<CrackedEntry>().swap(crackedCache);
-    std::vector<UploadedEntry>().swap(uploadedCache);
+    // Never shrink_to_fit — ESP32 has no C++ exceptions; a failed realloc aborts.
+    crackedCache.clear();
+    uploadedCache.clear();
     cacheLoaded = false;
 }
 
@@ -273,8 +270,7 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     Serial.printf("[WPASEC] upload %s (%u B)\n", filename, (unsigned)fileSize);
 
     WiFiClientSecure client;
-    client.setInsecure();
-    if (!client.connect(WPASEC_HOST, WPASEC_PORT, 10000)) {
+    if (!ioTlsOpen(client, WPASEC_HOST, WPASEC_PORT)) {
         capFile.close();
         snprintf(lastError, sizeof(lastError), "tls connect");
         return false;
@@ -284,13 +280,15 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     snprintf(boundary, sizeof(boundary), "----WPASec%08lX", (unsigned long)millis());
     char disposition[128];
     snprintf(disposition, sizeof(disposition),
-             "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"",
+             "Content-Disposition: form-data; name=\"webfile\"; filename=\"%s\"",
              filename);
-    size_t contentLength = 2 + strlen(boundary) + 2 +
-                           strlen(disposition) + 2 +
-                           38 + 4 +
-                           fileSize +
-                           2 + 2 + strlen(boundary) + 4;
+    char fileHead[256];
+    snprintf(fileHead, sizeof(fileHead),
+             "--%s\r\n%s\r\nContent-Type: application/octet-stream\r\n\r\n",
+             boundary, disposition);
+    char fileTail[64];
+    snprintf(fileTail, sizeof(fileTail), "\r\n--%s--\r\n", boundary);
+    size_t contentLength = strlen(fileHead) + fileSize + strlen(fileTail);
 
     client.printf("POST %s HTTP/1.1\r\n", WPASEC_UPLOAD_PATH);
     client.printf("Host: %s\r\n", WPASEC_HOST);
@@ -299,19 +297,22 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
     client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
     client.print("Connection: close\r\n\r\n");
-    client.printf("--%s\r\n%s\r\nContent-Type: application/octet-stream\r\n\r\n",
-                  boundary, disposition);
+    client.print(fileHead);
 
     client.setTimeout(60000);
-    if (!Tls::streamFile(client, capFile, fileSize, lastError, sizeof(lastError)))
+    if (!Tls::streamFile(client, capFile, fileSize, lastError, sizeof(lastError))) {
+        capFile.close();
+        client.stop();
         return false;
+    }
+    capFile.close();
 
     if (!client.connected()) {
         snprintf(lastError, sizeof(lastError), "lost after body");
         return false;
     }
     client.flush();
-    client.printf("\r\n--%s--\r\n", boundary);
+    client.print(fileTail);
 
     char resp[80] = {0};
     bool got = ioReadStatusLine(client, resp, sizeof(resp), 45000);
@@ -503,14 +504,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
         return result;
     }
 
-    // The upload pass only needs the complete uploaded index to avoid
-    // duplicate uploads. Delay the cracked-password cache until after TLS.
-    if (!loadUploadedList()) {
-        strncpy(result.error, "uploaded cache", sizeof(result.error) - 1);
-        busy = false;
-        return result;
-    }
-    cacheLoaded = true;
+    loadCache();
     Storage::ensureDir(Storage::DIR_WPASEC);
     SD.remove(WPA_PENDING);
     File pendOut = SD.open(WPA_PENDING, "w");
@@ -521,7 +515,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     result.skipped = pend.skipped;
     Serial.printf("[WPASEC] pending=%u skipped=%u\n", pend.count, pend.skipped);
 
-    std::vector<CrackedEntry>().swap(crackedCache);
+    crackedCache.clear();
 
     if (cb) cb("Uploading", 0, pend.count);
     ioXferPhase("UPLOAD", 0, pend.count);

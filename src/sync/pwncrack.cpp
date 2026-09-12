@@ -374,7 +374,12 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     while (left > 0) {
         size_t chunk = left > sizeof(buf) ? sizeof(buf) : left;
         size_t rd = capFile.read(buf, chunk);
-        if (rd == 0) break;
+        if (rd == 0) {
+            capFile.close();
+            sock.stop();
+            snprintf(lastError, sizeof(lastError), "read file");
+            return false;
+        }
         if (!sendAll(buf, rd)) {
             capFile.close();
             sock.stop();
@@ -386,6 +391,12 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         ioXfer().sent = (uint32_t)sent;
         ioXferPaint(false);
         yield();
+    }
+    if (left != 0) {
+        capFile.close();
+        sock.stop();
+        snprintf(lastError, sizeof(lastError), "short file");
+        return false;
     }
     capFile.close();
     if (!sendStr(fileTail)) {
@@ -434,7 +445,10 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     WiFiClientSecure tls;
     WiFiClient plain;
     bool useTls = false;
-    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST)) {
+    // The potfile endpoint is HTTPS-only on current pwncrack.org. Opening
+    // HTTP first returns a redirect page, which was being saved as an error
+    // instead of following the redirect like the upload path does.
+    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST, true)) {
         snprintf(lastError, sizeof(lastError), "pot connect");
         return false;
     }

@@ -94,7 +94,6 @@ bool Config::init() {
     r.dataAct = s_prefs.getUChar("dataact", r.dataAct);
     r.strictLock = s_prefs.getBool("strlock", r.strictLock);
     r.depthHoldSec = s_prefs.getUChar("dphold", r.depthHoldSec);
-
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);

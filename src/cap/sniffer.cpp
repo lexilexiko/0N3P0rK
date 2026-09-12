@@ -20,6 +20,7 @@
 #include <SD.h>
 #include <string.h>
 #include <stdio.h>
+#include <new>
 
 extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
     return 0;
@@ -50,7 +51,7 @@ struct Slot {
     uint8_t  frame[FRAME_MAX];
 };
 
-static Slot s_ring[RING_SLOTS];
+static Slot* s_ring = nullptr;
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
 static const uint8_t PENDING_SLOTS = 4;
@@ -69,7 +70,7 @@ struct PendingCapture {
     Slot m4;
 };
 
-static PendingCapture s_pending[PENDING_SLOTS];
+static PendingCapture* s_pending = nullptr;
 
 static File     s_file;
 static uint8_t  s_fileBssid[6];
@@ -107,7 +108,7 @@ static const uint8_t BEACON_SLOTS = 16;
 // BeaconSlot itself now lives in methods/beacon_slot.h (pulled in via
 // method_ctx.h) so the capture methods can read it without depending on
 // sniffer.cpp's internals.
-static BeaconSlot s_beacons[BEACON_SLOTS];
+static BeaconSlot* s_beacons = nullptr;
 static uint8_t s_beaconCount = 0;
 static uint8_t s_beaconClock = 0;
 
@@ -183,6 +184,23 @@ static const uint8_t SKIP_MAX = 16;
 static uint8_t s_skipList[SKIP_MAX][6];
 static uint8_t s_skipN = 0;
 static bool    s_skipKeyWas = false;
+
+static bool allocateCaptureMemory() {
+    if (s_ring && s_pending && s_beacons) return true;
+    if (!s_ring) s_ring = new (std::nothrow) Slot[RING_SLOTS];
+    if (!s_pending) s_pending = new (std::nothrow) PendingCapture[PENDING_SLOTS];
+    if (!s_beacons) s_beacons = new (std::nothrow) BeaconSlot[BEACON_SLOTS];
+    if (!s_ring || !s_pending || !s_beacons) {
+        delete[] s_ring;
+        delete[] s_pending;
+        delete[] s_beacons;
+        s_ring = nullptr;
+        s_pending = nullptr;
+        s_beacons = nullptr;
+        return false;
+    }
+    return true;
+}
 
 // True MAC empty check — first-byte-only was wrong for BSSIDs like 00:11:22:…
 static bool isZeroMac(const uint8_t* m) {
@@ -462,6 +480,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             bool learned = ssid[0] && !s_beacons[i].ssid[0];
             if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
             if (learned) {
+                s_beacons[i].processed = false;
                 // Checklist: feed() from loop context only
                 // Runs from the WiFi promiscuous callback (IRAM). The
                 // consumer (processPendingSsidLearn in loop) reads both
@@ -499,6 +518,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     s_beacons[idx].channel = s_cnt.currentChannel;
     s_beacons[idx].rssi = rssi;
     s_beacons[idx].pmfCapable = beaconHasPmf(f, len);
+    s_beacons[idx].processed = false;
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
     // Checklist: Beacon stored, processed from loop
@@ -1123,8 +1143,11 @@ static void drainRing() {
     // EAPOL ring. Feed them from loop context so Hc22000 learns the ESSID
     // before flushPending()/commitPendingCaptures() checks readiness.
     for (uint8_t i = 0; i < s_beaconCount; i++) {
-        const BeaconSlot& b = s_beacons[i];
-        if (b.len > 0) Hc22000::feed(b.frame, b.len);
+        BeaconSlot& b = s_beacons[i];
+        if (b.len > 0 && !b.processed) {
+            Hc22000::feed(b.frame, b.len);
+            b.processed = true;
+        }
     }
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
@@ -1316,11 +1339,27 @@ static void startCommon(RunMode mode) {
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
     if (s_running) stop();
+    if (!allocateCaptureMemory()) {
+        Serial.println("[CAP] capture buffers allocation failed");
+        s_mode = RunMode::Off;
+        return;
+    }
+    if (!Hc22000::allocateMemory()) {
+        Serial.println("[CAP] 22000 table allocation failed");
+        delete[] s_ring;
+        delete[] s_pending;
+        delete[] s_beacons;
+        s_ring = nullptr;
+        s_pending = nullptr;
+        s_beacons = nullptr;
+        s_mode = RunMode::Off;
+        return;
+    }
     Hc22000::reset();
 
     s_write = 0;
     s_read = 0;
-    memset(s_pending, 0, sizeof(s_pending));
+    memset(s_pending, 0, sizeof(PendingCapture) * PENDING_SLOTS);
     s_cnt = {};
     memset(s_seqTable, 0, sizeof(s_seqTable));
     s_pendingLearn = false;
@@ -1495,6 +1534,23 @@ void stop() {
                   s_cnt.framesSeen, s_cnt.framesEapol,
                   s_cnt.framesWritten, s_cnt.framesDeauth,
                   s_cnt.framesDropped);
+
+    Hc22000::releaseMemory();
+    delete[] s_ring;
+    delete[] s_pending;
+    delete[] s_beacons;
+    s_ring = nullptr;
+    s_pending = nullptr;
+    s_beacons = nullptr;
+    s_write = 0;
+    s_read = 0;
+    s_beaconCount = 0;
+    Serial.printf("[CAP] capture memory released heap=%u\n",
+                  (unsigned)ESP.getFreeHeap());
+}
+
+void releaseForSync() {
+    stop();
 }
 
 bool isRunning() { return s_running; }

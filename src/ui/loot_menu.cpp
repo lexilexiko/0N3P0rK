@@ -8,9 +8,8 @@
 #include "../net/ap_sta.h"
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
-#include "../cap/pcap.h"
+#include "../cap/sniffer.h"
 #include "../cap/capture_name.h"
-#include "../cap/pcap.h"
 #include "../sync/net_io.h"
 #include "../sync/tls.h"
 #include <M5Cardputer.h>
@@ -357,6 +356,14 @@ void LootMenu::gotoPage(uint8_t newPage, bool landOnLast) {
 }
 
 void LootMenu::show() {
+    // Capture owns a large static pipeline and may still have pending SD work.
+    // Stop it before building the loot view so uploads get the cleanest heap
+    // and the radio callback cannot compete with TLS/SD traffic.
+    Cap::releaseForSync();
+    WPASec::freeCacheMemory();
+    Pwncrack::freeCacheMemory();
+    Storage::brewHeap();
+
     active = true;
     detailView = false;
     syncModal = false;
@@ -406,8 +413,7 @@ const char* LootMenu::getBottomHint() {
         if (hintCycle == 0) return "Q  pull results";
         if (hintCycle == 1) return "R  reload list";
         if (hintCycle == 2) return "T  test wifi / api";
-        if (hintCycle == 3) return "B  test capture";
-        if (hintCycle == 4) return ",/  wpasec / pwncrack";
+        if (hintCycle == 3) return ",/  wpasec / pwncrack";
         return "`  back";
     }
     switch (hintCycle) {
@@ -417,8 +423,7 @@ const char* LootMenu::getBottomHint() {
         case 3: return "D  delete this file";
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
-        case 6: return "B  test selected capture";
-        case 7: return "[ / ]  prev / next page";
+        case 6: return "[ / ]  prev / next page";
         default: return ",/  wpasec / pwncrack";
     }
 }
@@ -463,6 +468,7 @@ void LootMenu::runDiag() {
     const bool wpa = (tab == Tab::WPASEC);
     addDiag(wpa ? "WPA-SEC LIVE TEST" : "PWNCRACK LIVE TEST");
 
+    if (Cap::isRunning()) Cap::stop();
     Avatar::suspendScene();
     SFX::stop();
     Storage::loadKeysIntoNet();
@@ -581,182 +587,8 @@ void LootMenu::runDiag() {
     Avatar::resumeScene();
 }
 
-
-static bool readPcapPacket(fs::File& f, size_t pos, size_t fileSize,
-                           uint32_t& packets, uint32_t& beacons,
-                           uint32_t& eapol, uint32_t& bad) {
-    if (pos + sizeof(Cap::Pcap::PacketHeader) > fileSize) return false;
-    if (!f.seek(pos)) return false;
-
-    Cap::Pcap::PacketHeader ph{};
-    if (f.read(reinterpret_cast<uint8_t*>(&ph), sizeof(ph)) != sizeof(ph)) return false;
-
-    const size_t dataPos = pos + sizeof(ph);
-    const size_t incl = ph.inclLen;
-    if (incl < 8 || dataPos > fileSize || incl > fileSize - dataPos) {
-        bad++;
-        return false;
-    }
-
-    uint8_t rt4[4];
-    if (!f.seek(dataPos) || f.read(rt4, sizeof(rt4)) != sizeof(rt4)) {
-        bad++;
-        return false;
-    }
-    const uint16_t rtLen = (uint16_t)rt4[2] | ((uint16_t)rt4[3] << 8);
-    if (rtLen < 8 || rtLen > incl || rtLen > 256) {
-        bad++;
-        return false;
-    }
-
-    const size_t framePos = dataPos + rtLen;
-    const size_t frameLen = incl - rtLen;
-    if (frameLen < 2 || !f.seek(framePos)) {
-        bad++;
-        return false;
-    }
-
-    uint8_t fc[2];
-    if (f.read(fc, sizeof(fc)) != sizeof(fc)) {
-        bad++;
-        return false;
-    }
-    packets++;
-
-    const uint8_t type = fc[0] & 0x0C;
-    const uint8_t mgmtSubtype = fc[0] & 0xFC;
-    if (type == 0x00 && (mgmtSubtype == 0x80 || mgmtSubtype == 0x50)) {
-        beacons++;
-        return true;
-    }
-    if (type != 0x08 || frameLen < 24) return true;
-
-    const bool toDs = (fc[1] & 0x01) != 0;
-    const bool fromDs = (fc[1] & 0x02) != 0;
-    uint16_t bodyOff = (toDs && fromDs) ? 30 : 24;
-    const uint8_t subtype = (fc[0] >> 4) & 0x0F;
-    const bool qos = (subtype & 0x08) != 0;
-    if (qos) bodyOff += 2;
-    if (qos && (fc[1] & 0x80)) bodyOff += 4;
-    if (bodyOff + 12 > frameLen) return true;
-
-    uint8_t llc[12];
-    if (!f.seek(framePos + bodyOff) || f.read(llc, sizeof(llc)) != sizeof(llc)) {
-        bad++;
-        return false;
-    }
-
-    // LLC/SNAP + EAPOL-Key. We deliberately use the same wire-level
-    // signature as the capture pipeline, but do not touch Hc22000 state.
-    if (llc[0] == 0xAA && llc[1] == 0xAA && llc[2] == 0x03 &&
-        llc[3] == 0x00 && llc[4] == 0x00 && llc[5] == 0x00 &&
-        llc[6] == 0x88 && llc[7] == 0x8E && llc[9] == 0x03) {
-        const uint16_t plen = ((uint16_t)llc[10] << 8) | llc[11];
-        if (plen >= 95 && (uint32_t)bodyOff + 8u + 4u + plen <= frameLen)
-            eapol++;
-    }
-    return true;
-}
-
-void LootMenu::runCaptureTest() {
-    s_diagN = 0;
-    s_diagScroll = 0;
-    diagModal = true;
-    addDiag("CAPTURE DATA TEST");
-
-    if (tab != Tab::WPASEC) {
-        addDiag("PWNCRACK: hash tab");
-        if (!count || selected >= count) {
-            addDiag("NO FILE SELECTED");
-            return;
-        }
-        const char* name = s_rows[selected].filename;
-        char path[96];
-        snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
-        File f = SD.open(path, "r");
-        if (!f) {
-            addDiag("OPEN FAIL");
-            return;
-        }
-        uint32_t sz = (uint32_t)f.size();
-        char line[42];
-        snprintf(line, sizeof(line), "FILE %uB", (unsigned)sz);
-        addDiag(line);
-        char probe[32] = {0};
-        size_t n = f.readBytesUntil('\n', probe, sizeof(probe) - 1);
-        probe[n] = '\0';
-        f.close();
-        if (strstr(probe, "WPA*01*") == probe || strstr(probe, "WPA*02*") == probe)
-            addDiag("22000 LINE OK");
-        else
-            addDiag("22000 FORMAT ?");
-        return;
-    }
-
-    if (!count || selected >= count) {
-        addDiag("NO PCAP SELECTED");
-        return;
-    }
-
-    const char* name = s_rows[selected].filename;
-    char path[96];
-    snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
-    File f = SD.open(path, "r");
-    if (!f) {
-        addDiag("OPEN FAIL");
-        return;
-    }
-
-    const size_t fileSize = f.size();
-    char line[42];
-    snprintf(line, sizeof(line), "FILE %uB", (unsigned)fileSize);
-    addDiag(line);
-    if (fileSize < sizeof(Cap::Pcap::FileHeader)) {
-        addDiag("BAD: <24 BYTE HEADER");
-        f.close();
-        return;
-    }
-
-    Cap::Pcap::FileHeader fh{};
-    if (f.read(reinterpret_cast<uint8_t*>(&fh), sizeof(fh)) != sizeof(fh)) {
-        addDiag("BAD: HEADER READ");
-        f.close();
-        return;
-    }
-    const bool headerOk = fh.magic == 0xA1B2C3D4 && fh.versionMajor == 2 &&
-                          fh.versionMinor == 4 && fh.linktype == 127;
-    addDiag(headerOk ? "PCAP HEADER OK" : "BAD PCAP HEADER");
-    if (!headerOk) {
-        f.close();
-        return;
-    }
-
-    uint32_t packets = 0, beacons = 0, eapol = 0, bad = 0;
-    size_t pos = sizeof(Cap::Pcap::FileHeader);
-    while (pos < fileSize && packets < 4096) {
-        size_t before = pos;
-        if (!readPcapPacket(f, pos, fileSize, packets, beacons, eapol, bad)) break;
-        Cap::Pcap::PacketHeader ph{};
-        if (!f.seek(before) || f.read(reinterpret_cast<uint8_t*>(&ph), sizeof(ph)) != sizeof(ph)) break;
-        size_t next = before + sizeof(ph) + (size_t)ph.inclLen;
-        if (next <= before || next > fileSize) break;
-        pos = next;
-    }
-    f.close();
-
-    snprintf(line, sizeof(line), "PKT %u  BCN %u", (unsigned)packets, (unsigned)beacons);
-    addDiag(line);
-    snprintf(line, sizeof(line), "EAPOL %u  BAD %u", (unsigned)eapol, (unsigned)bad);
-    addDiag(line);
-    if (bad) addDiag("WARNING: TRUNCATED PACKET");
-    if (eapol >= 2) addDiag("HANDSHAKE DATA: YES");
-    else if (eapol == 1) addDiag("HANDSHAKE DATA: PARTIAL");
-    else addDiag("HANDSHAKE DATA: NO");
-    if (packets && !bad) addDiag("PCAP DATA: OK");
-    else addDiag("PCAP DATA: CHECK");
-}
-
 void LootMenu::startSync(bool oneFile) {
+    if (Cap::isRunning()) Cap::stop();
     if (!Storage::available()) {
         Display::showToast("NO SD", 1500);
         return;
@@ -796,6 +628,7 @@ void LootMenu::startSync(bool oneFile) {
 }
 
 void LootMenu::startPullResults() {
+    if (Cap::isRunning()) Cap::stop();
     if (!Storage::available()) {
         Display::showToast("NO SD", 1500);
         return;
@@ -986,7 +819,6 @@ void LootMenu::handleInput() {
     if (M5Cardputer.Keyboard.isKeyPressed('r') || M5Cardputer.Keyboard.isKeyPressed('R'))
         reloadList();
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
-    if (M5Cardputer.Keyboard.isKeyPressed('b') || M5Cardputer.Keyboard.isKeyPressed('B')) runCaptureTest();
 }
 
 void LootMenu::update() {

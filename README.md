@@ -1,13 +1,13 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.2.8**  
+**Current version: 1.3.0**  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, what every major area does, and **what changed from early builds through 1.2.8**.  
+This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.0**.  
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -17,14 +17,18 @@ Secret menu codes are **not** listed here (keep them private).
 1. [Hardware](#hardware)
 2. [Flash & build](#flash--build)
 3. [First minutes](#first-minutes)
-4. [Farm & pig](#farm--pig)
-5. [Seasons & unlock roadmap](#seasons--unlock-roadmap)
-6. [Radio & tools](#radio--tools)
-7. [PigPass](#pigpass)
-8. [SD layout](#sd-layout)
-9. [Web site](#web-site)
-10. [Version history](#version-history)
-11. [Legal & credits](#legal--credits)
+4. [Basic controls](#basic-controls)
+5. [Farm & pig](#farm--pig)
+6. [Seasons & unlock roadmap](#seasons--unlock-roadmap)
+7. [Radio & tools](#radio--tools)
+8. [BadUSB and BadBLE](#badusb-and-badble)
+9. [LED indicator](#led-indicator)
+10. [XFER file transfer](#xfer-file-transfer)
+11. [PigPass](#pigpass)
+12. [SD layout](#sd-layout)
+13. [Web site](#web-site)
+14. [Version history](#version-history)
+15. [Legal & credits](#legal--credits)
 
 ---
 
@@ -52,7 +56,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.8_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -73,6 +77,21 @@ pio run -t upload --upload-port COMx
 - Artifact: `.pio/build/m5cardputer/firmware.bin`  
 - Version injected from `platformio.ini` → `custom_version`
 
+### Updating from an older build
+
+1. Back up the SD card, especially `/0N3P0rK/handshakes/`, `Passworld/`, and any
+   sync credentials.
+2. Flash the new `firmware.bin`.
+3. If the partition table changed since the previous installation, erase flash
+   once before flashing.
+4. Insert the SD card and reboot.
+5. Open **SET → STATUS** and confirm that the displayed firmware version is
+   `1.3.0`.
+
+Existing SD captures are not removed by a firmware update. NVS settings are
+loaded with compatibility defaults when an older configuration does not contain
+newer fields.
+
 ---
 
 ## First minutes
@@ -82,6 +101,34 @@ pio run -t upload --upload-port COMx
 3. Open **SETTINGS** from the menu.
 4. Use **RADIO** for capture, **PIGPASS** for offline crack, **LOOT** / file manager for SD files.
 5. Play on the farm: walk, jump, seasons, wolf, XP — features unlock as the level grows.
+
+## Basic controls
+
+The exact key labels are shown in the bottom hint bar and may be changed under
+**SET → KEYS**.
+
+| Control | Typical action |
+| --- | --- |
+| `;` / `.` | Move the selection up / down |
+| `ENTER` | Open, confirm, or start the selected item |
+| `` ` `` | Go back or close the current page |
+| `SPACE` | Farm attack-hop; in Spectrum, perform the current action |
+| `Z` | Skip the current radio target for this capture session |
+| `G` / `0` | Dim or suspend the farm presentation while supported radio work continues |
+
+### Main menu flow
+
+1. Open **ATTACK** from the main menu.
+2. Choose **LIGHT** for passive capture, **AGGRO** for active capture on
+   authorized networks, or **STOP** to stop the radio.
+3. Use **SET → RADIO** to configure hopping, locking, deauthentication,
+   handshake method, capture format, and targeting behavior.
+4. Use **LOOT** to inspect files and synchronize captures with WPASec or
+   Pwncrack.
+5. Use **SET → STATUS** to check board, SD, Wi-Fi, heap, and firmware state.
+
+Only test networks and devices that you own or are explicitly authorized to
+assess. Active radio features must not be used against third-party networks.
 
 ---
 
@@ -181,6 +228,167 @@ Spawn **off-screen** ahead of walk; toast only when visible.
 - Bottom bar status while capturing  
 - Loot on **SD** under the project tree  
 
+Capture workflow:
+
+1. Insert the SD card before starting the radio.
+2. Select **ATTACK → LIGHT** or **ATTACK → AGGRO**.
+3. Leave the device running while it scans and records valid handshake
+   exchanges.
+4. Press **STOP** before opening **LOOT**. The capture buffers are flushed and
+   released before file synchronization.
+5. Open **LOOT** and select the WPASec or Pwncrack tab.
+6. Use the upload action for captured files. Use the result/download action
+   only after the remote service is reachable.
+
+The capture path writes classic PCAP files and prepares Hashcat 22000 material
+when enough valid handshake data is available. Incomplete, oversized, or
+invalid files are rejected instead of being presented as successful captures.
+
+### Radio configuration
+
+The **SET → RADIO** page contains the stable radio controls:
+
+- channel hop set and dwell timing;
+- lock timing and lock-on-handshake behavior;
+- handshake method and fallback selection;
+- deauthentication and EAPOL/PMKID options;
+- RSSI filtering and kick burst count;
+- PCAP format and maximum capture size;
+- handshake depth and target hold behavior.
+
+The **PACK** selector applies a tested group of radio values. Editing
+individual values marks the profile as custom. **RADIO → RESET** restores the
+stock radio profile without deleting files from the SD card.
+
+### Spectrum
+
+Open **ATTACK → SPECTRUM** to view nearby 2.4 GHz activity, detected access
+points, clients, channels, authentication type, and PMF information. Press
+`ENTER` on a network to lock its view. Spectrum can suspend the farm scene to
+reduce CPU work while it is active.
+
+## BadUSB and BadBLE
+
+The **CONNECT → BADUSB** tool provides authorized HID automation over either
+USB HID or BLE HID. Use it only with computers and phones that you own or are
+explicitly authorized to test.
+
+### Tabs and controls
+
+| Key | Action |
+| --- | --- |
+| `1` | Scripts tab |
+| `2` | Live typing tab |
+| `3` | Preset panel |
+| `U` | Select USB HID |
+| `B` | Select BLE HID |
+| `P` | Toggle PC / phone preset profile |
+| `C` | Connect or advertise the selected HID transport |
+| `R` | Rescan `/0N3P0rK/badusb/` for scripts |
+| `;` / `,` | Move selection up |
+| `.` / `/` | Move selection down |
+| `ENTER` | Run a script, arm Live typing, or execute a preset |
+| `FN` + `` ` `` | Disarm Live typing |
+| `` ` `` | Exit BadUSB |
+
+The screen shows the selected transport, profile, connection status, and a
+small status indicator. USB mode waits for a mounted USB HID host. BLE mode
+advertises as `0N3P0rK` and may display a pairing PIN.
+
+### Script files
+
+Scripts are plain UTF-8 text files stored in:
+
+```text
+/0N3P0rK/badusb/
+```
+
+Only `.txt` files are listed. The parser supports comments, text, delays,
+default delays, repeated actions, modifier combinations, and common special
+keys:
+
+```text
+REM Open Notepad on a Windows test machine
+DEFAULT_DELAY 80
+GUI R
+DELAY 400
+STRING notepad
+ENTER
+STRING Hello from 0N3P0rK
+```
+
+Supported timing commands include `DELAY`, `DEFAULT_DELAY` (also
+`DEFAULTDELAY`), and `REPEAT`. Keep scripts short and test them on a
+non-production device first. Leaving the BadUSB screen or pressing its exit
+key stops the HID session and releases pressed keys.
+
+## LED indicator
+
+The Cardputer status LED is a built-in WS2812 RGB LED on GPIO 21. LED behavior
+is controlled under **SET → SYSTEM**:
+
+- **LED** enables or disables the indicator.
+- **LED BRIGHT** sets brightness from 0 to 100 percent.
+
+The LED is intentionally quiet to save battery:
+
+| Device state | LED behavior |
+| --- | --- |
+| Normal farm / menu | Soft ambient color based on the selected season |
+| Light capture | Off except for a short green blink when a handshake file is written |
+| Aggressive or pinned capture | Off except for three green blinks when a handshake file is written |
+| Loot, Wi-Fi, and other utility screens | Off |
+| Disabled in `SET → SYSTEM` | Always off |
+
+Brightness changes are applied immediately and are saved in the device
+configuration. The LED is a status hint only; the display and serial log
+remain the authoritative source for errors and connection details.
+
+## XFER file transfer
+
+**XFER** is the device's local Wi-Fi file manager. It creates a temporary
+access point and serves a browser-based "0N3P0rK Commander" for managing the
+SD card without removing it from the Cardputer.
+
+### Starting XFER
+
+1. Open **CONNECT → XFER**.
+2. Connect a phone or computer to the Wi-Fi network shown on the Cardputer.
+3. Open `http://192.168.4.1` in a browser.
+4. Browse directories, download files, upload files, or delete files.
+5. Press `` ` `` on the Cardputer to stop XFER and turn off its access point.
+
+The default network credentials are:
+
+```text
+SSID: 0N3P0rK
+Password: 0N3-P0rK
+Address: http://192.168.4.1
+```
+
+If the credentials were changed in the device configuration, always use the
+SSID and password displayed on the XFER screen. The screen also shows the
+number of connected stations and browser requests.
+
+### File operations and safety
+
+The web interface provides:
+
+- directory browsing from the SD root;
+- file downloads;
+- multiple-file uploads into the current directory;
+- file and empty-directory deletion;
+- refresh and parent-directory navigation.
+
+XFER is local to its temporary access point. It does not connect the device to
+the home network or provide Internet access. The path handler rejects
+`..` traversal and refuses deletion of the SD root, but the interface still
+has write and delete access to SD files. Use a private test network and keep
+important captures backed up before deleting or replacing them.
+
+Starting XFER stops an active capture session and suspends the farm scene to
+free radio and memory resources. Stop XFER before starting another Wi-Fi mode.
+
 ### Other modes
 
 | Mode | Role |
@@ -266,7 +474,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Web installer site: discover `.bin` by extension, tabs Information / Installation / Gallery / Donate  
 - Mood / scene quality-of-life  
 
-### 1.2.8 (current)
+### 1.2.8
 
 - **Scene modularization:** `sky`, `ground`, trees, FX  
 - **CITY** & **DESERT** seasons  
@@ -274,6 +482,57 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - **Friend pig**, **cards table** stub, **lv50 credits**  
 - PigPass tabs + scene suspend  
 - Cleaner public site + automatic gallery loading   
+
+### 1.3.0 (current)
+
+#### Capture and stability
+
+- Reworked the continuous capture lifecycle so capture memory is allocated
+  when the radio starts and released when it stops.
+- Added bounded capture queues and deferred SD writes to reduce callback
+  pressure, watchdog resets, and screen corruption during radio operation.
+- Preserved the existing Light, Aggressive, and Pinned capture entry points.
+- Added safer frame, PMF, RSN, and handshake bounds checking.
+- Improved handshake assembly so M1/M2 and optional M3/M4 depth handling do not
+  create malformed output.
+- Kept capture files small and compatible with the WPASec upload limits.
+
+#### Loot and synchronization
+
+- Repaired WPASec multipart uploads, including the expected `webfile` field.
+- Streamed uploads with read validation and short-file checks.
+- Reworked the Loot entry path to stop the capture pipeline and reclaim heap
+  before synchronization.
+- Fixed Pwncrack result downloads to use the HTTPS endpoint directly instead of
+  depending on a redirect from HTTP.
+- Added clearer failure stages for connection, HTTP, empty-result, and HTML
+  responses.
+- Kept WPASec and Pwncrack files under the SD project directory so they remain
+  available offline.
+
+#### Radio and user interface
+
+- Added clearer RADIO method and pack handling while keeping saved method
+  numbering compatible with previous builds.
+- Added radio reset behavior that restores the stock profile without touching
+  SD captures.
+- Improved status bars, target locking, session skip behavior, and capture
+  lifecycle feedback.
+- Added runtime heap cleanup for offline 22000 conversion and synchronization.
+- Documented the BadUSB / BadBLE Scripts, Live, and Panel workflows, including
+  USB/BLE transport selection and SD script storage.
+- Documented the configurable WS2812 status LED, seasonal ambient indication,
+  and green handshake-capture flashes.
+- Documented the local XFER access point and browser-based SD file manager,
+  including its default address, credentials, upload/download actions, and
+  safe shutdown behavior.
+
+#### Compatibility and build
+
+- Updated the firmware version to `1.3.0`.
+- Verified the PlatformIO build for the M5Stack StampS3 target.
+- Kept the same firmware target for the original M5Cardputer and Cardputer
+  ADV hardware.
 
 ---
 
@@ -287,4 +546,3 @@ Not affiliated with M5Stack.
 **Thanks** to everyone who tested builds, to the Cardputer community, and to **Oct0sec** for handshake-path inspiration.
 
 **0N3P0rK** — oink responsibly.
-

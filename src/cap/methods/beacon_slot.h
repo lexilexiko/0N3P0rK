@@ -28,6 +28,9 @@ struct BeaconSlot {
     // RadioConfig::dataAct is on). FOCUS uses this for the activity term
     // instead of beacon-only bumps. Decayed by the method / orchestrator.
     uint16_t dataRecent;
+    // One-shot: Hc22000::feed() from drainRing() only while false.
+    // Stays in the table for PCAP/SSID; set false again if ESSID is learned.
+    bool     processed;
     uint8_t  frame[BEACON_MAX];
 };
 
