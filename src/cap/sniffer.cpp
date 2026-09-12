@@ -59,8 +59,12 @@ struct PendingCapture {
     uint8_t station[6];
     bool haveM1;
     bool haveM2;
+    bool haveM3;
+    bool haveM4;
     Slot m1;
     Slot m2;
+    Slot m3;
+    Slot m4;
 };
 
 static PendingCapture s_pending[PENDING_SLOTS];
@@ -914,15 +918,21 @@ static void rememberPending(const Slot& s, uint8_t message) {
     } else if (message == 2 && !p->haveM2) {
         p->m2 = s;
         p->haveM2 = true;
+    } else if (message == 3 && !p->haveM3) {
+        p->m3 = s;
+        p->haveM3 = true;
+    } else if (message == 4 && !p->haveM4) {
+        p->m4 = s;
+        p->haveM4 = true;
     }
 }
 
-static void writeFrameNow(const Slot& s) {
+static bool writeFrameNow(const Slot& s) {
     // Z-skip: ignore further EAPOL from this BSSID for the rest of the session
     // (no pcap append, no UI "current network", no re-kick tracking).
     if (isSessionSkipped(s.bssid)) {
         if (s_fileOpen && sameBssid(s_fileBssid, s.bssid)) closeFile();
-        return;
+        return false;
     }
     if (s_fileOpen && !sameBssid(s_fileBssid, s.bssid)) {
         closeFile();
@@ -939,13 +949,13 @@ static void writeFrameNow(const Slot& s) {
         // counters that EAPOLs were being lost. Charge it here.
         if (!openFileForBssid(s.bssid)) {
             s_cnt.framesDropped++;
-            return;
+            return false;
         }
     }
     if (!writePcapPacket(s.frame, s.len, s.ts, s.channel, s.rssi, s.originalLen)) {
         s_cnt.framesDropped++;
         closeFile();
-        return;
+        return false;
     }
     s_cnt.framesWritten++;
     Hc22000::feed(s.frame, s.len);
@@ -966,6 +976,7 @@ static void writeFrameNow(const Slot& s) {
         s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
         CapName::writeCompanionSsid(Storage::DIR_HS, s_fileName, ssid);
     }
+    return true;
 }
 
 static void writeFrameToFile(const Slot& s) {
@@ -978,11 +989,16 @@ static void commitPendingCaptures() {
     for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
         PendingCapture& p = s_pending[i];
         if (!p.used || !p.haveM1 || !p.haveM2) continue;
-        if (!Hc22000::hasPair(p.bssid)) continue;
+        if (s_hsDepth >= 1 && !p.haveM3) continue;
+        if (s_hsDepth >= 2 && !p.haveM4) continue;
+        if (!Hc22000::hasHandshakeForStation(p.bssid, p.station, s_hsDepth)) continue;
         if (!isSessionSkipped(p.bssid)) {
-            writeFrameNow(p.m1);
-            writeFrameNow(p.m2);
+            bool committed = writeFrameNow(p.m1);
+            committed = committed && writeFrameNow(p.m2);
+            if (s_hsDepth >= 1) committed = committed && writeFrameNow(p.m3);
+            if (s_hsDepth >= 2) committed = committed && writeFrameNow(p.m4);
             closeFile();
+            if (!committed) continue;
         }
         memset(&p, 0, sizeof(p));
     }

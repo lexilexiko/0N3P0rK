@@ -633,6 +633,29 @@ bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
     return true;
 }
 
+bool hasHandshakeForStation(const uint8_t* bssid, const uint8_t* sta, uint8_t depth) {
+    if (!bssid || !sta) return false;
+    portENTER_CRITICAL(&s_hsMux);
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        const Hs& h = s_hs[i];
+        if (!h.used || memcmp(h.bssid, bssid, 6) != 0 ||
+            memcmp(h.sta, sta, 6) != 0) continue;
+        bool ready = h.wroteEapol || h.wrotePmkid;
+        uint8_t mask = 0;
+        if (h.haveAnonce) mask |= 0x01;
+        if (h.haveM2) mask |= 0x02;
+        if (h.haveAnonce3) mask |= 0x04;
+        if (h.haveM4) mask |= 0x08;
+        bool result = ready &&
+                      (depth < 1 || (mask & 0x04)) &&
+                      (depth < 2 || (mask & 0x08));
+        portEXIT_CRITICAL(&s_hsMux);
+        return result;
+    }
+    portEXIT_CRITICAL(&s_hsMux);
+    return false;
+}
+
 void feed(const uint8_t* frame, uint16_t len) {
     if (!frame || len < 24) return;
     portENTER_CRITICAL(&s_hsMux);

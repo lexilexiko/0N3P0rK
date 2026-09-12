@@ -29,5 +29,6 @@ uint8_t handshakeMask(const uint8_t* bssid);
 // requires hasPair() first regardless of depth, so this can only ever be
 // stricter than hasPair(), never looser.
 bool hasHandshake(const uint8_t* bssid, uint8_t depth);
+bool hasHandshakeForStation(const uint8_t* bssid, const uint8_t* sta, uint8_t depth);
 
 } // namespace Hc22000
