@@ -562,13 +562,6 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
                f[bodyOff + 2] == 0x03 && f[bodyOff + 6] == 0x88 &&
                f[bodyOff + 7] == 0x8E) {
         eapol = true;
-    } else {
-        for (uint16_t i = bodyOff; i + 1 < len; i++) {
-            if (f[i] == 0x88 && f[i + 1] == 0x8E) {
-                eapol = true;
-                break;
-            }
-        }
     }
     // DATA ACT (RADIO): count non-EAPOL data toward BeaconSlot::dataRecent
     // so FOCUS can score real traffic instead of beacon-only activity.
@@ -881,9 +874,12 @@ static uint8_t classifyPendingEapol(const Slot& s) {
     uint16_t keyInfo = (uint16_t)((e[5] << 8) | e[6]);
     bool keyAck = (keyInfo & (1u << 7)) != 0;
     bool keyMic = (keyInfo & (1u << 8)) != 0;
+    bool install = (keyInfo & (1u << 6)) != 0;
     bool secure = (keyInfo & (1u << 9)) != 0;
     if (keyAck && !keyMic) return 1;
     if (!keyAck && keyMic && !secure) return 2;
+    if (keyAck && keyMic && install) return 3;
+    if (!keyAck && keyMic && secure) return 4;
     return 0;
 }
 
@@ -960,7 +956,6 @@ static bool writeFrameNow(const Slot& s) {
         return false;
     }
     s_cnt.framesWritten++;
-    Hc22000::feed(s.frame, s.len);
     memcpy(s_kickBssid, s.bssid, 6);
     memcpy(s_kickSta, s.station, 6);
     s_kickStaOk = (s.station[0] & 0x01) == 0;
@@ -1001,6 +996,14 @@ static void commitPendingCaptures() {
             if (s_hsDepth >= 2) committed = committed && writeFrameNow(p.m4);
             closeFile();
             if (!committed) continue;
+            if (s_autoStopSec > 0 && s_autoStopAt == 0) {
+                memcpy(s_autoStopBssid, p.bssid, sizeof(s_autoStopBssid));
+                s_autoStopAt = millis() + (uint32_t)s_autoStopSec * 1000u;
+                Serial.printf("[CAP] auto-skip armed for %02X:%02X:%02X:%02X:%02X:%02X: %us\n",
+                              p.bssid[0], p.bssid[1], p.bssid[2],
+                              p.bssid[3], p.bssid[4], p.bssid[5],
+                              (unsigned)s_autoStopSec);
+            }
         }
         memset(&p, 0, sizeof(p));
     }
@@ -1097,7 +1100,6 @@ static void drainRing() {
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
         // Checklist: feed() from loop context ONLY
-        Hc22000::feed(s.frame, s.len);
         writeFrameToFile(s);
         s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
     }
@@ -1640,16 +1642,6 @@ void loop() {
     // AUTO-SKIP after pair: keep attacking this AP for the selected delay,
     // then add only this BSSID to the session skip-list and continue hunting.
     if (s_autoStopSec > 0) {
-        if (s_autoStopAt == 0 && Hc22000::pairCount() > 0) {
-            const uint8_t* target = nullptr;
-            if (!isZeroMac(s_lastHsBssid)) target = s_lastHsBssid;
-            else if (!isZeroMac(s_lockBssid)) target = s_lockBssid;
-            if (target) {
-                memcpy(s_autoStopBssid, target, sizeof(s_autoStopBssid));
-                s_autoStopAt = now + (uint32_t)s_autoStopSec * 1000u;
-                Serial.printf("[CAP] auto-skip armed: %us\n", (unsigned)s_autoStopSec);
-            }
-        }
         if (s_autoStopAt != 0 && now >= s_autoStopAt) {
             Serial.println("[CAP] auto-skip fired");
             s_autoStopAt = 0;
