@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 namespace SpectrumMode {
 
@@ -89,7 +90,7 @@ static bool s_run = false;
 static volatile bool s_busy = false;
 static Phase s_phase = SWEEP;
 static Filt s_filt = F_ALL;
-static Net s_net[MAX_NETS];
+static Net* s_net = nullptr;
 static uint8_t s_nNet = 0;
 static int8_t s_sel = -1;
 static uint8_t s_selMac[6];
@@ -127,13 +128,6 @@ static void cycleHuntDepth() {
 }
 
 static int8_t s_cliSel = 0;
-static bool s_hsSeenLock = false; // one-shot "saw EAPOL while just watching" flag for LOCK
-// Set from onData() (WiFi promiscuous callback context) when EAPOL shows up
-// during LOCK; consumed from update() (main loop() context) to actually
-// call enterHunt() — that touches the radio (Cap::startPinned() does
-// WiFi.softAP/esp_wifi_set_promiscuous_rx_cb/etc.), which must never be
-// called reentrantly from inside the WiFi stack's own RX callback.
-static volatile bool s_autoHuntPending = false;
 static uint8_t s_cliScroll = 0;
 static bool s_reveal = false;
 static uint32_t s_revealT0 = 0;
@@ -147,7 +141,7 @@ static uint8_t s_apMac[6];
 static int8_t s_col[W];
 static int8_t s_persist[W];
 static int8_t s_peak[W];
-static uint8_t s_wf[WF_ROWS][W];
+static uint8_t* s_wf = nullptr;
 static uint8_t s_wfRow = 0;
 static uint32_t s_wfT0 = 0;
 static uint16_t s_noise = 0xACE1;
@@ -155,6 +149,25 @@ static uint16_t s_chRate[14];
 static uint32_t s_chHit[14];
 static uint32_t s_chSnap[14];
 static uint32_t s_rateT0 = 0;
+
+static bool allocateRuntimeBuffers() {
+    if (s_net && s_wf) return true;
+    if (!s_net) s_net = static_cast<Net*>(malloc(sizeof(Net) * MAX_NETS));
+    if (!s_wf) s_wf = static_cast<uint8_t*>(malloc((size_t)WF_ROWS * W));
+    if (s_net && s_wf) return true;
+    free(s_net);
+    free(s_wf);
+    s_net = nullptr;
+    s_wf = nullptr;
+    return false;
+}
+
+static void freeRuntimeBuffers() {
+    free(s_net);
+    free(s_wf);
+    s_net = nullptr;
+    s_wf = nullptr;
+}
 
 static uint8_t noise7() {
     s_noise ^= (uint16_t)(s_noise << 7);
@@ -389,32 +402,6 @@ static void onData(const uint8_t* p, uint16_t len, int8_t rssi) {
     else if (!toDs && !fromDs) {
         if (macEq(a3, s_monBssid)) trackCli(a3, a2, rssi);
     }
-
-    // LOCK still runs our own onRx — nothing feeds Hc22000 until HUNT
-    // hands the radio to Cap::. Without this, a client reconnecting right
-    // after a test kick() produces a real handshake that nobody's
-    // watching for, and it's gone by the time you commit to HUNT.
-    // Detection only: this can't persist to a pcap by itself (that needs
-    // Cap::'s own writer, only running during HUNT) — it just tells you
-    // it's worth pressing ENT to hunt+save before the moment passes.
-    if (!(toDs ^ fromDs)) return; // EAPOL only ever travels AP<->STA
-    if (!macEq(a1, s_monBssid) && !macEq(a2, s_monBssid) && !macEq(a3, s_monBssid)) return;
-    uint16_t bodyOff = 24;
-    bool isQos = (p[0] & 0x80) != 0;
-    if (isQos) bodyOff += 2;
-    if (isQos && (p[1] & 0x80)) bodyOff += 4; // HT Control (Order bit)
-    if (bodyOff + 8 > len) return;
-    bool eapol = p[bodyOff] == 0xAA && p[bodyOff + 1] == 0xAA && p[bodyOff + 2] == 0x03 &&
-                 p[bodyOff + 6] == 0x88 && p[bodyOff + 7] == 0x8E;
-    if (!eapol) return;
-    // Detection only — do NOT Hc22000::feed() here (WiFi callback).
-    // Cap:: writes pcap/.22000 from loop after HUNT starts.
-    if (!s_hsSeenLock) {
-        s_hsSeenLock = true;
-        Display::showToast("EAPOL seen - hunting...");
-        SFX::play(SFX::MENU_CLICK);
-        s_autoHuntPending = true;
-    }
 }
 
 static void onRx(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -530,8 +517,6 @@ static void enterLock() {
     s_cliScroll = 0;
     s_reveal = false;
     s_phase = LOCK;
-    s_hsSeenLock = false;
-    s_autoHuntPending = false;
     esp_wifi_set_channel(s_monCh, WIFI_SECOND_CHAN_NONE);
     s_ch = s_monCh;
     s_busy = false;
@@ -543,7 +528,6 @@ static void enterLock() {
 static void exitLock() {
     s_busy = true;
     s_reveal = false;
-    s_hsSeenLock = false;
     s_phase = SWEEP;
     memset(s_monBssid, 0, 6);
     s_busy = false;
@@ -665,7 +649,7 @@ static void updateBuf() {
             int in = (int)(s_persist[x] - RSSI_MIN) * 255 / (RSSI_MAX - RSSI_MIN);
             if (in < 0) in = 0;
             if (in > 255) in = 255;
-            s_wf[s_wfRow][x] = (uint8_t)in;
+            s_wf[(size_t)s_wfRow * W + x] = (uint8_t)in;
         }
         s_wfRow = (uint8_t)((s_wfRow + 1) % WF_ROWS);
     }
@@ -756,7 +740,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int br = (s_wfRow + row) % WF_ROWS;
         int y = WF_TOP + row;
         for (int x = 0; x < W; x++) {
-            uint8_t in = s_wf[br][x];
+            uint8_t in = s_wf[(size_t)br * W + x];
             if (in <= 20) continue;
             bool pix = false;
             if (in > 200) pix = true;
@@ -950,10 +934,15 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
 
 void start() {
     if (s_run) return;
+    if (!allocateRuntimeBuffers()) {
+        Display::showToast("SPECTRUM LOW HEAP");
+        Serial.println("[SPEC] runtime buffers unavailable");
+        return;
+    }
     if (Cap::isRunning()) Cap::stop();
     Avatar::suspendScene();
     Avatar::setState(AvatarState::HUNTING);
-    memset(s_net, 0, sizeof(s_net));
+    memset(s_net, 0, sizeof(Net) * MAX_NETS);
     s_nNet = 0;
     s_sel = -1;
     s_hasSel = false;
@@ -965,7 +954,7 @@ void start() {
     memset(s_col, RSSI_MIN, sizeof(s_col));
     memset(s_persist, RSSI_MIN, sizeof(s_persist));
     memset(s_peak, RSSI_MIN, sizeof(s_peak));
-    memset(s_wf, 0, sizeof(s_wf));
+    memset(s_wf, 0, (size_t)WF_ROWS * W);
     memset(s_chHit, 0, sizeof(s_chHit));
     memset(s_chSnap, 0, sizeof(s_chSnap));
     memset(s_chRate, 0, sizeof(s_chRate));
@@ -982,7 +971,10 @@ void start() {
 }
 
 void stop() {
-    if (!s_run) return;
+    if (!s_run) {
+        freeRuntimeBuffers();
+        return;
+    }
     s_run = false;
     s_busy = true;
     s_reveal = false;
@@ -993,6 +985,7 @@ void stop() {
     s_nNet = 0;
     s_phase = SWEEP;
     s_busy = false;
+    freeRuntimeBuffers();
     Serial.println("[SPEC] stop");
 }
 
@@ -1114,17 +1107,8 @@ void update() {
         if (!Avatar::isSceneSuspended()) Avatar::suspendScene();
     }
 
-    // Deferred from onData() (WiFi promiscuous callback context) — safe
-    // here since this is the same main-loop context a manual ENT already
-    // calls enterHunt() from.
-    if (s_autoHuntPending) {
-        s_autoHuntPending = false;
-        if (s_phase == LOCK) enterHunt();
-    }
-
     if (s_phase == HUNT) {
-        // Cap::loop() already runs from main.cpp every tick. Calling it
-        // here doubled hop/kick/flush and raced SD writes.
+        Cap::loop();
     } else {
         hopTick();
         prune();

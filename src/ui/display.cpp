@@ -635,7 +635,7 @@ void Display::drawBottomBar() {
                 strncpy(left, LootMenu::getBottomHint(), sizeof(left) - 1);
                 break;
             case AppMode::ATTACK:
-                strncpy(left, "LIGHT  WPASEC STOP", sizeof(left) - 1);
+                strncpy(left, "LIGHT  AGGRO  STOP", sizeof(left) - 1);
                 break;
             case AppMode::WIFI:
             case AppMode::PIG:
@@ -678,6 +678,9 @@ void Display::drawBottomBar() {
                 break;
             case AppMode::BADUSB:
                 BadUsbMode::getStatusLine(left, sizeof(left));
+                break;
+            case AppMode::TASKS:
+                strncpy(left, ";/. select  ENT stop  ` back", sizeof(left) - 1);
                 break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));

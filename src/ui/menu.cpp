@@ -19,6 +19,7 @@
 #include "../modes/filemgr.h"
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
+#include "task_manager.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -49,7 +50,7 @@ struct Item {
 };
 
 static const char* const H_ATTACK[] = {
-    "LIGHT LISTEN OR WPASEC CAPTURE.",
+    "LIGHT LISTEN OR AGGRO HUNT.",
     "RINGS ON THE SNOUT. LOOT ON SD."
 };
 static const char* const H_LOOT[] = {
@@ -64,6 +65,10 @@ static const char* const H_SET[] = {
     "SYSTEM STATUS RADIO.",
     "EACH PAGE ITS OWN KNOBS."
 };
+static const char* const H_TASKS[] = {
+    "STOP UNUSED RADIO AND SERVICES.",
+    "HEAP + LARGEST BLOCK. ENT STOP."
+};
 static const char* const H_SYS[] = {
     "BRIGHT SOUND DIM.",
     "WHEN THE SCREEN SLEEPS."
@@ -73,8 +78,8 @@ static const char* const H_STAT[] = {
     "READ ONLY. ` BACK."
 };
 static const char* const H_RADIO[] = {
-    "HOPPING AND HANDSHAKE DEPTH.",
-    "WPASEC CAPTURE SETTINGS."
+    "HOP LOCK DEAUTH RSSI MAC.",
+    "AGGRO AND EVILPIG READ THIS."
 };
 static const char* const H_BLESET[] = {
     "BURST AND ADV TIME.",
@@ -126,8 +131,8 @@ static const char* const H_LIGHT[] = {
     "INCOMING RINGS. UI STAYS CALM."
 };
 static const char* const H_AGGRO[] = {
-    "HOP 1-13. PASSIVE. CATCH.",
-    "PCAP + 22000. NEVER STOPS."
+    "HOP 1-13. KICK. CATCH.",
+    "OUTGOING RINGS. SSID HUNT."
 };
 static const char* const H_STOP[] = {
     "RADIO SLEEP. RINGS DIE.",
@@ -163,13 +168,14 @@ static const RootItem ROOT[] = {
     {"[$", "LOOT",    H_LOOT,        2, RootType::DIRECT, GroupId::NONE,    4},
     {"^.", "PIG",     H_PIG,         2, RootType::DIRECT, GroupId::NONE,    7},
     {"()", "CONNECT", H_CONNECT_GRP, 2, RootType::GROUP,  GroupId::CONNECT, 0},
-    {"::", "SET",     H_SET,         2, RootType::GROUP,  GroupId::SET,     0}
+    {"::", "SET",     H_SET,         2, RootType::GROUP,  GroupId::SET,     0},
+    {"[]", "TASKS",   H_TASKS,       2, RootType::DIRECT, GroupId::NONE,    23}
 };
-static const uint8_t ROOT_COUNT = 5;
+static const uint8_t ROOT_COUNT = 6;
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
-    {"!!", "WPASEC",  2,  H_AGGRO, 2},
+    {"!!", "AGGRO",   2,  H_AGGRO, 2},
     {"EP", "EVILPIG", 9,  H_EVIL,  2},
     {"PP", "PIGPASS", 10, H_PASS,  2},
     {"BL", "BLE",     13, H_BLE,   2},
@@ -246,11 +252,11 @@ static void doAction(uint8_t id) {
         case 2:
             if (Cap::isRunning() && Cap::runMode() == Cap::RunMode::Aggressive) {
                 Cap::stop();
-                Display::showToast("WPASEC OFF", 900);
+                Display::showToast("AGGRO OFF", 900);
             } else {
                 Cap::startAggressive();
                 App::setMode(AppMode::FARM);
-                Display::showToast("WPASEC", 900);
+                Display::showToast("AGGRO", 900);
             }
             break;
         case 3:
@@ -312,6 +318,9 @@ static void doAction(uint8_t id) {
         case 22:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::XFER);
+            break;
+        case 23:
+            App::setMode(AppMode::TASKS);
             break;
         case 20:
             if (Cap::isRunning()) Cap::stop();
@@ -617,6 +626,10 @@ void draw(M5Canvas& canvas) {
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
         App::mode() == AppMode::WIFI) {
         SettingsMenu::draw(canvas);
+        return;
+    }
+    if (App::mode() == AppMode::TASKS) {
+        TaskManager::draw(canvas);
         return;
     }
 }

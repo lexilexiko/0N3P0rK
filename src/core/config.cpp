@@ -83,6 +83,7 @@ bool Config::init() {
     r.deauthReason = s_prefs.getUChar("dreason", r.deauthReason);
     r.pauseMs = s_prefs.getUShort("pausems", r.pauseMs);
     r.fatPcap = s_prefs.getBool("fatpcap", r.fatPcap);
+    r.hsFileBytes = s_prefs.getUShort("hsfileb", r.hsFileBytes);
     r.pack = s_prefs.getUChar("rpack", r.pack);
     // Porkchop-style knobs — same load pattern as everything above.
     r.jitterMs = s_prefs.getUChar("jitms", r.jitterMs);
@@ -98,7 +99,7 @@ bool Config::init() {
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
 
-    HotkeyConfig def;
+    HotkeyConfig def{};
     hotkeyConfig = def;
     char raw[HOTKEY_COUNT];
     size_t got = s_prefs.getBytes("hotk", raw, HOTKEY_COUNT);
@@ -152,6 +153,9 @@ bool Config::init() {
     if (r.deauthReason > 8) r.deauthReason = 7;
     if (r.pauseMs < 400) r.pauseMs = 400;
     if (r.pauseMs > 3000) r.pauseMs = 3000;
+    if (r.hsFileBytes != 1024 && r.hsFileBytes != 2048 &&
+        r.hsFileBytes != 4096 && r.hsFileBytes != 8192)
+        r.hsFileBytes = 2048;
     // pack lives in its own registry (Cap::Packs), separate bound from
     // hsMethod's - CUSTOM is the one value allowed above that bound
     // (fixed sentinel).
@@ -215,6 +219,7 @@ bool Config::save() {
     s_prefs.putUChar("dreason", r.deauthReason);
     s_prefs.putUShort("pausems", r.pauseMs);
     s_prefs.putBool("fatpcap", r.fatPcap);
+    s_prefs.putUShort("hsfileb", r.hsFileBytes);
     s_prefs.putUChar("rpack", r.pack);
     // Porkchop-style knobs — same save pattern as everything above.
     s_prefs.putUChar("jitms", r.jitterMs);
@@ -309,7 +314,6 @@ void Config::applyRadioPack(uint8_t pack) {
         r.dataAct      = pr.dataAct;
         r.strictLock   = pr.strictLock;
         r.depthHoldSec = pr.depthHoldSec;
-        r.autoStopSec  = pr.autoStopSec;
     }
     r.pack = pack;
     radioConfig = r;

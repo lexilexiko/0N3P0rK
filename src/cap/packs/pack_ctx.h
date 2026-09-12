@@ -44,7 +44,6 @@ struct Preset {
     uint8_t  dataAct;        // 0=beacon activity 1=data-frame activity (FOCUS)
     bool     strictLock;     // FOCUS: only kick locked BSSID while lock active
     uint8_t  depthHoldSec;   // extra sec hold after pair when hsDepth>0
-    uint8_t  autoStopSec;    // stop after a pair; keeps WPasec captures small
 
     constexpr Preset(bool bk = false, bool et = false, bool pp = false,
                      bool ch = false, bool af = false, uint8_t kb = 2,
@@ -52,14 +51,13 @@ struct Preset {
                      uint16_t hms = 300,
                      uint8_t jit = 0, uint8_t cd = 0, int16_t thr = 0,
                      uint8_t depth = 0, uint8_t dact = 0,
-                     bool slock = true, uint8_t dhold = 0,
-                     uint8_t astop = 0) noexcept
+                     bool slock = true, uint8_t dhold = 0) noexcept
         : bidirKick(bk), eapolTx(et), pmkidProbe(pp), csaHerd(ch),
           authFlood(af), kickBurst(kb), pauseMs(pms), lockMs(lms),
           hopMs(hms),
           jitterMs(jit), cooldownSec(cd), scoreThr(thr),
           hsDepth(depth), dataAct(dact),
-          strictLock(slock), depthHoldSec(dhold), autoStopSec(astop) {}
+          strictLock(slock), depthHoldSec(dhold) {}
 };
 
 // ---- Registry ------------------------------------------------------------

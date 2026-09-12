@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../ui/task_manager.h"
 #include "../ui/display.h"
 #include "../ui/menu.h"
 #include "../ui/keys.h"
@@ -44,6 +45,7 @@ bool overlayMode() {
            s_mode == AppMode::IR || s_mode == AppMode::SPECTRUM ||
            s_mode == AppMode::USBSD || s_mode == AppMode::FILEMGR || s_mode == AppMode::XFER ||
            s_mode == AppMode::BADUSB ||
+           s_mode == AppMode::TASKS ||
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
 }
@@ -57,6 +59,7 @@ void setWindowHidden(bool hid) {
 void begin() {
     s_mode = AppMode::FARM;
     Menu::begin();
+    TaskManager::begin();
     pinMode(0, INPUT_PULLUP);
     s_g0Was = digitalRead(0) == LOW;
 }
@@ -81,6 +84,7 @@ const char* modeName() {
         case AppMode::FILEMGR:  return "FILES";
         case AppMode::XFER:     return "XFER";
         case AppMode::BADUSB:   return "BADUSB";
+        case AppMode::TASKS:    return "TASKS";
         default:                return "?";
     }
 }
@@ -99,6 +103,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::FILEMGR && FileMgrMode::isRunning()) FileMgrMode::stop();
     if (s_mode == AppMode::XFER && XferMode::isRunning()) XferMode::stop();
     if (s_mode == AppMode::BADUSB && BadUsbMode::isRunning()) BadUsbMode::stop();
+    if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -112,6 +117,7 @@ void setMode(AppMode m) {
     if (m == AppMode::FILEMGR) FileMgrMode::start();
     if (m == AppMode::XFER) XferMode::start();
     if (m == AppMode::BADUSB) BadUsbMode::start();
+    if (m == AppMode::TASKS) TaskManager::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -325,6 +331,9 @@ void loop() {
     } else if (s_mode == AppMode::BADUSB) {
         BadUsbMode::update();
         if (!BadUsbMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::TASKS) {
+        TaskManager::update();
+        if (!TaskManager::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
@@ -343,7 +352,7 @@ void loop() {
         s_mode == AppMode::SPECTRUM ||
         s_mode == AppMode::USBSD ||
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
-        s_mode == AppMode::WIFI) return;
+        s_mode == AppMode::WIFI || s_mode == AppMode::TASKS) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();

@@ -41,8 +41,8 @@ struct Counters {
     uint32_t framesEapol;
     uint32_t framesQueued;
     uint32_t framesDropped;
-    uint32_t eapolDropped;    // §5: EAPOL specifically lost in ring (not generic drops)
-    uint32_t framesTruncated; // §6: frames silently cut to FRAME_MAX
+    uint32_t framesTruncated;  // clamped to FRAME_MAX (origLen preserved in PCAP)
+    uint32_t eapolDropped;     // EAPOL lost in ring (ring full)
     uint32_t framesWritten;
     uint32_t framesDeauth;
     uint32_t filesOpened;

@@ -18,6 +18,8 @@ static const char* WPASEC_HOST = "wpa-sec.stanev.org";
 static const uint16_t WPASEC_PORT = 443;
 static const char* WPASEC_UPLOAD_PATH = "/";
 static const char* WPASEC_POTFILE_PATH = "/?api&dl=1";
+// Keep the in-memory indexes bounded. The complete data remains on SD;
+// this limit only controls how many entries are kept resident during sync.
 static const size_t WPASEC_MAX_CACHE = 512;
 static const char* WPA_PENDING = "/0N3P0rK/wpa-sec/_pending.txt";
 
@@ -95,9 +97,10 @@ bool WPASec::canSync() {
 }
 
 void WPASec::freeCacheMemory() {
-    // Never shrink_to_fit — ESP32 has no C++ exceptions; a failed realloc aborts.
-    crackedCache.clear();
-    uploadedCache.clear();
+    // clear() keeps vector capacity allocated. Swap with empty vectors so the
+    // cache storage is actually returned before TLS/WiFiClientSecure starts.
+    std::vector<CrackedEntry>().swap(crackedCache);
+    std::vector<UploadedEntry>().swap(uploadedCache);
     cacheLoaded = false;
 }
 
@@ -500,7 +503,14 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
         return result;
     }
 
-    loadCache();
+    // The upload pass only needs the complete uploaded index to avoid
+    // duplicate uploads. Delay the cracked-password cache until after TLS.
+    if (!loadUploadedList()) {
+        strncpy(result.error, "uploaded cache", sizeof(result.error) - 1);
+        busy = false;
+        return result;
+    }
+    cacheLoaded = true;
     Storage::ensureDir(Storage::DIR_WPASEC);
     SD.remove(WPA_PENDING);
     File pendOut = SD.open(WPA_PENDING, "w");
@@ -511,7 +521,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     result.skipped = pend.skipped;
     Serial.printf("[WPASEC] pending=%u skipped=%u\n", pend.count, pend.skipped);
 
-    crackedCache.clear();
+    std::vector<CrackedEntry>().swap(crackedCache);
 
     if (cb) cb("Uploading", 0, pend.count);
     ioXferPhase("UPLOAD", 0, pend.count);
