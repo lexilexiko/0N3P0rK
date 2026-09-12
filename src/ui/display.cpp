@@ -679,6 +679,9 @@ void Display::drawBottomBar() {
             case AppMode::BADUSB:
                 BadUsbMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::TASKS:
+                strncpy(left, ";/. select  ENT stop  ` back", sizeof(left) - 1);
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
