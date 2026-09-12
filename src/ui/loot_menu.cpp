@@ -356,6 +356,14 @@ void LootMenu::gotoPage(uint8_t newPage, bool landOnLast) {
 }
 
 void LootMenu::show() {
+    // Capture owns a large static pipeline and may still have pending SD work.
+    // Stop it before building the loot view so uploads get the cleanest heap
+    // and the radio callback cannot compete with TLS/SD traffic.
+    Cap::releaseForSync();
+    WPASec::freeCacheMemory();
+    Pwncrack::freeCacheMemory();
+    Storage::brewHeap();
+
     active = true;
     detailView = false;
     syncModal = false;

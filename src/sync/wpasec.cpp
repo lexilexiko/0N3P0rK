@@ -270,8 +270,7 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     Serial.printf("[WPASEC] upload %s (%u B)\n", filename, (unsigned)fileSize);
 
     WiFiClientSecure client;
-    client.setInsecure();
-    if (!client.connect(WPASEC_HOST, WPASEC_PORT, 10000)) {
+    if (!ioTlsOpen(client, WPASEC_HOST, WPASEC_PORT)) {
         capFile.close();
         snprintf(lastError, sizeof(lastError), "tls connect");
         return false;
@@ -281,13 +280,15 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     snprintf(boundary, sizeof(boundary), "----WPASec%08lX", (unsigned long)millis());
     char disposition[128];
     snprintf(disposition, sizeof(disposition),
-             "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"",
+             "Content-Disposition: form-data; name=\"webfile\"; filename=\"%s\"",
              filename);
-    size_t contentLength = 2 + strlen(boundary) + 2 +
-                           strlen(disposition) + 2 +
-                           38 + 4 +
-                           fileSize +
-                           2 + 2 + strlen(boundary) + 4;
+    char fileHead[256];
+    snprintf(fileHead, sizeof(fileHead),
+             "--%s\r\n%s\r\nContent-Type: application/octet-stream\r\n\r\n",
+             boundary, disposition);
+    char fileTail[64];
+    snprintf(fileTail, sizeof(fileTail), "\r\n--%s--\r\n", boundary);
+    size_t contentLength = strlen(fileHead) + fileSize + strlen(fileTail);
 
     client.printf("POST %s HTTP/1.1\r\n", WPASEC_UPLOAD_PATH);
     client.printf("Host: %s\r\n", WPASEC_HOST);
@@ -296,19 +297,22 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
     client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
     client.print("Connection: close\r\n\r\n");
-    client.printf("--%s\r\n%s\r\nContent-Type: application/octet-stream\r\n\r\n",
-                  boundary, disposition);
+    client.print(fileHead);
 
     client.setTimeout(60000);
-    if (!Tls::streamFile(client, capFile, fileSize, lastError, sizeof(lastError)))
+    if (!Tls::streamFile(client, capFile, fileSize, lastError, sizeof(lastError))) {
+        capFile.close();
+        client.stop();
         return false;
+    }
+    capFile.close();
 
     if (!client.connected()) {
         snprintf(lastError, sizeof(lastError), "lost after body");
         return false;
     }
     client.flush();
-    client.printf("\r\n--%s--\r\n", boundary);
+    client.print(fileTail);
 
     char resp[80] = {0};
     bool got = ioReadStatusLine(client, resp, sizeof(resp), 45000);

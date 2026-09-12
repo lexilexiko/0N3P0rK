@@ -21,6 +21,8 @@ void startLight();
 void startAggressive();
 void startPinned(uint8_t ch, const uint8_t* bssid, const char* ssid = nullptr);
 void stop();
+// Release capture-only buffers before TLS/SD synchronization.
+void releaseForSync();
 bool isRunning();
 RunMode runMode();
 bool isLocked();

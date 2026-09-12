@@ -374,7 +374,12 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     while (left > 0) {
         size_t chunk = left > sizeof(buf) ? sizeof(buf) : left;
         size_t rd = capFile.read(buf, chunk);
-        if (rd == 0) break;
+        if (rd == 0) {
+            capFile.close();
+            sock.stop();
+            snprintf(lastError, sizeof(lastError), "read file");
+            return false;
+        }
         if (!sendAll(buf, rd)) {
             capFile.close();
             sock.stop();
@@ -386,6 +391,12 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         ioXfer().sent = (uint32_t)sent;
         ioXferPaint(false);
         yield();
+    }
+    if (left != 0) {
+        capFile.close();
+        sock.stop();
+        snprintf(lastError, sizeof(lastError), "short file");
+        return false;
     }
     capFile.close();
     if (!sendStr(fileTail)) {

@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
+#include <new>
 
 namespace Hc22000 {
 
@@ -46,7 +47,7 @@ struct Hs {
     bool dirty;
 };
 
-static Hs s_hs[MAX_HS];
+static Hs* s_hs = nullptr;
 static portMUX_TYPE s_hsMux = portMUX_INITIALIZER_UNLOCKED;
 
 static bool isZeroMac(const uint8_t* mac) {
@@ -532,10 +533,31 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
 }
 
 void reset() {
+    if (!s_hs) return;
     portENTER_CRITICAL(&s_hsMux);
-    memset(s_hs, 0, sizeof(s_hs));
+    memset(s_hs, 0, sizeof(Hs) * MAX_HS);
     s_lastM1Ms = 0;
     portEXIT_CRITICAL(&s_hsMux);
+}
+
+bool allocateMemory() {
+    if (s_hs) return true;
+    s_hs = new (std::nothrow) Hs[MAX_HS];
+    if (!s_hs) {
+        Serial.println("[22000] handshake table allocation failed");
+        return false;
+    }
+    memset(s_hs, 0, sizeof(Hs) * MAX_HS);
+    return true;
+}
+
+void releaseMemory() {
+    portENTER_CRITICAL(&s_hsMux);
+    Hs* table = s_hs;
+    s_hs = nullptr;
+    s_lastM1Ms = 0;
+    portEXIT_CRITICAL(&s_hsMux);
+    delete[] table;
 }
 
 void flushPending() {
