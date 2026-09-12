@@ -679,6 +679,8 @@ static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPat
     }
 }
 
+static void closeFile();
+
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts,
                              uint8_t ch, int8_t rssi, uint16_t origFlen = 0) {
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
@@ -691,19 +693,18 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts,
     ph.inclLen = rtLen + flen;
     ph.origLen = rtLen + (origFlen ? origFlen : flen);
     if (s_fileSize + sizeof(ph) + rtLen + flen > s_maxFileSize) return false;
-    // Rollback point: if any write fails, truncate back to here so the file
-    // stays valid (no partial packet record).
-    const uint32_t packetStart = s_fileSize;
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
     n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
     if (n != expect) {
-        // Partial write — truncate back to last good EOF.
-        s_file.seek(packetStart);
-        s_file.truncate(packetStart);
-        s_fileSize = packetStart;
+        // The ESP32 Arduino File API has no portable truncate operation.
+        // Close the stream and refuse further writes in this session rather
+        // than pretending a partially written packet was valid.
+        Serial.printf("[CAP] short pcap write (%u/%u)\n",
+                      (unsigned)n, (unsigned)expect);
+        closeFile();
         return false;
     }
     s_fileSize += expect;
