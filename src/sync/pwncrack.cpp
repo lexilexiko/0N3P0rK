@@ -445,7 +445,10 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     WiFiClientSecure tls;
     WiFiClient plain;
     bool useTls = false;
-    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST)) {
+    // The potfile endpoint is HTTPS-only on current pwncrack.org. Opening
+    // HTTP first returns a redirect page, which was being saved as an error
+    // instead of following the redirect like the upload path does.
+    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST, true)) {
         snprintf(lastError, sizeof(lastError), "pot connect");
         return false;
     }

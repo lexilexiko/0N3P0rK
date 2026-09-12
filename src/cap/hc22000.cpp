@@ -772,8 +772,13 @@ static void convOne(const char* name, size_t, void* raw) {
 }
 
 uint16_t convertAllPcaps() {
+    // Capture memory is released before Loot sync. Recreate the handshake
+    // table temporarily for offline PCAP conversion, then return it to heap.
+    bool temporary = (s_hs == nullptr);
+    if (temporary && !allocateMemory()) return 0;
     ConvCtx ctx{0};
     Storage::forEachHandshake(convOne, &ctx);
+    if (temporary) releaseMemory();
     return ctx.n;
 }
 
