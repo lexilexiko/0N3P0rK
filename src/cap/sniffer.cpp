@@ -28,7 +28,9 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
-static const uint8_t  RING_SLOTS = 12;
+// Keep the capture queue bounded so WPA-sec sync still has a large
+// contiguous heap block available after radio capture.
+static const uint8_t  RING_SLOTS = 8;
 // Minimum PCAP for wpa-sec: GlobalHdr(24) + Beacon(~282) + M1(~171) + M2(~217) ≈ 694 B
 // Cap at 800 to allow slight variance while rejecting over-sized files.
 // hasPair() closes the file early anyway, so in practice it stays ~700 B.
@@ -51,7 +53,7 @@ struct Slot {
 static Slot s_ring[RING_SLOTS];
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
-static const uint8_t PENDING_SLOTS = 8;
+static const uint8_t PENDING_SLOTS = 4;
 
 struct PendingCapture {
     bool used;

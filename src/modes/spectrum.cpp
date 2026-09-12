@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 namespace SpectrumMode {
 
@@ -89,7 +90,7 @@ static bool s_run = false;
 static volatile bool s_busy = false;
 static Phase s_phase = SWEEP;
 static Filt s_filt = F_ALL;
-static Net s_net[MAX_NETS];
+static Net* s_net = nullptr;
 static uint8_t s_nNet = 0;
 static int8_t s_sel = -1;
 static uint8_t s_selMac[6];
@@ -140,7 +141,7 @@ static uint8_t s_apMac[6];
 static int8_t s_col[W];
 static int8_t s_persist[W];
 static int8_t s_peak[W];
-static uint8_t s_wf[WF_ROWS][W];
+static uint8_t* s_wf = nullptr;
 static uint8_t s_wfRow = 0;
 static uint32_t s_wfT0 = 0;
 static uint16_t s_noise = 0xACE1;
@@ -148,6 +149,25 @@ static uint16_t s_chRate[14];
 static uint32_t s_chHit[14];
 static uint32_t s_chSnap[14];
 static uint32_t s_rateT0 = 0;
+
+static bool allocateRuntimeBuffers() {
+    if (s_net && s_wf) return true;
+    if (!s_net) s_net = static_cast<Net*>(malloc(sizeof(Net) * MAX_NETS));
+    if (!s_wf) s_wf = static_cast<uint8_t*>(malloc((size_t)WF_ROWS * W));
+    if (s_net && s_wf) return true;
+    free(s_net);
+    free(s_wf);
+    s_net = nullptr;
+    s_wf = nullptr;
+    return false;
+}
+
+static void freeRuntimeBuffers() {
+    free(s_net);
+    free(s_wf);
+    s_net = nullptr;
+    s_wf = nullptr;
+}
 
 static uint8_t noise7() {
     s_noise ^= (uint16_t)(s_noise << 7);
@@ -629,7 +649,7 @@ static void updateBuf() {
             int in = (int)(s_persist[x] - RSSI_MIN) * 255 / (RSSI_MAX - RSSI_MIN);
             if (in < 0) in = 0;
             if (in > 255) in = 255;
-            s_wf[s_wfRow][x] = (uint8_t)in;
+            s_wf[(size_t)s_wfRow * W + x] = (uint8_t)in;
         }
         s_wfRow = (uint8_t)((s_wfRow + 1) % WF_ROWS);
     }
@@ -720,7 +740,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int br = (s_wfRow + row) % WF_ROWS;
         int y = WF_TOP + row;
         for (int x = 0; x < W; x++) {
-            uint8_t in = s_wf[br][x];
+            uint8_t in = s_wf[(size_t)br * W + x];
             if (in <= 20) continue;
             bool pix = false;
             if (in > 200) pix = true;
@@ -914,10 +934,15 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
 
 void start() {
     if (s_run) return;
+    if (!allocateRuntimeBuffers()) {
+        Display::showToast("SPECTRUM LOW HEAP");
+        Serial.println("[SPEC] runtime buffers unavailable");
+        return;
+    }
     if (Cap::isRunning()) Cap::stop();
     Avatar::suspendScene();
     Avatar::setState(AvatarState::HUNTING);
-    memset(s_net, 0, sizeof(s_net));
+    memset(s_net, 0, sizeof(Net) * MAX_NETS);
     s_nNet = 0;
     s_sel = -1;
     s_hasSel = false;
@@ -929,7 +954,7 @@ void start() {
     memset(s_col, RSSI_MIN, sizeof(s_col));
     memset(s_persist, RSSI_MIN, sizeof(s_persist));
     memset(s_peak, RSSI_MIN, sizeof(s_peak));
-    memset(s_wf, 0, sizeof(s_wf));
+    memset(s_wf, 0, (size_t)WF_ROWS * W);
     memset(s_chHit, 0, sizeof(s_chHit));
     memset(s_chSnap, 0, sizeof(s_chSnap));
     memset(s_chRate, 0, sizeof(s_chRate));
@@ -946,7 +971,10 @@ void start() {
 }
 
 void stop() {
-    if (!s_run) return;
+    if (!s_run) {
+        freeRuntimeBuffers();
+        return;
+    }
     s_run = false;
     s_busy = true;
     s_reveal = false;
@@ -957,6 +985,7 @@ void stop() {
     s_nNet = 0;
     s_phase = SWEEP;
     s_busy = false;
+    freeRuntimeBuffers();
     Serial.println("[SPEC] stop");
 }
 

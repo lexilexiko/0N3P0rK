@@ -14,6 +14,7 @@
 #include <SD.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 #include "../ui/display.h"
 #include "../ui/keys.h"
@@ -76,16 +77,37 @@ static HandshakeData handshake;
 static File wordlistFile;
 
 // Buffered wordlist reader (avoids per-byte SD reads)
-static uint8_t wlBuf[4096];
+static constexpr size_t WL_BUF_SIZE = 4096;
+static uint8_t* wlBuf = nullptr;
 static size_t wlBufPos = 0;
 static size_t wlBufLen = 0;
 static bool wlEof = false;
 
 // Precomputed per-handshake material (fixed for whole wordlist run)
 static uint8_t g_ptkData[76];          // min/max MACs || min/max nonces
-static uint8_t g_eapolZero[512];       // EAPOL with MIC field zeroed
+static constexpr size_t EAPOL_ZERO_SIZE = 512;
+static uint8_t* g_eapolZero = nullptr; // EAPOL with MIC field zeroed
 static uint16_t g_eapolLen = 0;
 static bool g_hsCryptoReady = false;
+
+static bool allocateRuntimeBuffers() {
+    if (wlBuf && g_eapolZero) return true;
+    if (!wlBuf) wlBuf = static_cast<uint8_t*>(malloc(WL_BUF_SIZE));
+    if (!g_eapolZero) g_eapolZero = static_cast<uint8_t*>(malloc(EAPOL_ZERO_SIZE));
+    if (wlBuf && g_eapolZero) return true;
+    free(wlBuf);
+    free(g_eapolZero);
+    wlBuf = nullptr;
+    g_eapolZero = nullptr;
+    return false;
+}
+
+static void freeRuntimeBuffers() {
+    free(wlBuf);
+    free(g_eapolZero);
+    wlBuf = nullptr;
+    g_eapolZero = nullptr;
+}
 
 // Crack session state (single-core on main loop — no FreeRTOS worker).
 // Bruce dual-core task often fails to allocate on Cardputer (tight heap) → TASK FAIL.
@@ -233,7 +255,7 @@ static void prepareHandshakeCrypto() {
     }
 
     if (!handshake.isPmkid && handshake.eapol_len >= EAPOL_MIN_KEY_LEN &&
-        handshake.eapol_len <= sizeof(g_eapolZero)) {
+        handshake.eapol_len <= EAPOL_ZERO_SIZE && g_eapolZero) {
         memcpy(g_eapolZero, handshake.eapol, handshake.eapol_len);
         memset(g_eapolZero + EAPOL_MIC_OFF, 0, 16);
         g_eapolLen = handshake.eapol_len;
@@ -833,7 +855,8 @@ static void resetWordlistBuffer() {
 
 static bool refillWordlistBuffer() {
     if (!wordlistFile || wlEof) return false;
-    size_t got = wordlistFile.read(wlBuf, sizeof(wlBuf));
+    if (!wlBuf) return false;
+    size_t got = wordlistFile.read(wlBuf, WL_BUF_SIZE);
     wlBufPos = 0;
     wlBufLen = got;
     if (got == 0) {
@@ -1145,6 +1168,12 @@ void PigpassMode::start() {
     Serial.println("[PIGPASS] Starting PigPass mode");
     // Keep last hsTab if user re-enters; only ensure valid.
     if ((uint8_t)hsTab > (uint8_t)PigpassHsTab::HC22000) hsTab = PigpassHsTab::PCAP;
+    if (!allocateRuntimeBuffers()) {
+        Serial.println("[PIGPASS] ERROR: runtime buffers unavailable");
+        Display::showToast("PIGPASS LOW HEAP");
+        return;
+    }
+
     // Visible PigPass: kill farm anims so PBKDF2 gets the core. Minimize → resume.
     Avatar::suspendScene();
 
@@ -1195,6 +1224,7 @@ void PigpassMode::stop() {
     freePbkdfCtx();
     resetWordlistBuffer();
     g_hsCryptoReady = false;
+    freeRuntimeBuffers();
 
     attempts = s_attempts;
     uint32_t att_lo = (uint32_t)(attempts & 0xFFFFFFFF);
