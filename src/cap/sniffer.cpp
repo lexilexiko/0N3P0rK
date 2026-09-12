@@ -976,6 +976,13 @@ static bool writeFrameNow(const Slot& s) {
     return true;
 }
 
+static uint32_t pcapPacketSize(const Slot& s) {
+    uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
+    uint8_t rtLen = Pcap::buildRadiotap(
+        rt, s.channel ? s.channel : s_cnt.currentChannel, s.rssi, s_fatPcap);
+    return (uint32_t)sizeof(Pcap::PacketHeader) + rtLen + s.len;
+}
+
 static void writeFrameToFile(const Slot& s) {
     if (isSessionSkipped(s.bssid)) return;
     Hc22000::feed(s.frame, s.len);
@@ -990,6 +997,21 @@ static void commitPendingCaptures() {
         if (s_hsDepth >= 2 && !p.haveM4) continue;
         if (!Hc22000::hasHandshakeForStation(p.bssid, p.station, s_hsDepth)) continue;
         if (!isSessionSkipped(p.bssid)) {
+            if (s_fileOpen && !sameBssid(s_fileBssid, p.bssid)) closeFile();
+            if (s_fileOpen && s_fileSize >= s_maxFileSize) closeFile();
+            if (!s_fileOpen && !openFileForBssid(p.bssid)) continue;
+            uint32_t needed = pcapPacketSize(p.m1) + pcapPacketSize(p.m2);
+            if (s_hsDepth >= 1) needed += pcapPacketSize(p.m3);
+            if (s_hsDepth >= 2) needed += pcapPacketSize(p.m4);
+            if (s_fileSize > s_maxFileSize ||
+                needed > s_maxFileSize - s_fileSize) {
+                Serial.printf("[CAP] HS depth does not fit %s (%u+%u>%u)\n",
+                              s_fileName, (unsigned)s_fileSize, (unsigned)needed,
+                              (unsigned)s_maxFileSize);
+                closeFile();
+                memset(&p, 0, sizeof(p));
+                continue;
+            }
             bool committed = writeFrameNow(p.m1);
             committed = committed && writeFrameNow(p.m2);
             if (s_hsDepth >= 1) committed = committed && writeFrameNow(p.m3);
