@@ -349,10 +349,16 @@ static bool parseRsnPmkid(const uint8_t* ie, uint8_t ielen, uint8_t out[16]) {
 
 static void parseAssoc(const uint8_t* f, uint16_t len) {
     uint8_t subtype = (f[0] >> 4) & 0x0F;
-    if (subtype != 1) return; // association response
-    const uint8_t* bssid = f + 16;
-    const uint8_t* sta = f + 4;
-    uint16_t off = (uint16_t)(24 + 6);
+    // PMKID is sent by the CLIENT in Association/Reassociation REQUEST.
+    // subtype 0 = Association Request, subtype 2 = Reassociation Request.
+    // subtype 1 (Response) never contains a PMKID — catching it was wrong.
+    if (subtype != 0 && subtype != 2) return;
+    const uint8_t* bssid = f + 4;   // addr1 = destination AP
+    const uint8_t* sta   = f + 10;  // addr2 = source station
+    // Fixed fields: Assoc=4 bytes (CapInfo+ListenInterval),
+    //               Reassoc=10 bytes (+CurrentAP).
+    uint16_t fixedLen = (subtype == 2) ? 10 : 4;
+    uint16_t off = (uint16_t)(24 + fixedLen);
     while (off + 2 <= len) {
         uint8_t id = f[off];
         uint8_t l = f[off + 1];
@@ -672,16 +678,23 @@ uint16_t convertPcap(const char* pcapPath) {
             if (f.read(extra, nskip) != nskip) break;
         }
         uint32_t flen = incl - rtLen;
-        if (flen > 400) {
+        // Skip frames that exceed our static buffer (management/beacon noise).
+        // 1100 keeps all EAPOL (≤512 bytes of payload + 802.11 header ≈ 600)
+        // while dropping large data frames.  A failed drain means the file
+        // cursor is lost — stop rather than feed garbage.
+        if (flen > 1100) {
             uint8_t dump[64];
-            while (flen) {
-                size_t c = flen > sizeof(dump) ? sizeof(dump) : flen;
-                if (f.read(dump, c) != c) break;
-                flen -= c;
+            bool fullySkipped = true;
+            uint32_t rem = flen;
+            while (rem) {
+                size_t c = rem > sizeof(dump) ? sizeof(dump) : rem;
+                if (f.read(dump, c) != (int)c) { fullySkipped = false; break; }
+                rem -= c;
             }
+            if (!fullySkipped) break;  // cursor lost — abort
             continue;
         }
-        uint8_t frame[400];
+        uint8_t frame[1100];
         if (f.read(frame, flen) != (int)flen) break;
         feed(frame, (uint16_t)flen);
         yield();

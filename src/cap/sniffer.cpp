@@ -29,7 +29,10 @@ namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
 static const uint8_t  RING_SLOTS = 12;
-static const uint32_t DEFAULT_MAX_FILE_SIZE = 740UL;
+// Minimum PCAP for wpa-sec: GlobalHdr(24) + Beacon(~282) + M1(~171) + M2(~217) ≈ 694 B
+// Cap at 800 to allow slight variance while rejecting over-sized files.
+// hasPair() closes the file early anyway, so in practice it stays ~700 B.
+static const uint32_t DEFAULT_MAX_FILE_SIZE = 800UL;
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 static const uint8_t HOP_CORE[] = {1, 6, 11};
@@ -38,6 +41,7 @@ struct Slot {
     uint8_t  bssid[6];
     uint8_t  station[6];
     uint16_t len;
+    uint16_t originalLen;  // on-air length before FRAME_MAX clamp (for PCAP origLen)
     uint32_t ts;
     int8_t   rssi;
     uint8_t  channel;
@@ -116,7 +120,7 @@ static bool     s_pmkidProbe = true;
 static bool     s_csaHerd = false;
 static bool     s_authFlood = false;
 static uint8_t  s_deauthReason = 7;
-static bool     s_fatPcap = true;
+static bool     s_fatPcap = false;    // slim radiotap (8B) is enough for wpa-sec
 // Porkchop-style knobs. All start at 0 (= "off / use legacy behavior")
 // so existing installs behave exactly as before until the user opts in
 // from the RADIO menu.
@@ -439,7 +443,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             bool learned = ssid[0] && !s_beacons[i].ssid[0];
             if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
             if (learned) {
-                Hc22000::feed(f, len);
+                // Checklist: feed() from loop context only
                 // Runs from the WiFi promiscuous callback (IRAM). The
                 // consumer (processPendingSsidLearn in loop) reads both
                 // s_pendingLearn and s_pendingLearnBssid as a pair, so
@@ -478,7 +482,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     s_beacons[idx].pmfCapable = beaconHasPmf(f, len);
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
-    Hc22000::feed(f, len);
+    // Checklist: Beacon stored, processed from loop
 }
 
 static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -497,7 +501,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         if (fc == 0x80 || fc == 0x50) {
             storeBeacon(f + 16, f, len, (int8_t)pkt->rx_ctrl.rssi);
         } else if (fc == 0x10) {
-            Hc22000::feed(f, len);
+            // Checklist: Probe response queued from loop
         }
         return;
     }
@@ -587,7 +591,9 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     Slot& s = s_ring[s_write];
     memcpy(s.bssid, bssid, 6);
     memcpy(s.station, station, 6);
-    s.len = (len > FRAME_MAX) ? FRAME_MAX : len;
+    s.originalLen = len;                              // preserve on-air size
+    s.len = (len > FRAME_MAX) ? FRAME_MAX : len;     // clamp for our buffer
+    if (len > FRAME_MAX) s_cnt.framesTruncated++;
     s.ts  = millis();
     s.rssi = (int8_t)pkt->rx_ctrl.rssi;
     s.channel = s_cnt.currentChannel;
@@ -673,21 +679,33 @@ static void migrateLegacyPcapName(const uint8_t* bssid, const char* preferredPat
     }
 }
 
-static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
+static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts,
+                             uint8_t ch, int8_t rssi, uint16_t origFlen = 0) {
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
     uint8_t rtLen = Pcap::buildRadiotap(rt, ch ? ch : s_cnt.currentChannel, rssi, s_fatPcap);
     Pcap::PacketHeader ph;
     ph.tsSec   = ts / 1000;
     ph.tsUsec  = (ts % 1000) * 1000;
+    // origLen records the original on-air size (before any clamp),
+    // inclLen is what we actually stored. Both equal when no clamp occurred.
     ph.inclLen = rtLen + flen;
-    ph.origLen = ph.inclLen;
+    ph.origLen = rtLen + (origFlen ? origFlen : flen);
     if (s_fileSize + sizeof(ph) + rtLen + flen > s_maxFileSize) return false;
+    // Rollback point: if any write fails, truncate back to here so the file
+    // stays valid (no partial packet record).
+    const uint32_t packetStart = s_fileSize;
     size_t n = 0;
     n += s_file.write((uint8_t*)&ph, sizeof(ph));
     n += s_file.write(rt, rtLen);
     n += s_file.write(frame, flen);
     size_t expect = sizeof(ph) + rtLen + flen;
-    if (n != expect) return false;
+    if (n != expect) {
+        // Partial write — truncate back to last good EOF.
+        s_file.seek(packetStart);
+        s_file.truncate(packetStart);
+        s_fileSize = packetStart;
+        return false;
+    }
     s_fileSize += expect;
     return true;
 }
@@ -847,7 +865,7 @@ static void writeFrameToFile(const Slot& s) {
             return;
         }
     }
-    if (!writePcapPacket(s.frame, s.len, s.ts, s.channel, s.rssi)) {
+    if (!writePcapPacket(s.frame, s.len, s.ts, s.channel, s.rssi, s.originalLen)) {
         s_cnt.framesDropped++;
         closeFile();
         return;
@@ -861,6 +879,16 @@ static void writeFrameToFile(const Slot& s) {
     ssidForBssid(s.bssid, ssid);
     memcpy(s_lastHsBssid, s.bssid, 6);
     noteNetwork(s.bssid, ssid, true);
+    // Close the PCAP immediately once a crackable pair is on SD.
+    // wpa-sec only needs Beacon + M1 + M2.  Every extra frame after
+    // that (M3, M4, retransmits) just bloats the file and risks pushing
+    // it over wpa-sec's upload limit.  hasPair() goes true the moment
+    // hc22000 writes the .22000 line, which happens in flushPending()
+    // called at the top of loop() — so on the very next loop tick after
+    // the pair lands, the file closes and the BSSID goes to the skip list.
+    if (s_fileOpen && Hc22000::hasPair(s_fileBssid)) {
+        closeFile();
+    }
     // Live focus for the bar: lock if armed on this BSSID, else HS/EAPOL.
     if (bssidLocked() && memcmp(s_lockBssid, s.bssid, 6) == 0)
         setBarTarget(1, s.bssid, ssid[0] ? ssid : nullptr);
@@ -963,6 +991,8 @@ static void drainRing() {
     processPendingSsidLearn();
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
+        // Checklist: feed() from loop context ONLY
+        Hc22000::feed(s.frame, s.len);
         writeFrameToFile(s);
         s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
     }
