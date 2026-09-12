@@ -51,6 +51,19 @@ struct Slot {
 static Slot s_ring[RING_SLOTS];
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
+static const uint8_t PENDING_SLOTS = 8;
+
+struct PendingCapture {
+    bool used;
+    uint8_t bssid[6];
+    uint8_t station[6];
+    bool haveM1;
+    bool haveM2;
+    Slot m1;
+    Slot m2;
+};
+
+static PendingCapture s_pending[PENDING_SLOTS];
 
 static File     s_file;
 static uint8_t  s_fileBssid[6];
@@ -841,7 +854,70 @@ static bool sameBssid(const uint8_t* a, const uint8_t* b) {
     return memcmp(a, b, 6) == 0;
 }
 
-static void writeFrameToFile(const Slot& s) {
+static uint8_t classifyPendingEapol(const Slot& s) {
+    const uint8_t* f = s.frame;
+    uint16_t len = s.len;
+    if (len < 24) return 0;
+    uint16_t off = 24;
+    uint8_t subtype = (uint8_t)((f[0] >> 4) & 0x0F);
+    if (subtype & 0x08) off += 2;
+    if ((subtype & 0x08) && (f[1] & 0x80)) off += 4;
+    if ((f[1] & 0x03) == 0x03) off += 6;
+    if (off + 8 + 99 > len) return 0;
+    if (f[off] != 0xAA || f[off + 1] != 0xAA ||
+        f[off + 2] != 0x03 || f[off + 6] != 0x88 ||
+        f[off + 7] != 0x8E) return 0;
+    const uint8_t* e = f + off + 8;
+    uint16_t eapolLen = (uint16_t)((e[2] << 8) | e[3]);
+    if ((e[0] != 1 && e[0] != 2) || e[1] != 3 ||
+        eapolLen < 95 || (uint32_t)eapolLen + 4 > len - off - 8)
+        return 0;
+    uint16_t keyInfo = (uint16_t)((e[5] << 8) | e[6]);
+    bool keyAck = (keyInfo & (1u << 7)) != 0;
+    bool keyMic = (keyInfo & (1u << 8)) != 0;
+    bool secure = (keyInfo & (1u << 9)) != 0;
+    if (keyAck && !keyMic) return 1;
+    if (!keyAck && keyMic && !secure) return 2;
+    return 0;
+}
+
+static PendingCapture* pendingFor(const Slot& s) {
+    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+        if (s_pending[i].used &&
+            sameBssid(s_pending[i].bssid, s.bssid) &&
+            sameBssid(s_pending[i].station, s.station)) {
+            return &s_pending[i];
+        }
+    }
+    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+        if (!s_pending[i].used) {
+            memset(&s_pending[i], 0, sizeof(s_pending[i]));
+            s_pending[i].used = true;
+            memcpy(s_pending[i].bssid, s.bssid, 6);
+            memcpy(s_pending[i].station, s.station, 6);
+            return &s_pending[i];
+        }
+    }
+    return nullptr;
+}
+
+static void rememberPending(const Slot& s, uint8_t message) {
+    if (message == 0) return;
+    PendingCapture* p = pendingFor(s);
+    if (!p) {
+        s_cnt.framesDropped++;
+        return;
+    }
+    if (message == 1 && !p->haveM1) {
+        p->m1 = s;
+        p->haveM1 = true;
+    } else if (message == 2 && !p->haveM2) {
+        p->m2 = s;
+        p->haveM2 = true;
+    }
+}
+
+static void writeFrameNow(const Slot& s) {
     // Z-skip: ignore further EAPOL from this BSSID for the rest of the session
     // (no pcap append, no UI "current network", no re-kick tracking).
     if (isSessionSkipped(s.bssid)) {
@@ -880,16 +956,6 @@ static void writeFrameToFile(const Slot& s) {
     ssidForBssid(s.bssid, ssid);
     memcpy(s_lastHsBssid, s.bssid, 6);
     noteNetwork(s.bssid, ssid, true);
-    // Close the PCAP immediately once a crackable pair is on SD.
-    // wpa-sec only needs Beacon + M1 + M2.  Every extra frame after
-    // that (M3, M4, retransmits) just bloats the file and risks pushing
-    // it over wpa-sec's upload limit.  hasPair() goes true the moment
-    // hc22000 writes the .22000 line, which happens in flushPending()
-    // called at the top of loop() — so on the very next loop tick after
-    // the pair lands, the file closes and the BSSID goes to the skip list.
-    if (s_fileOpen && Hc22000::hasPair(s_fileBssid)) {
-        closeFile();
-    }
     // Live focus for the bar: lock if armed on this BSSID, else HS/EAPOL.
     if (bssidLocked() && memcmp(s_lockBssid, s.bssid, 6) == 0)
         setBarTarget(1, s.bssid, ssid[0] ? ssid : nullptr);
@@ -899,6 +965,26 @@ static void writeFrameToFile(const Slot& s) {
         strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
         s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
         CapName::writeCompanionSsid(Storage::DIR_HS, s_fileName, ssid);
+    }
+}
+
+static void writeFrameToFile(const Slot& s) {
+    if (isSessionSkipped(s.bssid)) return;
+    Hc22000::feed(s.frame, s.len);
+    rememberPending(s, classifyPendingEapol(s));
+}
+
+static void commitPendingCaptures() {
+    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+        PendingCapture& p = s_pending[i];
+        if (!p.used || !p.haveM1 || !p.haveM2) continue;
+        if (!Hc22000::hasPair(p.bssid)) continue;
+        if (!isSessionSkipped(p.bssid)) {
+            writeFrameNow(p.m1);
+            writeFrameNow(p.m2);
+            closeFile();
+        }
+        memset(&p, 0, sizeof(p));
     }
 }
 
@@ -1185,6 +1271,7 @@ static void startCommon(RunMode mode) {
 
     s_write = 0;
     s_read = 0;
+    memset(s_pending, 0, sizeof(s_pending));
     s_cnt = {};
     memset(s_seqTable, 0, sizeof(s_seqTable));
     s_pendingLearn = false;
@@ -1348,6 +1435,7 @@ void stop() {
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     drainRing();
     Hc22000::flushPending();
+    commitPendingCaptures();
     closeFile();
     Storage::compactLoot();
     WiFi.softAPdisconnect(true);
@@ -1487,6 +1575,7 @@ void loop() {
     // actual .22000 / .pmkid files are written to SD - safe to do here,
     // never inside the ISR.
     Hc22000::flushPending();
+    commitPendingCaptures();
     maybeRotateMethod();
 
     // Auto-release lock-on-BSSID once HS DEPTH's requirement is met (see
