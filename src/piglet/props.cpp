@@ -420,23 +420,23 @@ static void drawSnowman(M5Canvas& canvas, int16_t yOff) {
     if (s_phase == Phase::Action) {
         int tt = (int)(millis() - s_actionAt);
         // Shards inherit the prop pixel scale, but drift apart smoothly.
-        px(canvas, x - 16 - tt / 3, y - 12 - tt / 18, 3, 2, 0xEF7D);
-        px(canvas, x + 12 + tt / 4, y - 8 - tt / 22, 2, 2, 0xDEFB);
-        px(canvas, x + (tt / 18) % 10, y - 24 - tt / 20, 2, 2, 0xC618);
+        px(canvas, x - 16 - tt / 3, y - 12 - tt / 18, 3, 2, 0xFFFF);
+        px(canvas, x + 12 + tt / 4, y - 8 - tt / 22, 2, 2, 0xFFFF);
+        px(canvas, x + (tt / 18) % 10, y - 24 - tt / 20, 2, 2, 0xE7FF);
         px(canvas, x - 3 + (tt / 14) % 8, y - 18 - tt / 28, 2, 1, 0xFFFF);
         return;
     }
-    const uint16_t snow = 0xFFFF, shade = 0xBDF7, outline = 0x7BEF;
-    // Three stepped circles: dark outline first, then snow highlight.
+    const uint16_t snow = 0xFFFF, shade = 0xE7FF, outline = 0xC618;
+    // Three stepped white snowballs with only a narrow cool edge.
     px(canvas, x - 6 * P, y - 6 * P, 12, 6, outline);
     px(canvas, x - 5 * P, y - 7 * P, 10, 6, snow);
-    px(canvas, x - 4 * P, y - 5 * P, 8, 4, shade);
+    px(canvas, x - 5 * P, y - P, 10, P, shade);
     px(canvas, x - 5 * P, y - 11 * P, 10, 5, outline);
     px(canvas, x - 4 * P, y - 12 * P, 8, 5, snow);
-    px(canvas, x - 3 * P, y - 10 * P, 6, 3, shade);
+    px(canvas, x - 4 * P, y - 7 * P, 8, P, shade);
     px(canvas, x - 4 * P, y - 16 * P, 8, 5, outline);
     px(canvas, x - 3 * P, y - 17 * P, 6, 5, snow);
-    px(canvas, x - 2 * P, y - 15 * P, 4, 3, shade);
+    px(canvas, x - 3 * P, y - 12 * P, 6, P, shade);
     // Hat, scarf, face and carrot.
     px(canvas, x - 3 * P, y - 18 * P, 6, 1, outline);
     px(canvas, x - 2 * P, y - 21 * P, 4, 3, 0x0000);
