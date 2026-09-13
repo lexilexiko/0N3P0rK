@@ -1,6 +1,6 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.0**  
+**Current version: 1.3.1fix**  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
