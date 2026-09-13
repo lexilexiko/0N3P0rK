@@ -548,11 +548,14 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     } else if (msg == 3) {
         // M3 is the next replay-counter step after the validated M1/M2
         // exchange. Do not let an unrelated M3 satisfy FULL depth.
-        if (h->haveAnonce && replayIncremented(h->anonceReplay, e + 9) &&
-            !h->haveAnonce3) {
-            memcpy(h->anonce3, e + 17, 32);
-            memcpy(h->m3Replay, e + 9, sizeof(h->m3Replay));
-            h->haveAnonce3 = true;
+        if (h->haveAnonce &&
+        h->haveM2 &&
+        memcmp(h->anonceReplay, h->m2Replay, 8) == 0 &&
+        replayIncremented(h->anonceReplay, e + 9) &&
+        !h->haveAnonce3) {
+                memcpy(h->anonce3, e + 17, 32);
+                memcpy(h->m3Replay, e + 9, sizeof(h->m3Replay));
+                h->haveAnonce3 = true;
         }
     } else if (msg == 2) {
         uint8_t thisReplay[8];

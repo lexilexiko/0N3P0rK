@@ -1031,7 +1031,10 @@ static void rememberPending(const Slot& s, uint8_t message) {
         }
 
     } else if (message == 3 && !p->haveM3) {
-        if (p->haveM1 && replayIncremented(p->m1Replay, thisReplay)) {
+        if (p->haveM1 &&
+        p->haveM2 &&
+        memcmp(p->m1Replay, p->m2Replay, 8) == 0 &&
+        replayIncremented(p->m1Replay, thisReplay)) {
             p->m3 = s;
             memcpy(p->m3Replay, thisReplay, sizeof(p->m3Replay));
             p->haveM3 = true;
