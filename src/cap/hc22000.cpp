@@ -496,15 +496,34 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     // produces a PMK/MIC that will never crack. Only pair when counters match.
     if (msg == 1) {
         if (!h->haveAnonce) {
+            // First M1 — store unconditionally.
             memcpy(h->anonce, e + 17, 32);
             memcpy(h->anonceReplay, e + 9, 8);
             h->haveAnonce = true;
-        } else if (h->haveM2 && !h->wroteEapol &&
-                   memcmp(h->anonceReplay, h->m2Replay, 8) != 0 &&
-                   memcmp(e + 9, h->m2Replay, 8) == 0) {
-            // Earlier M1 didn't match the M2 we're holding; this one does — replace it.
+        } else if (memcmp(e + 9, h->anonceReplay, 8) != 0) {
+            // New M1 with a different replay counter (AP retried handshake).
+            // §C: Replace M1. If stored M2 matched old M1 but not new M1,
+            // reset it so we don't keep a stale mismatched pair.
+            // If stored M2 happens to match the new M1 replay, keep it.
             memcpy(h->anonce, e + 17, 32);
             memcpy(h->anonceReplay, e + 9, 8);
+            if (h->haveM2 && !h->wroteEapol &&
+                memcmp(h->m2Replay, e + 9, 8) != 0) {
+                // §C: M2 replay no longer matches new M1 — discard it.
+                h->haveM2 = false;
+                h->m2Len = 0;
+                memset(h->m2Replay, 0, 8);
+            }
+        } else {
+            // Same replay counter as current M1 — retransmit, ignore nonce/replay change.
+            // But do handle the special case where an earlier M1 didn't match
+            // the M2 we're holding; this one does.
+            if (h->haveM2 && !h->wroteEapol &&
+                memcmp(h->anonceReplay, h->m2Replay, 8) != 0 &&
+                memcmp(e + 9, h->m2Replay, 8) == 0) {
+                memcpy(h->anonce, e + 17, 32);
+                memcpy(h->anonceReplay, e + 9, 8);
+            }
         }
         s_lastM1Ms = millis();
         uint8_t pmk[16];
@@ -517,11 +536,35 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
             memcpy(h->anonce3, e + 17, 32);
             h->haveAnonce3 = true;
         }
-    } else if (msg == 2 && !h->haveM2) {
-        memcpy(h->m2, e, total);
-        h->m2Len = total;
-        memcpy(h->m2Replay, e + 9, 8);
-        h->haveM2 = true;
+    } else if (msg == 2) {
+        uint8_t thisReplay[8];
+        memcpy(thisReplay, e + 9, 8);
+
+        if (h->haveAnonce) {
+            // M1 is known — only accept M2 if its replay matches M1.
+            // A mismatched M2 must NEVER set haveM2 (pkt 2 & 3).
+            if (memcmp(thisReplay, h->anonceReplay, 8) == 0) {
+                // Matching replay — accept unconditionally (first or better).
+                memcpy(h->m2, e, total);
+                h->m2Len = total;
+                memcpy(h->m2Replay, thisReplay, 8);
+                h->haveM2 = true;
+            }
+            // else: replay mismatch — discard silently. haveM2 not set.
+        } else {
+            // M1 not yet seen — store M2 tentatively so we don't lose it.
+            // maybeWrite() will do the final replay check before writing.
+            // If M1 arrives later with a different replay, §C will clear this.
+            if (!h->haveM2) {
+                memcpy(h->m2, e, total);
+                h->m2Len = total;
+                memcpy(h->m2Replay, thisReplay, 8);
+                h->haveM2 = true;
+            } else if (h->haveM2) {
+                // Already have a tentative M2 — only replace if we have
+                // no choice yet (both tentative, keep first to be safe).
+            }
+        }
     } else if (msg == 4) {
         h->haveM4 = true;
     }
