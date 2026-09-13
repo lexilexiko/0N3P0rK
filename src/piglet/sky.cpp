@@ -313,6 +313,84 @@ void drawBackdrop(M5Canvas& canvas) {
         }
     }
 
+    // CITY skyline: simple chunky pixel buildings behind the foreground.
+    // Keep the windows dark during the day; they fade in with the night blend.
+    if (Weather::getActiveSeason() == Season::CITY) {
+        struct Building {
+            int16_t x;
+            uint8_t width;
+            uint8_t height;
+            uint8_t roof;
+            uint16_t body;
+            uint16_t shade;
+        };
+        static const Building skyline[] = {
+            {  0, 24, 31, 0, 0x294A, 0x2108 },
+            { 22, 18, 47, 1, 0x318C, 0x294A },
+            { 39, 27, 24, 0, 0x3A0E, 0x294A },
+            { 64, 19, 57, 2, 0x294A, 0x2108 },
+            { 82, 30, 36, 0, 0x318C, 0x2529 },
+            {110, 21, 66, 1, 0x294A, 0x1CE7 },
+            {130, 27, 43, 0, 0x3A0E, 0x2529 },
+            {155, 18, 56, 2, 0x294A, 0x2108 },
+            {173, 31, 29, 0, 0x318C, 0x2529 },
+            {202, 20, 51, 1, 0x294A, 0x1CE7 },
+            {220, 20, 38, 0, 0x3A0E, 0x2529 }
+        };
+        static const uint8_t windowRows[] = {
+            0b101, 0b010, 0b111, 0b100, 0b011, 0b110
+        };
+        const uint16_t nightGate = (nb > 132) ? (uint16_t)(nb - 132) : 0;
+        const uint16_t windowColor = skyFlash(
+            lerp565(0x5A90, 0xFEA0, (uint8_t)((nightGate * 16) / 124)));
+
+        for (uint8_t i = 0; i < (uint8_t)(sizeof(skyline) / sizeof(skyline[0])); i++) {
+            const Building& b = skyline[i];
+            const int16_t top = (int16_t)(103 - b.height);
+            canvas.fillRect(b.x, top, b.width, b.height, skyFlash(b.body));
+            canvas.drawFastHLine(b.x, top, b.width, skyFlash(b.shade));
+
+            if (b.roof == 1) {
+                canvas.drawFastHLine(b.x + 3, top - 2, b.width - 6, skyFlash(b.shade));
+                canvas.drawFastVLine(b.x + b.width / 2, top - 5, 3, skyFlash(b.shade));
+            } else if (b.roof == 2) {
+                canvas.drawFastHLine(b.x + 2, top - 1, b.width - 4, skyFlash(b.shade));
+            }
+
+            if (nightGate == 0) continue;
+            const int16_t firstY = top + 8;
+            const int16_t lastY = 97;
+            uint8_t row = 0;
+            for (int16_t wy = firstY; wy < lastY; wy += 9, row++) {
+                uint8_t pattern = windowRows[(i + row) % (sizeof(windowRows) / sizeof(windowRows[0]))];
+                for (uint8_t col = 0; col < 3; col++) {
+                    if ((pattern & (1u << (2 - col))) == 0) continue;
+                    int16_t wx = b.x + 4 + (int16_t)col * 6;
+                    if (wx < b.x + 2 || wx + 3 > b.x + b.width - 2) continue;
+                    if (wy < top + 3 || wy + 4 > 103) continue;
+                    // A nearer building may cover part of this facade. Do not
+                    // leave a lit window floating in the gap above it.
+                    bool covered = false;
+                    for (uint8_t j = (uint8_t)(i + 1);
+                         j < (uint8_t)(sizeof(skyline) / sizeof(skyline[0])); j++) {
+                        const Building& front = skyline[j];
+                        if (wx + 3 > front.x && wx < front.x + front.width &&
+                            wy + 4 > 103 - front.height) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                    if (covered) continue;
+                    uint16_t lit = windowColor;
+                    if (((i * 7u + row * 3u + col) & 3u) == 0) {
+                        lit = lerp565(windowColor, 0xFFD0, 8);
+                    }
+                    canvas.fillRect(wx, wy, 3, 4, lit);
+                }
+            }
+        }
+    }
+
     // Moon fades in with night (after mid-dusk); hides as sky wets
     if (nb > 100 && wd < 100) {
         int mx = 198, my = 22;
