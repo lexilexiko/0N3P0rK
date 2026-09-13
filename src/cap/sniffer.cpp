@@ -64,6 +64,8 @@ struct PendingCapture {
     bool haveM2;
     bool haveM3;
     bool haveM4;
+    uint8_t m1Replay[8];   // §A: replay counter from M1 (e[9..16])
+    uint8_t m2Replay[8];   // §A: replay counter from M2 — must match m1Replay
     Slot m1;
     Slot m2;
     Slot m3;
@@ -923,6 +925,30 @@ static PendingCapture* pendingFor(const Slot& s) {
     return nullptr;
 }
 
+// Helper: extract EAPOL key replay counter (bytes 9-16 of EAPOL-Key body).
+// The EAPOL body starts after LLC/SNAP (8 bytes) in the 802.11 frame.
+// In our Slot, frame[] is the raw 802.11 frame; EAPOL-Key starts at
+// bodyOff (24 + optional QoS) + 8 (LLC/SNAP) + 4 (EAPOL header).
+static void extractReplay(const Slot& s, uint8_t replay[8]) {
+    // Minimal safe approach: scan for 0x88 0x8E (EAPOL ethertype) in frame.
+    const uint8_t* f = s.frame;
+    const uint16_t len = s.len;
+    for (uint16_t i = 0; i + 1 < len; i++) {
+        if (f[i] == 0x88 && f[i+1] == 0x8E) {
+            // EAPOL header: [0]=version [1]=type [2-3]=length
+            // EAPOL-Key body: [4]=desc_type [5-6]=key_info [7-8]=key_len
+            //                 [9-16]=replay counter
+            if (i + 2 + 16 + 1 < len) {
+                memcpy(replay, f + i + 2 + 9, 8);
+            } else {
+                memset(replay, 0, 8);
+            }
+            return;
+        }
+    }
+    memset(replay, 0, 8);
+}
+
 static void rememberPending(const Slot& s, uint8_t message) {
     if (message == 0) return;
     PendingCapture* p = pendingFor(s);
@@ -930,12 +956,58 @@ static void rememberPending(const Slot& s, uint8_t message) {
         s_cnt.framesDropped++;
         return;
     }
-    if (message == 1 && !p->haveM1) {
-        p->m1 = s;
-        p->haveM1 = true;
-    } else if (message == 2 && !p->haveM2) {
-        p->m2 = s;
-        p->haveM2 = true;
+
+    uint8_t thisReplay[8];
+    extractReplay(s, thisReplay);
+
+    if (message == 1) {
+        // §C: New M1 always refreshes — but only reset M2 if its replay
+        // no longer matches the new M1 (avoid discarding a valid pair).
+        if (!p->haveM1) {
+            // First M1 — store unconditionally.
+            p->m1 = s;
+            memcpy(p->m1Replay, thisReplay, 8);
+            p->haveM1 = true;
+        } else if (memcmp(thisReplay, p->m1Replay, 8) != 0) {
+            // New M1 with a different replay counter (AP retried).
+            // Replace M1 and re-evaluate the stored M2.
+            p->m1 = s;
+            memcpy(p->m1Replay, thisReplay, 8);
+            // §C: Drop stored M2 only if its replay no longer matches
+            // the new M1 — if it already matches keep the valid pair.
+            if (p->haveM2 && memcmp(p->m2Replay, thisReplay, 8) != 0) {
+                Serial.printf("[HS] new M1 replay=%02x%02x, reset mismatched M2 replay=%02x%02x\n",
+                              thisReplay[6], thisReplay[7],
+                              p->m2Replay[6], p->m2Replay[7]);
+                memset(&p->m2, 0, sizeof(p->m2));
+                memset(p->m2Replay, 0, 8);
+                p->haveM2 = false;
+            }
+        }
+        // else: same replay, same M1 — retransmit, ignore.
+
+    } else if (message == 2) {
+        // §B: Accept M2 only when its replay counter matches the stored M1.
+        if (!p->haveM1) {
+            // M1 not yet seen — store M2 tentatively so we don't lose it.
+            // hc22000 will do the final replay check before writing .22000.
+            if (!p->haveM2) {
+                p->m2 = s;
+                memcpy(p->m2Replay, thisReplay, 8);
+                p->haveM2 = true;
+            }
+        } else if (memcmp(thisReplay, p->m1Replay, 8) == 0) {
+            // Replay matches M1 — this is the correct M2 for this handshake.
+            p->m2 = s;
+            memcpy(p->m2Replay, thisReplay, 8);
+            p->haveM2 = true;
+        } else {
+            // Replay mismatch — this M2 belongs to a different attempt.
+            Serial.printf("[HS] M2 replay mismatch: M1=%02x%02x M2=%02x%02x — discarded\n",
+                          p->m1Replay[6], p->m1Replay[7],
+                          thisReplay[6], thisReplay[7]);
+        }
+
     } else if (message == 3 && !p->haveM3) {
         p->m3 = s;
         p->haveM3 = true;
