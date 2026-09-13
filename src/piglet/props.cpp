@@ -419,83 +419,73 @@ static void drawSnowman(M5Canvas& canvas, int16_t yOff) {
     int16_t y = GROUND_Y + yOff;
     if (s_phase == Phase::Action) {
         int tt = (int)(millis() - s_actionAt);
-        px(canvas, x - 14 - tt / 28, y - 10, 5, 5, 0xEF7D);
-        px(canvas, x + 12 + tt / 26, y - 8, 4, 4, 0xDEFB);
-        px(canvas, x + (tt / 35) % 7, y - 22 - tt / 22, 4, 4, 0xC618);
+        // Shards inherit the prop pixel scale, but drift apart smoothly.
+        px(canvas, x - 16 - tt / 3, y - 12 - tt / 18, 3, 2, 0xEF7D);
+        px(canvas, x + 12 + tt / 4, y - 8 - tt / 22, 2, 2, 0xDEFB);
+        px(canvas, x + (tt / 18) % 10, y - 24 - tt / 20, 2, 2, 0xC618);
+        px(canvas, x - 3 + (tt / 14) % 8, y - 18 - tt / 28, 2, 1, 0xFFFF);
         return;
     }
-    // bottom ball
-    px(canvas, x - 6 * P, y - 6 * P, 12, 6, 0xFFFF);
-    canvas.drawRect(x - 6 * P, y - 6 * P, 12 * P, 6 * P, 0xBDF7);
-    // mid ball
-    px(canvas, x - 5 * P, y - 11 * P, 10, 5, 0xEF7D);
-    canvas.drawRect(x - 5 * P, y - 11 * P, 10 * P, 5 * P, 0xBDF7);
-    // head
-    px(canvas, x - 4 * P, y - 16 * P, 8, 5, 0xFFFF);
-    canvas.drawRect(x - 4 * P, y - 16 * P, 8 * P, 5 * P, 0xBDF7);
-    // coal eyes
+    const uint16_t snow = 0xFFFF, shade = 0xBDF7, outline = 0x7BEF;
+    // Three stepped circles: dark outline first, then snow highlight.
+    px(canvas, x - 6 * P, y - 6 * P, 12, 6, outline);
+    px(canvas, x - 5 * P, y - 7 * P, 10, 6, snow);
+    px(canvas, x - 4 * P, y - 5 * P, 8, 4, shade);
+    px(canvas, x - 5 * P, y - 11 * P, 10, 5, outline);
+    px(canvas, x - 4 * P, y - 12 * P, 8, 5, snow);
+    px(canvas, x - 3 * P, y - 10 * P, 6, 3, shade);
+    px(canvas, x - 4 * P, y - 16 * P, 8, 5, outline);
+    px(canvas, x - 3 * P, y - 17 * P, 6, 5, snow);
+    px(canvas, x - 2 * P, y - 15 * P, 4, 3, shade);
+    // Hat, scarf, face and carrot.
+    px(canvas, x - 3 * P, y - 18 * P, 6, 1, outline);
+    px(canvas, x - 2 * P, y - 21 * P, 4, 3, 0x0000);
+    px(canvas, x - 3 * P, y - 19 * P, 6, 1, 0xF800);
     p1(canvas, x - 2 * P, y - 15 * P, 0x2104);
     p1(canvas, x + P, y - 15 * P, 0x2104);
-    // carrot nose (pointing right)
-    px(canvas, x - P / 2, y - 13 * P, 3, 1, 0xFD20);
-    p1(canvas, x + 2 * P, y - 13 * P, 0xFBE0);
-    // coal smile
+    px(canvas, x + P, y - 13 * P, 3, 1, 0xFD20);
+    p1(canvas, x + 3 * P, y - 13 * P, 0xFBE0);
     p1(canvas, x - 2 * P, y - 12 * P, 0x2104);
     p1(canvas, x - P, y - 11 * P, 0x2104);
-    p1(canvas, x, y - 11 * P, 0x2104);
-    p1(canvas, x + P, y - 12 * P, 0x2104);
-    // buttons
-    p1(canvas, x - P / 2, y - 9 * P, 0x2104);
-    p1(canvas, x - P / 2, y - 7 * P, 0x2104);
-    p1(canvas, x - P / 2, y - 4 * P, 0x2104);
-    // red scarf
+    p1(canvas, x, y - 12 * P, 0x2104);
     px(canvas, x - 4 * P, y - 11 * P, 8, 1, 0xF800);
-    px(canvas, x + 3 * P, y - 10 * P, 2, 3, 0xC000); // hanging end
-    // stick arms
-    canvas.fillRect(x - 6 * P - 10, y - 10 * P, 10, 2, 0x8200);
-    canvas.fillRect(x - 6 * P - 12, y - 12 * P, 2, 4, 0x8200); // hand fork
-    canvas.fillRect(x + 5 * P, y - 10 * P, 10, 2, 0x8200);
-    canvas.fillRect(x + 5 * P + 10, y - 12 * P, 2, 4, 0x8200);
-    // top hat
-    px(canvas, x - 3 * P, y - 17 * P, 6, 1, 0x2104);
-    px(canvas, x - 2 * P, y - 20 * P, 4, 3, 0x0000);
-    px(canvas, x - 3 * P, y - 18 * P, 6, 1, 0xF800); // hat band
+    px(canvas, x + 3 * P, y - 10 * P, 2, 3, 0xC000);
+    p1(canvas, x - P, y - 9 * P, 0x2104);
+    p1(canvas, x - P, y - 7 * P, 0x2104);
+    p1(canvas, x - P, y - 4 * P, 0x2104);
+    // Branch arms with small forked hands.
+    canvas.drawLine(x - 6 * P, y - 10 * P, x - 10 * P - 5, y - 13 * P, 0x8200);
+    canvas.drawLine(x - 10 * P - 5, y - 13 * P, x - 13 * P - 5, y - 12 * P, 0x8200);
+    canvas.drawLine(x + 6 * P, y - 10 * P, x + 10 * P + 5, y - 13 * P, 0x8200);
+    canvas.drawLine(x + 10 * P + 5, y - 13 * P, x + 13 * P + 5, y - 12 * P, 0x8200);
 }
 
 // AUTUMN: sleeping fox — loaf body, ears, bushy tail, Zzz
 static void drawFox(M5Canvas& canvas, int16_t yOff) {
     int16_t x = screenX();
     int16_t y = GROUND_Y + yOff;
-    const uint16_t fur  = 0xE2C4; // orange
-    const uint16_t dark = 0xC181;
-    const uint16_t cream = 0xFFD7;
-    // shadow
-    px(canvas, x - 5 * P, y - P, 14, 1, 0x6A40);
-    // body loaf
-    px(canvas, x - 3 * P, y - 5 * P, 10, 5, fur);
-    canvas.drawRect(x - 3 * P, y - 5 * P, 10 * P, 5 * P, dark);
-    // belly cream
-    px(canvas, x - 2 * P, y - 3 * P, 7, 2, cream);
-    // head
-    px(canvas, x - 7 * P, y - 8 * P, 5, 5, fur);
-    canvas.drawRect(x - 7 * P, y - 8 * P, 5 * P, 5 * P, dark);
-    // snout
-    px(canvas, x - 8 * P, y - 6 * P, 2, 2, cream);
-    p1(canvas, x - 8 * P, y - 5 * P, 0x2104); // nose
-    // ears (pointy)
-    p1(canvas, x - 7 * P, y - 10 * P, fur);
+    const uint16_t fur = 0xE2C4, dark = 0xA943, cream = 0xFFD7;
+    px(canvas, x - 7 * P, y - P, 15, 1, 0x6A40);
+    // Low-poly loaf silhouette with a clean pixel outline.
+    px(canvas, x - 3 * P, y - 5 * P, 10, 5, dark);
+    px(canvas, x - 2 * P, y - 4 * P, 8, 3, fur);
+    px(canvas, x - P, y - 3 * P, 6, 2, cream);
+    // Head, muzzle and triangular ears.
+    px(canvas, x - 7 * P, y - 8 * P, 6, 5, dark);
+    px(canvas, x - 6 * P, y - 7 * P, 5, 3, fur);
+    px(canvas, x - 8 * P, y - 6 * P, 3, 2, cream);
+    p1(canvas, x - 9 * P, y - 5 * P, 0x2104);
+    p1(canvas, x - 7 * P, y - 10 * P, dark);
     p1(canvas, x - 6 * P, y - 11 * P, fur);
-    p1(canvas, x - 6 * P, y - 10 * P, 0xFCB2); // inner
-    p1(canvas, x - 4 * P, y - 10 * P, fur);
-    p1(canvas, x - 3 * P, y - 11 * P, fur);
+    p1(canvas, x - 5 * P, y - 10 * P, 0xFCB2);
+    p1(canvas, x - 3 * P, y - 10 * P, dark);
+    p1(canvas, x - 2 * P, y - 11 * P, fur);
     p1(canvas, x - 3 * P, y - 10 * P, 0xFCB2);
-    // closed eye (sleep line)
+    // Sleeping face and curled tail.
     px(canvas, x - 6 * P, y - 7 * P, 2, 1, 0x2104);
-    // bushy tail curling up
     px(canvas, x + 6 * P, y - 6 * P, 4, 4, dark);
     px(canvas, x + 8 * P, y - 8 * P, 3, 3, fur);
-    px(canvas, x + 10 * P, y - 7 * P, 2, 2, cream); // tip
-    // paws
+    px(canvas, x + 10 * P, y - 7 * P, 2, 2, cream);
     p1(canvas, x - P, y - P, dark);
     p1(canvas, x + 2 * P, y - P, dark);
     // Zzz
@@ -510,28 +500,23 @@ static void drawFox(M5Canvas& canvas, int16_t yOff) {
 static void drawFire(M5Canvas& canvas, int16_t yOff) {
     int16_t x = screenX();
     int16_t y = GROUND_Y + yOff;
-    // stone ring
+    // Stone ring and two highlighted crossed logs.
     px(canvas, x - 5 * P, y - 2 * P, 10, 2, 0x6B6D);
-    p1(canvas, x - 5 * P, y - 3 * P, 0x8410);
+    p1(canvas, x - 5 * P, y - 3 * P, 0x9CF3);
     p1(canvas, x + 4 * P, y - 3 * P, 0x8410);
-    // crossed logs
-    px(canvas, x - 4 * P, y - 3 * P, 8, 2, 0x8200);
-    px(canvas, x - 3 * P, y - 4 * P, 6, 1, 0x5A00);
-    // angled log
-    for (int i = 0; i < 5; i++)
-        p1(canvas, x - 3 * P + i * P, y - 2 * P - i / 2, 0x9A40);
+    for (int i = 0; i < 7; i++) {
+        p1(canvas, x - 4 * P + i * P, y - 3 * P - i / 3, (i & 1) ? 0x9A40 : 0x8200);
+        p1(canvas, x - 3 * P + i * P, y - 2 * P + i / 3, 0x5A00);
+    }
     // flame — classic tall teardrop, animated
     uint32_t f = (millis() / 70) % 5;
     static const uint16_t FC[] = { 0xF800, 0xFA00, 0xFD20, 0xFFE0, 0xFFFF };
-    // outer red/orange
     int h = 7 + (int)(f % 3);
     for (int i = 0; i < h; i++) {
         int half = (i < 2) ? 3 : (i < 5) ? 2 : 1;
         if (i == h - 1) half = 1;
-        uint16_t col = FC[(i + f) % 5];
-        px(canvas, x - half * P, y - 4 * P - i * P, half * 2, 1, col);
+        px(canvas, x - half * P, y - 4 * P - i * P, half * 2, 1, FC[(i + f) % 5]);
     }
-    // bright core
     px(canvas, x - P, y - 7 * P, 2, 3, 0xFFE0);
     p1(canvas, x, y - 9 * P, 0xFFFF);
     // smoke puffs
@@ -548,31 +533,25 @@ static void drawFire(M5Canvas& canvas, int16_t yOff) {
 static void drawCat(M5Canvas& canvas, int16_t yOff) {
     int16_t x = screenX();
     int16_t y = GROUND_Y + yOff;
-    // box body
-    px(canvas, x - 7 * P, y - 6 * P, 14, 6, 0xC408);
-    canvas.drawRect(x - 7 * P, y - 6 * P, 14 * P, 6 * P, 0x8200);
-    // box flaps open
+    const uint16_t box = 0xC408, edge = 0x8200, cat = 0x8410;
+    px(canvas, x - 8 * P, y - P, 16, 1, 0x4208);
+    px(canvas, x - 7 * P, y - 6 * P, 14, 6, box);
+    canvas.drawRect(x - 7 * P, y - 6 * P, 14 * P, 6 * P, edge);
     px(canvas, x - 7 * P, y - 9 * P, 4, 3, 0xD4A0);
     px(canvas, x + 3 * P, y - 9 * P, 4, 3, 0xBCA6);
-    // tape
     px(canvas, x - P, y - 6 * P, 2, 1, 0xC618);
-    // cat body (gray loaf in box)
-    px(canvas, x - 3 * P, y - 8 * P, 7, 4, 0x8410);
-    // head
-    px(canvas, x - 4 * P, y - 11 * P, 4, 3, 0x8410);
-    // ears
-    p1(canvas, x - 4 * P, y - 12 * P, 0x8410);
-    p1(canvas, x - P, y - 12 * P, 0x8410);
-    p1(canvas, x - 4 * P, y - 12 * P, 0xF81F); // pink inner
-    // eyes
+    px(canvas, x - 3 * P, y - 8 * P, 7, 4, cat);
+    px(canvas, x - 4 * P, y - 11 * P, 5, 4, cat);
+    p1(canvas, x - 4 * P, y - 12 * P, cat);
+    p1(canvas, x - P, y - 12 * P, cat);
+    p1(canvas, x - 4 * P, y - 11 * P, 0xF81F);
     p1(canvas, x - 3 * P, y - 10 * P, 0x07FF);
-    p1(canvas, x - 2 * P, y - 10 * P, 0x07FF);
-    p1(canvas, x - 3 * P, y - 10 * P, 0x0000);
-    // nose
-    p1(canvas, x - 2 * P - 1, y - 9 * P, 0xF81F);
-    // tail out of box
+    p1(canvas, x - P, y - 10 * P, 0x07FF);
+    p1(canvas, x - 2 * P, y - 9 * P, 0xF81F);
+    canvas.drawFastHLine(x - 8 * P, y - 8 * P, 3 * P, 0xC618);
+    canvas.drawFastHLine(x + P, y - 8 * P, 3 * P, 0xC618);
     px(canvas, x + 4 * P, y - 5 * P, 3, 2, 0x6B6D);
-    p1(canvas, x + 7 * P, y - 6 * P, 0x8410);
+    p1(canvas, x + 7 * P, y - 6 * P, cat);
 }
 
 // DESERT: sun-bleached skull on sand
@@ -582,10 +561,10 @@ static void drawSkull(M5Canvas& canvas, int16_t yOff) {
     // sand mound
     px(canvas, x - 8 * P, y - 2 * P, 16, 2, 0xD4A0);
     px(canvas, x - 6 * P, y - 3 * P, 12, 1, 0xE5C0);
-    // cranium
-    px(canvas, x - 5 * P, y - 11 * P, 10, 7, 0xEF5D);
-    canvas.drawRect(x - 5 * P, y - 11 * P, 10 * P, 7 * P, 0x9CF3);
-    // forehead highlight
+    // Cranium with stepped corners, cracks and a warm highlight.
+    px(canvas, x - 4 * P, y - 12 * P, 8, 1, 0xEF5D);
+    px(canvas, x - 5 * P, y - 11 * P, 10, 6, 0xEF5D);
+    canvas.drawRect(x - 5 * P, y - 11 * P, 10 * P, 6 * P, 0x9CF3);
     px(canvas, x - 3 * P, y - 11 * P, 6, 1, 0xFFFF);
     // eye sockets (deep)
     px(canvas, x - 3 * P, y - 9 * P, 2, 2, 0x2104);
@@ -598,8 +577,8 @@ static void drawSkull(M5Canvas& canvas, int16_t yOff) {
     for (int i = 0; i < 5; i++)
         p1(canvas, x - 3 * P + i * P, y - 3 * P, 0xFFFF);
     // cheek cracks
-    canvas.drawPixel(x - 4 * P, y - 6 * P, 0x9CF3);
-    canvas.drawPixel(x + 4 * P, y - 6 * P, 0x9CF3);
+    canvas.drawLine(x - 4 * P, y - 6 * P, x - 3 * P, y - 5 * P, 0x9CF3);
+    canvas.drawLine(x + 4 * P, y - 6 * P, x + 3 * P, y - 5 * P, 0x9CF3);
 }
 
 void draw(M5Canvas& canvas, int16_t yOffset) {

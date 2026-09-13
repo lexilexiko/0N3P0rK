@@ -366,7 +366,21 @@ void drawBackdrop(M5Canvas& canvas) {
                 for (uint8_t col = 0; col < 3; col++) {
                     if ((pattern & (1u << (2 - col))) == 0) continue;
                     int16_t wx = b.x + 4 + (int16_t)col * 6;
-                    if (wx + 3 >= b.x + b.width) continue;
+                    if (wx < b.x + 2 || wx + 3 > b.x + b.width - 2) continue;
+                    if (wy < top + 3 || wy + 4 > 103) continue;
+                    // A nearer building may cover part of this facade. Do not
+                    // leave a lit window floating in the gap above it.
+                    bool covered = false;
+                    for (uint8_t j = (uint8_t)(i + 1);
+                         j < (uint8_t)(sizeof(skyline) / sizeof(skyline[0])); j++) {
+                        const Building& front = skyline[j];
+                        if (wx + 3 > front.x && wx < front.x + front.width &&
+                            wy + 4 > 103 - front.height) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                    if (covered) continue;
                     uint16_t lit = windowColor;
                     if (((i * 7u + row * 3u + col) & 3u) == 0) {
                         lit = lerp565(windowColor, 0xFFD0, 8);
