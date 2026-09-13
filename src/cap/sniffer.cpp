@@ -66,6 +66,8 @@ struct PendingCapture {
     bool haveM4;
     uint8_t m1Replay[8];   // §A: replay counter from M1 (e[9..16])
     uint8_t m2Replay[8];   // §A: replay counter from M2 — must match m1Replay
+    uint8_t m3Replay[8];   // M3 must be M1 replay counter + 1
+    uint8_t m4Replay[8];   // M4 must match M3 replay counter
     Slot m1;
     Slot m2;
     Slot m3;
@@ -943,10 +945,21 @@ static void extractReplay(const Slot& s, uint8_t replay[8]) {
             } else {
                 memset(replay, 0, 8);
             }
+
             return;
         }
     }
     memset(replay, 0, 8);
+}
+
+static bool replayIncremented(const uint8_t* base, const uint8_t* candidate) {
+    if (!base || !candidate) return false;
+    uint8_t expected[8];
+    memcpy(expected, base, sizeof(expected));
+    for (int i = 7; i >= 0; i--) {
+        if (++expected[i] != 0) break;
+    }
+    return memcmp(expected, candidate, sizeof(expected)) == 0;
 }
 
 static void rememberPending(const Slot& s, uint8_t message) {
@@ -983,6 +996,14 @@ static void rememberPending(const Slot& s, uint8_t message) {
                 memset(p->m2Replay, 0, 8);
                 p->haveM2 = false;
             }
+            if (p->haveM3 && !replayIncremented(thisReplay, p->m3Replay)) {
+                memset(&p->m3, 0, sizeof(p->m3));
+                memset(p->m3Replay, 0, sizeof(p->m3Replay));
+                p->haveM3 = false;
+                memset(&p->m4, 0, sizeof(p->m4));
+                memset(p->m4Replay, 0, sizeof(p->m4Replay));
+                p->haveM4 = false;
+            }
         }
         // else: same replay, same M1 — retransmit, ignore.
 
@@ -1009,11 +1030,17 @@ static void rememberPending(const Slot& s, uint8_t message) {
         }
 
     } else if (message == 3 && !p->haveM3) {
-        p->m3 = s;
-        p->haveM3 = true;
+        if (p->haveM1 && replayIncremented(p->m1Replay, thisReplay)) {
+            p->m3 = s;
+            memcpy(p->m3Replay, thisReplay, sizeof(p->m3Replay));
+            p->haveM3 = true;
+        }
     } else if (message == 4 && !p->haveM4) {
-        p->m4 = s;
-        p->haveM4 = true;
+        if (p->haveM3 && memcmp(p->m3Replay, thisReplay, sizeof(p->m4Replay)) == 0) {
+            p->m4 = s;
+            memcpy(p->m4Replay, thisReplay, sizeof(p->m4Replay));
+            p->haveM4 = true;
+        }
     }
 }
 
