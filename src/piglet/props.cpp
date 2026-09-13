@@ -221,10 +221,15 @@ static void updateHive() {
     for (int i = 0; i < BEE_N; i++) {
         if (!s_bees[i].active) continue;
         if (s_phase == Phase::Action || aggro) {
-            float tx = (float)pigX + (float)((i % 3) - 1) * 6.f;
-            float ty = (float)pigY + (float)((i % 2) * 4);
-            s_bees[i].x += (tx - s_bees[i].x) * 0.08f;
-            s_bees[i].y += (ty - s_bees[i].y) * 0.08f;
+            // Circle the pig instead of forming a straight trail behind him.
+            // Each bee keeps its own phase and height so the swarm reads as
+            // animated flight rather than six points stuck to one target.
+            s_bees[i].ang += s_bees[i].spin * 1.8f;
+            float radius = 15.f + (float)(i % 3) * 5.f;
+            float tx = (float)pigX + cosf(s_bees[i].ang) * radius;
+            float ty = (float)pigY - 5.f + sinf(s_bees[i].ang * 1.35f) * (6.f + (i % 2) * 3.f);
+            s_bees[i].x += (tx - s_bees[i].x) * 0.14f;
+            s_bees[i].y += (ty - s_bees[i].y) * 0.14f;
         } else {
             s_bees[i].ang += s_bees[i].spin;
             s_bees[i].x = (float)hx + cosf(s_bees[i].ang) * s_bees[i].ox;
@@ -379,17 +384,32 @@ static void drawHive(M5Canvas& canvas, int16_t yOff) {
     // entrance hole
     px(canvas, x - P, y - 3 * P, 2, 2, 0x2104);
     p1(canvas, x, y - 3 * P, 0x4208);
-    // bees — fat yellow + black stripe + wing
+    // Bees — small readable pixel sprites rather than yellow rectangles.
+    const bool wingsUp = ((millis() / 90u) & 1u) != 0;
     for (int i = 0; i < BEE_N; i++) {
         if (!s_bees[i].active) continue;
         int bx = (int)s_bees[i].x;
         int by = (int)s_bees[i].y + yOff;
         if (bx < -6 || bx > 246 || by < 0 || by > 125) continue;
-        canvas.fillRect(bx, by, 6, 4, 0xFFE0);
-        canvas.fillRect(bx + 2, by, 2, 4, 0x2104);
-        canvas.drawPixel(bx - 1, by + 1, 0xC618);
-        canvas.drawPixel(bx + 6, by + 1, 0xC618);
-        canvas.drawPixel(bx + 5, by + 1, 0x0000); // eye
+        const uint16_t outline = 0x2104;
+        const uint16_t wing = 0xDDFB;
+        const uint16_t wingShade = 0x9CF3;
+        const uint16_t gold = 0xFD80;
+
+        // Two-pixel wings flap around a compact outlined body.
+        if (wingsUp) {
+            canvas.fillRect(bx + 1, by - 2, 3, 2, wing);
+            canvas.fillRect(bx + 6, by - 2, 3, 2, wingShade);
+        } else {
+            canvas.fillRect(bx + 1, by + 4, 3, 2, wingShade);
+            canvas.fillRect(bx + 6, by + 4, 3, 2, wing);
+        }
+        canvas.fillRect(bx + 1, by, 7, 5, outline);
+        canvas.fillRect(bx + 2, by + 1, 5, 3, gold);
+        canvas.fillRect(bx + 4, by + 1, 1, 3, 0x2104);
+        canvas.drawPixel(bx + 7, by + 1, 0x0000); // eye
+        canvas.drawPixel(bx + 8, by + 3, outline); // stinger
+        canvas.drawPixel(bx, by + 2, outline);
     }
 }
 

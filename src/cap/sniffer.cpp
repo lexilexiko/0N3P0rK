@@ -31,7 +31,7 @@ namespace Cap {
 static const uint16_t FRAME_MAX = 1100;
 // Keep the capture queue bounded so WPA-sec sync still has a large
 // contiguous heap block available after radio capture.
-static const uint8_t  RING_SLOTS = 16;
+static const uint8_t  RING_SLOTS = 12;
 // Minimum PCAP for wpa-sec: GlobalHdr(24) + Beacon(~282) + M1(~171) + M2(~217) ≈ 694 B
 // Cap at 800 to allow slight variance while rejecting over-sized files.
 // hasPair() closes the file early anyway, so in practice it stays ~700 B.
