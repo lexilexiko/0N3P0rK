@@ -79,6 +79,10 @@ struct Ctx {
     // depthHoldSec: passed through for methods that care; the sniffer
     // also uses it to extend lock-on-BSSID after a pair lands.
     uint8_t  depthHoldSec;
+    // PWR / BURST passthrough (informational — actual application happens in
+    // WSLBypasser once per session). Methods rarely need to read these.
+    int8_t   txPowerDb;
+    uint8_t  burstPattern;
 };
 
 // Greedy broadcast/targeted deauth on every AP on the current channel.
