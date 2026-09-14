@@ -163,6 +163,7 @@ static uint8_t  s_autoStopBssid[6] = {};
 // PWR / BURST for injected frames (see RadioConfig::txPowerDb/burstPattern).
 static int8_t   s_txPowerDb = 20;      // injected-frame TX power (dBm)
 static uint8_t  s_burstPattern = 1;    // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
+static uint16_t s_legoBlocks = 0x000F; // LEGO method building blocks (mask)
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
@@ -1363,6 +1364,7 @@ static Methods::Ctx buildMethodCtx() {
     ctx.depthHoldSec  = s_depthHoldSec;
     ctx.txPowerDb     = s_txPowerDb;
     ctx.burstPattern  = s_burstPattern;
+    ctx.legoBlocks    = s_legoBlocks;
     return ctx;
 }
 
@@ -1543,6 +1545,7 @@ static void startCommon(RunMode mode) {
     memset(s_autoStopBssid, 0, sizeof(s_autoStopBssid));
     s_txPowerDb = Config::radio().txPowerDb;
     s_burstPattern = Config::radio().burstPattern;
+    s_legoBlocks = Config::radio().legoBlocks & LEGO_ALL;
     // Apply injected-frame TX power + burst shaping once per capture session.
     WSLBypasser::setTxPowerDb(s_txPowerDb);
     WSLBypasser::setBurstPattern(s_burstPattern);

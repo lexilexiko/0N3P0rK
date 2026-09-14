@@ -97,6 +97,7 @@ bool Config::init() {
     r.depthHoldSec = s_prefs.getUChar("dphold", r.depthHoldSec);
     r.txPowerDb = (int8_t)s_prefs.getChar("pwr", r.txPowerDb);
     r.burstPattern = s_prefs.getUChar("burst", r.burstPattern);
+    r.legoBlocks = s_prefs.getUShort("legoblk", r.legoBlocks);
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
@@ -171,6 +172,7 @@ bool Config::init() {
     if (r.txPowerDb < 1) r.txPowerDb = 1;
     if (r.txPowerDb > 20) r.txPowerDb = 20;
     if (r.burstPattern > 3) r.burstPattern = 1;
+    r.legoBlocks &= LEGO_ALL;
     if (b.burstMs < 50) b.burstMs = 50;
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
@@ -241,6 +243,7 @@ bool Config::save() {
     s_prefs.putUChar("dphold", r.depthHoldSec);
     s_prefs.putChar("pwr", r.txPowerDb);
     s_prefs.putUChar("burst", r.burstPattern);
+    s_prefs.putUShort("legoblk", r.legoBlocks);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);

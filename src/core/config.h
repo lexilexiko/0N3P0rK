@@ -117,6 +117,20 @@ static const uint8_t RADIO_PACK_CUSTOM = 0xFF;
 // (the Packs registry isn't visible from config.h either).
 static const uint8_t RADIO_PACK_COUNT_MAX = 8;
 
+// ---------------------------------------------------------------------------
+// LEGO method (custom method constructor): building blocks the user toggles
+// in the LegoMeto screen. Each bit in RadioConfig::legoBlocks enables one
+// block of the composable "LEGO" capture method (cap/methods/method_lego.cpp).
+static const uint16_t LEGO_DEAUTH    = 0x0001; // deauth (broadcast, or bidir w/ clients)
+static const uint16_t LEGO_DISASSOC  = 0x0002; // disassoc
+static const uint16_t LEGO_BIDIR     = 0x0004; // spoof AP<->client
+static const uint16_t LEGO_EAPOL     = 0x0008; // EAPOL-Start / Logoff
+static const uint16_t LEGO_PMKID     = 0x0010; // open-auth + assoc PMKID probe
+static const uint16_t LEGO_CSA       = 0x0020; // CSA-herd beacon
+static const uint16_t LEGO_AUTHFLOOD = 0x0040; // random-MAC auth flood
+static const uint16_t LEGO_SWEEP     = 0x0080; // broadcast probe-request (SWEEP)
+static const uint16_t LEGO_ALL       = 0x00FF; // mask of every valid block
+
 // Knobs for LIGHT / AGGRO / EVILPIG — same code, different tune.
 struct RadioConfig {
     uint16_t hopMs = 300;      // 50..2000 channel dwell
@@ -180,6 +194,8 @@ struct RadioConfig {
     // of ALL/CLIENTS/FOCUS. 0=STRAIGHT 1=RANDOM(default) 2=CLUSTER 3=PULSE.
     int8_t   txPowerDb = 20;      // 1..20 dBm injected-frame power (default max)
     uint8_t  burstPattern = 1;    // 0=STRAIGHT 1=RANDOM(default=legacy) 2=CLUSTER 3=PULSE
+    // LEGO custom-method blocks (see LEGO_* above). Any subset is valid.
+    uint16_t legoBlocks = LEGO_DEAUTH | LEGO_DISASSOC | LEGO_BIDIR | LEGO_EAPOL;
 };
 
 struct BleConfig {

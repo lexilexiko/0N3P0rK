@@ -200,6 +200,35 @@ bool sendAssociationRequest(const uint8_t* bssid, const char* ssid) {
     return rawTx(frame, len) == ESP_OK;
 }
 
+bool sendProbeRequest(const char* ssid) {
+    if (!ssid) ssid = "";
+    uint8_t frame[64];
+    uint8_t ourMac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, ourMac);
+    uint16_t len = 0;
+    frame[len++] = 0x40;                 // Probe Request (subtype 0x04)
+    frame[len++] = 0x00;
+    frame[len++] = 0x00; frame[len++] = 0x00;  // duration
+    for (uint8_t i = 0; i < 6; i++) frame[len++] = 0xFF;   // DA = broadcast
+    memcpy(frame + len, ourMac, 6); len += 6;             // SA = us
+    for (uint8_t i = 0; i < 6; i++) frame[len++] = 0xFF;  // BSSID = broadcast
+    frame[len++] = 0x00; frame[len++] = 0x00;             // sequence
+    uint8_t sl = (uint8_t)strlen(ssid);
+    if (sl > 32) sl = 32;
+    frame[len++] = 0x00;                 // SSID IE (len 0 => wildcard / hidden unlock)
+    frame[len++] = sl;
+    memcpy(frame + len, ssid, sl); len += sl;
+    static const uint8_t rates[] = {0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24};
+    frame[len++] = 0x01;                 // Supported rates
+    frame[len++] = (uint8_t)sizeof(rates);
+    memcpy(frame + len, rates, sizeof(rates)); len += sizeof(rates);
+    static const uint8_t erates[] = {0x30, 0x48, 0x60, 0x6C};
+    frame[len++] = 0x32;                 // Extended supported rates
+    frame[len++] = (uint8_t)sizeof(erates);
+    memcpy(frame + len, erates, sizeof(erates)); len += sizeof(erates);
+    return rawTx(frame, len) == ESP_OK;
+}
+
 static const uint8_t kEapolTail[] = {
     0x00, 0x00,
     0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E,

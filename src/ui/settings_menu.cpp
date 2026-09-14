@@ -108,6 +108,7 @@ static const Item RADIO[] = {
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
     {"TX PWR",    Kind::VALUE,  30, 1, 20, 1},      // injected-frame TX dBm (1..20)
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},       // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
+    {"LEGO",      Kind::ACTION, 32, 0, 0, 0},       // build custom LEGO method
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -204,6 +205,7 @@ static const char* const H_RADIO[] = {
     "ALL / PRI 1-6-11 FIRST / CORE.",
     "TX POWER OF INJECTED KICK FRAMES (DBM).",
     "BURST: 0=TIGHT 1=RND 2=CLUSTER 3=PULSE.",
+    "BUILD CUSTOM LEGO METHOD (BLOCKS).",
 };
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
@@ -234,6 +236,13 @@ static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
 static bool s_bind = false;
+// LEGO method builder sub-screen (within RADIO).
+static bool     s_lego       = false;
+static uint8_t  s_legoIdx    = 0;
+static uint8_t  s_legoScroll = 0;
+// Working copy: legoBlocks edits happen here during editor session.
+// Only written to Config on ENT/SAVE. BACK discards without touching Config.
+static uint16_t s_legoWork   = 0;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
@@ -335,6 +344,19 @@ static const char* burstName(uint8_t s) {
         default: return "?";
     }
 }
+// ---- LEGO method builder: the selectable building blocks ----------------
+struct LegoDef { const char* name; uint16_t bit; };
+static const LegoDef LEGO_DEFS[] = {
+    {"DEAUTH",    LEGO_DEAUTH},
+    {"DISASSOC",  LEGO_DISASSOC},
+    {"BIDIR",     LEGO_BIDIR},
+    {"EAPOL",     LEGO_EAPOL},
+    {"PMKID",     LEGO_PMKID},
+    {"CSA",       LEGO_CSA},
+    {"AUTH FLOOD",LEGO_AUTHFLOOD},
+    {"SWEEP",     LEGO_SWEEP},
+};
+static const uint8_t LEGO_N = sizeof(LEGO_DEFS) / sizeof(LEGO_DEFS[0]);
 // HsMethod layout for the saved value (kept stable across versions so old
 // NVS blobs still parse): 0 = AUTO (special), then explicit methods use
 // 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
@@ -833,6 +855,9 @@ void show(SettingsPage page) {
     s_editing = false;
     s_text = false;
     s_bind = false;
+    s_lego = false;
+    s_legoIdx = 0;
+    s_legoScroll = 0;
     s_keyWas = true;
     s_openMs = millis();
     if (page == SettingsPage::CONNECT) {
@@ -853,6 +878,7 @@ void hide() {
     s_editing = false;
     s_text = false;
     s_bind = false;
+    s_lego = false;
 }
 
 bool isActive() { return s_active; }
@@ -864,6 +890,7 @@ const char* bottomHint() {
         return ";/. pick  ENT  R rescan";
     }
     if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
+    if (s_page == SettingsPage::RADIO && s_lego) return ";/ pick  ENT toggle  ` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
@@ -874,7 +901,10 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
         if (it[s_idx].kind == Kind::TEXT)
             return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
-        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
+        if (it[s_idx].kind == Kind::ACTION)
+            return (s_page == SettingsPage::RADIO && it[s_idx].id == 32)
+                       ? "ENT build LEGO (blocks)"
+                       : "ENT reset radio to STOCK";
         return "ENT edit  ;/.  ` back";
     }
     return ";/.  ENT  ` back";
@@ -961,6 +991,43 @@ static void updateConnect() {
     SFX::play(SFX::MENU_CLICK);
 }
 
+// ---- LEGO method builder input ------------------------------------------
+static void updateLego() {
+    auto keys = M5Cardputer.Keyboard.keysState();
+    bool up   = M5Cardputer.Keyboard.isKeyPressed(';');
+    bool down = M5Cardputer.Keyboard.isKeyPressed('.');
+    if (keyEsc()) {
+        // BACK/CANCEL — discard working copy, Config unchanged.
+        s_lego = false;
+        s_legoWork = 0;
+        SFX::play(SFX::BACK_NAV);
+        return;
+    }
+    if (up && s_legoIdx > 0) {
+        s_legoIdx--;
+        if (s_legoIdx < s_legoScroll) s_legoScroll = s_legoIdx;
+        SFX::play(SFX::MENU_CLICK);
+        return;
+    }
+    if (down && s_legoIdx + 1 < LEGO_N) {
+        s_legoIdx++;
+        if (s_legoIdx >= s_legoScroll + 5) s_legoScroll = (uint8_t)(s_legoIdx - 5 + 1);
+        SFX::play(SFX::MENU_CLICK);
+        return;
+    }
+    if (!keys.enter) return;
+    // ENT on a block: toggle it in the working copy only.
+    const uint16_t bit = LEGO_DEFS[s_legoIdx].bit;
+    s_legoWork = (s_legoWork & LEGO_ALL) ^ bit;
+    SFX::play(SFX::CONFIRM);
+    Display::showToast((s_legoWork & bit) ? "BLOCK ON" : "BLOCK OFF", 600);
+    // Auto-save on each toggle so the user sees the result persist.
+    RadioConfig& r = Config::radio();
+    r.legoBlocks = s_legoWork;
+    Config::markRadioCustom();
+    Config::save();
+}
+
 void update() {
     if (!s_active) return;
     if (App::windowHidden()) return;
@@ -987,6 +1054,11 @@ void update() {
             SFX::play(SFX::MENU_CLICK);
         }
         (void)keys;
+        return;
+    }
+
+    if (s_page == SettingsPage::RADIO && s_lego) {
+        updateLego();
         return;
     }
 
@@ -1151,6 +1223,15 @@ void update() {
             Config::resetRadio();
             SFX::play(SFX::CONFIRM);
             Display::showToast("RADIO RESET", 1000);
+        } else if (s_page == SettingsPage::RADIO && cur.id == 32) {
+            s_lego = true;
+            s_legoIdx = 0;
+            s_legoScroll = 0;
+            // Snapshot current legoBlocks into working copy.
+            // Changes happen in s_legoWork — Config is only updated on ENT/SAVE.
+            s_legoWork = Config::radio().legoBlocks & LEGO_ALL;
+            SFX::play(SFX::MENU_CLICK);
+            Display::showToast("LegoMeto", 600);
         }
         return;
     }
@@ -1327,6 +1408,53 @@ static void drawStatus(M5Canvas& canvas) {
     canvas.setFont(&fonts::Font0);
 }
 
+// ---- LEGO method builder screen ------------------------------------------
+static void drawLego(M5Canvas& canvas) {
+    const uint16_t UI_BG = 0x2145, UI_PANEL = 0x3A8A, UI_TITLE = 0xFFE0,
+                   UI_TEXT = 0xEF5D, UI_SEL = 0xFDB6, UI_DIM = 0x9CD3;
+    canvas.fillSprite(UI_BG);
+    canvas.setTextDatum(top_center);
+    canvas.setTextSize(2);
+    canvas.setTextColor(UI_TITLE);
+    canvas.drawString("LegoMeto", DISPLAY_W / 2, 2);
+    canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
+    canvas.setTextDatum(top_left);
+    canvas.setTextSize(2);
+
+    const int y0 = 24, lh = 18;
+    const uint8_t vis = 5;
+    // Show working copy — not saved Config — so BACK correctly shows
+    // the original state if the user decides to cancel.
+    uint16_t m = s_legoWork & LEGO_ALL;
+    for (uint8_t i = 0; i < vis && (s_legoScroll + i) < LEGO_N; i++) {
+        uint8_t idx = (uint8_t)(s_legoScroll + i);
+        const LegoDef& ld = LEGO_DEFS[idx];
+        int y = y0 + i * lh;
+        if (idx == s_legoIdx) {
+            canvas.fillRect(5, y - 2, DISPLAY_W - 10, lh, UI_SEL);
+            canvas.fillRect(5, y - 2, 3, lh, UI_TITLE);
+            canvas.setTextColor(UI_BG);
+        } else {
+            canvas.fillRect(5, y - 1, DISPLAY_W - 10, lh - 2, UI_PANEL);
+            canvas.setTextColor(UI_TEXT);
+        }
+        canvas.drawString(ld.name, 12, y);
+        canvas.setTextDatum(top_right);
+        canvas.drawString((m & ld.bit) ? "ON" : "OFF", DISPLAY_W - 10, y);
+        canvas.setTextDatum(top_left);
+    }
+
+    canvas.setTextSize(1);
+    canvas.setTextColor(UI_DIM);
+    if (s_legoScroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
+    if (s_legoScroll + vis < LEGO_N) canvas.drawString("v", DISPLAY_W - 12, y0 + (vis - 1) * lh);
+    canvas.setTextColor(UI_TITLE);
+    canvas.setTextDatum(top_center);
+    canvas.drawString(";/ pick  ENT toggle  ` back", DISPLAY_W / 2, MAIN_H - 10);
+    canvas.setTextDatum(top_left);
+    canvas.setFont(&fonts::Font0);
+}
+
 void draw(M5Canvas& canvas) {
     if (s_page == SettingsPage::CONNECT) {
         drawConnect(canvas);
@@ -1334,6 +1462,10 @@ void draw(M5Canvas& canvas) {
     }
     if (s_page == SettingsPage::STATUS) {
         drawStatus(canvas);
+        return;
+    }
+    if (s_page == SettingsPage::RADIO && s_lego) {
+        drawLego(canvas);
         return;
     }
 
