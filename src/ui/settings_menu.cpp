@@ -86,6 +86,7 @@ static const Item RADIO[] = {
     {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
     {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
     {"HS FILE B", Kind::VALUE,  28, 1024, 8192, 1024},
+    {"RING",      Kind::VALUE,  29, 4, 32, 1},
     // Porkchop-style knobs. ID 20+ keeps them out of the way of the
     // legacy IDs already on disk; legacy fields stay exactly the same
     // bytes for backwards compatibility with saved NVS configs.
@@ -132,6 +133,7 @@ static const Item KEYS[] = {
     {"USB SD",   Kind::BIND, 13, 0, 0, 0},
     {"WIFI",     Kind::BIND, 14, 0, 0, 0},
     {"STOP",     Kind::BIND, 15, 0, 0, 0},
+    {"TASKS",    Kind::BIND, 16, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -181,6 +183,7 @@ static const char* const H_RADIO[] = {
     "LISTEN AFTER M1, NO KICK.",
     "RICH RADIOTAP CH/RSSI IN PCAP.",
     "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
+    "CAPTURE RING: 4/8/12/16/24/32 SLOTS. MORE USES MORE RAM.",
     "ANTI-WIDS GAP BETWEEN MGMT.",
     "SEC COOLDOWN AFTER KICK/AP.",
     "MIN SCORE TO ATTACK (FOCUS).",
@@ -211,7 +214,8 @@ static const char* const H_KEYS[] = {
     "I = IR BLAST.",
     "S = 2.4 SWEEP.",
     "H = WPASEC / PWN.",
-    "R = RADIO SETTINGS."
+    "R = RADIO SETTINGS.",
+    "TASK MANAGER."
 };
 
 struct NetRow {
@@ -394,6 +398,7 @@ static int getValue(const Item& it) {
             case 16: return r.pauseMs;
             case 17: return r.fatPcap ? 1 : 0;
             case 28: return r.hsFileBytes;
+            case 29: return r.ringSlots;
             case 18: return r.pack;
             // Porkchop-style knobs (IDs 20..23).
             case 20: return r.jitterMs;
@@ -539,6 +544,25 @@ static bool setValue(const Item& it, int v) {
         r.hsFileBytes = sizes[slot];
         Config::markRadioCustom();
         Config::save();
+        return true;
+    }
+
+    if (s_page == SettingsPage::RADIO && it.id == 29) {
+        static const uint8_t slots[] = {4, 8, 12, 16, 24, 32};
+        int current = (int)r.ringSlots;
+        uint8_t slot = 2;
+        for (uint8_t i = 0; i < 6; i++) {
+            if (slots[i] == current) {
+                slot = i;
+                break;
+            }
+        }
+        slot = (v > current) ? (uint8_t)((slot + 1) % 6)
+                             : (uint8_t)((slot + 5) % 6);
+        r.ringSlots = slots[slot];
+        Config::markRadioCustom();
+        Config::save();
+        Display::showToast("RING SAVED", 700);
         return true;
     }
 
@@ -711,6 +735,7 @@ static bool setValue(const Item& it, int v) {
             case 16: r.pauseMs = (uint16_t)v; break;
             case 17: r.fatPcap = v != 0; break;
             case 28: r.hsFileBytes = (uint16_t)v; break;
+            case 29: r.ringSlots = (uint8_t)v; break;
             // Porkchop-style knobs (IDs 20..23) + handshake depth (24).
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;

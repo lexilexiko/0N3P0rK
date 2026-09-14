@@ -138,6 +138,7 @@ struct RadioConfig {
     uint16_t pauseMs = 1200;   // listen after M1, don't kick
     bool fatPcap = true;       // radiotap with ch / rate / rssi
     uint16_t hsFileBytes = 2048; // maximum handshake PCAP size: 1024/2048/4096/8192 bytes
+    uint8_t ringSlots = 12;      // capture ring slots: 4/8/12/16/24/32
     uint8_t pack = 0;          // RadioPack last applied
     // Porkchop-style knobs. All default off / safe so existing installs
     // keep their old behavior unless a user opts in.
@@ -178,12 +179,12 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-static const uint8_t HOTKEY_COUNT = 16;
-// 0-9 old binds; 10-15 empty (user assigns)
+static const uint8_t HOTKEY_COUNT = 17;
+// 0-9 old binds; 10-16 empty (user assigns)
 struct HotkeyConfig {
     char key[HOTKEY_COUNT] = {
         'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f',
-        0, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 0, 0, 0
     };
 };
 static const uint8_t HOTKEY_RADIO = 8;

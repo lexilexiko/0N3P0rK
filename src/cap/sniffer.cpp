@@ -30,8 +30,8 @@ namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
 // Keep the capture queue bounded so WPA-sec sync still has a large
-// contiguous heap block available after radio capture.
-static const uint8_t  RING_SLOTS = 8;
+// contiguous heap block available after radio capture. The selected size is
+// loaded from RadioConfig before each capture session starts.
 // Minimum PCAP for wpa-sec: GlobalHdr(24) + Beacon(~282) + M1(~171) + M2(~217) ≈ 694 B
 // Cap at 800 to allow slight variance while rejecting over-sized files.
 // hasPair() closes the file early anyway, so in practice it stays ~700 B.
@@ -52,6 +52,7 @@ struct Slot {
 };
 
 static Slot* s_ring = nullptr;
+static uint8_t s_ringSlots = 12;
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
 static const uint8_t PENDING_SLOTS = 4;
@@ -66,6 +67,8 @@ struct PendingCapture {
     bool haveM4;
     uint8_t m1Replay[8];   // §A: replay counter from M1 (e[9..16])
     uint8_t m2Replay[8];   // §A: replay counter from M2 — must match m1Replay
+    uint8_t m3Replay[8];   // M3 must be M1 replay counter + 1
+    uint8_t m4Replay[8];   // M4 must match M3 replay counter
     Slot m1;
     Slot m2;
     Slot m3;
@@ -189,7 +192,7 @@ static bool    s_skipKeyWas = false;
 
 static bool allocateCaptureMemory() {
     if (s_ring && s_pending && s_beacons) return true;
-    if (!s_ring) s_ring = new (std::nothrow) Slot[RING_SLOTS];
+    if (!s_ring) s_ring = new (std::nothrow) Slot[s_ringSlots];
     if (!s_pending) s_pending = new (std::nothrow) PendingCapture[PENDING_SLOTS];
     if (!s_beacons) s_beacons = new (std::nothrow) BeaconSlot[BEACON_SLOTS];
     if (!s_ring || !s_pending || !s_beacons) {
@@ -617,7 +620,7 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         armLockOnBssid(bssid, s_cnt.currentChannel);
     }
 
-    uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
+    uint8_t next = (uint8_t)((s_write + 1) % s_ringSlots);
     if (next == s_read) {
         s_cnt.framesDropped++;
         return;
@@ -943,10 +946,21 @@ static void extractReplay(const Slot& s, uint8_t replay[8]) {
             } else {
                 memset(replay, 0, 8);
             }
+
             return;
         }
     }
     memset(replay, 0, 8);
+}
+
+static bool replayIncremented(const uint8_t* base, const uint8_t* candidate) {
+    if (!base || !candidate) return false;
+    uint8_t expected[8];
+    memcpy(expected, base, sizeof(expected));
+    for (int i = 7; i >= 0; i--) {
+        if (++expected[i] != 0) break;
+    }
+    return memcmp(expected, candidate, sizeof(expected)) == 0;
 }
 
 static void rememberPending(const Slot& s, uint8_t message) {
@@ -983,6 +997,14 @@ static void rememberPending(const Slot& s, uint8_t message) {
                 memset(p->m2Replay, 0, 8);
                 p->haveM2 = false;
             }
+            if (p->haveM3 && !replayIncremented(thisReplay, p->m3Replay)) {
+                memset(&p->m3, 0, sizeof(p->m3));
+                memset(p->m3Replay, 0, sizeof(p->m3Replay));
+                p->haveM3 = false;
+                memset(&p->m4, 0, sizeof(p->m4));
+                memset(p->m4Replay, 0, sizeof(p->m4Replay));
+                p->haveM4 = false;
+            }
         }
         // else: same replay, same M1 — retransmit, ignore.
 
@@ -1009,11 +1031,20 @@ static void rememberPending(const Slot& s, uint8_t message) {
         }
 
     } else if (message == 3 && !p->haveM3) {
-        p->m3 = s;
-        p->haveM3 = true;
+        if (p->haveM1 &&
+        p->haveM2 &&
+        memcmp(p->m1Replay, p->m2Replay, 8) == 0 &&
+        replayIncremented(p->m1Replay, thisReplay)) {
+            p->m3 = s;
+            memcpy(p->m3Replay, thisReplay, sizeof(p->m3Replay));
+            p->haveM3 = true;
+        }
     } else if (message == 4 && !p->haveM4) {
-        p->m4 = s;
-        p->haveM4 = true;
+        if (p->haveM3 && memcmp(p->m3Replay, thisReplay, sizeof(p->m4Replay)) == 0) {
+            p->m4 = s;
+            memcpy(p->m4Replay, thisReplay, sizeof(p->m4Replay));
+            p->haveM4 = true;
+        }
     }
 }
 
@@ -1225,7 +1256,7 @@ static void drainRing() {
         const Slot& s = s_ring[s_read];
         // Checklist: feed() from loop context ONLY
         writeFrameToFile(s);
-        s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
+        s_read = (uint8_t)((s_read + 1) % s_ringSlots);
     }
     if (s_fileOpen) s_file.flush();
 }
@@ -1411,6 +1442,11 @@ static void startCommon(RunMode mode) {
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
     if (s_running) stop();
+    s_ringSlots = Config::radio().ringSlots;
+    if (s_ringSlots != 4 && s_ringSlots != 8 && s_ringSlots != 12 &&
+        s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 32) {
+        s_ringSlots = 12;
+    }
     if (!allocateCaptureMemory()) {
         Serial.println("[CAP] capture buffers allocation failed");
         s_mode = RunMode::Off;

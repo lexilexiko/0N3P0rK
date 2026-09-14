@@ -26,6 +26,8 @@ struct Hs {
     uint8_t anonce3[32];    // from M3 (M2+M3 fallback)
     uint8_t anonceReplay[8];  // M1's EAPOL key replay counter
     uint8_t m2Replay[8];      // M2's own EAPOL key replay counter (must equal M1's)
+    uint8_t m3Replay[8];      // M3 must be M1 replay counter + 1
+    uint8_t m4Replay[8];      // M4 must match M3 replay counter
     uint8_t pmkid[16];
     uint8_t m2[MAX_EAPOL];
     uint16_t m2Len;
@@ -65,6 +67,8 @@ static void resetHandshakeForStation(Hs* h, const uint8_t* sta) {
     memset(h->anonce3, 0, sizeof(h->anonce3));
     memset(h->anonceReplay, 0, sizeof(h->anonceReplay));
     memset(h->m2Replay, 0, sizeof(h->m2Replay));
+    memset(h->m3Replay, 0, sizeof(h->m3Replay));
+    memset(h->m4Replay, 0, sizeof(h->m4Replay));
     memset(h->pmkid, 0, sizeof(h->pmkid));
     memset(h->m2, 0, sizeof(h->m2));
     h->m2Len = 0;
@@ -74,6 +78,16 @@ static void resetHandshakeForStation(Hs* h, const uint8_t* sta) {
     h->haveM2 = false;
     h->haveM4 = false;
     memcpy(h->sta, sta, 6);
+}
+
+static bool replayIncremented(const uint8_t* base, const uint8_t* candidate) {
+    if (!base || !candidate) return false;
+    uint8_t expected[8];
+    memcpy(expected, base, sizeof(expected));
+    for (int i = 7; i >= 0; i--) {
+        if (++expected[i] != 0) break;
+    }
+    return memcmp(expected, candidate, sizeof(expected)) == 0;
 }
 
 static bool selectStation(Hs* h, const uint8_t* sta) {
@@ -532,9 +546,16 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
             h->havePmkid = true;
         }
     } else if (msg == 3) {
-        if (!h->haveAnonce3) {
-            memcpy(h->anonce3, e + 17, 32);
-            h->haveAnonce3 = true;
+        // M3 is the next replay-counter step after the validated M1/M2
+        // exchange. Do not let an unrelated M3 satisfy FULL depth.
+        if (h->haveAnonce &&
+        h->haveM2 &&
+        memcmp(h->anonceReplay, h->m2Replay, 8) == 0 &&
+        replayIncremented(h->anonceReplay, e + 9) &&
+        !h->haveAnonce3) {
+                memcpy(h->anonce3, e + 17, 32);
+                memcpy(h->m3Replay, e + 9, sizeof(h->m3Replay));
+                h->haveAnonce3 = true;
         }
     } else if (msg == 2) {
         uint8_t thisReplay[8];
@@ -566,7 +587,11 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
             }
         }
     } else if (msg == 4) {
-        h->haveM4 = true;
+        // M4 must acknowledge the same replay counter as the accepted M3.
+        if (h->haveAnonce3 && memcmp(h->m3Replay, e + 9, sizeof(h->m4Replay)) == 0) {
+            memcpy(h->m4Replay, e + 9, sizeof(h->m4Replay));
+            h->haveM4 = true;
+        }
     }
     // No SD I/O here - this runs from the WiFi promiscuous IRQ on every
     // EAPOL frame. Mark the slot dirty and let flushPending() in loop()
