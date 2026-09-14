@@ -74,6 +74,7 @@ static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 static const Item RADIO[] = {
     {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
     {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
+    {"LEGO EDIT", Kind::ACTION, 32, 0, 0, 0}, // build custom LEGO method
     {"RESET",     Kind::ACTION, 19, 0, 0, 0}, // stock radio — next to method
     {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
@@ -108,7 +109,6 @@ static const Item RADIO[] = {
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
     {"TX PWR",    Kind::VALUE,  30, 1, 20, 1},      // injected-frame TX dBm (1..20)
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},       // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
-    {"LEGO",      Kind::ACTION, 32, 0, 0, 0},       // build custom LEGO method
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -174,6 +174,7 @@ static const char* const H_SYSTEM[] = {
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",
     "AUTO / ALL / CLIENTS / FOCUS / HERD.",
+    "BUILD CUSTOM LEGO METHOD (BLOCKS).",
     "ENT = BACK TO STOCK RADIO.",
     "AUTO: SEC THEN NEXT METHOD.",
     "DEAUTH ROUNDS PER AP.",
@@ -205,7 +206,6 @@ static const char* const H_RADIO[] = {
     "ALL / PRI 1-6-11 FIRST / CORE.",
     "TX POWER OF INJECTED KICK FRAMES (DBM).",
     "BURST: 0=TIGHT 1=RND 2=CLUSTER 3=PULSE.",
-    "BUILD CUSTOM LEGO METHOD (BLOCKS).",
 };
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
