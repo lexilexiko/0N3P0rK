@@ -83,8 +83,6 @@ struct Ctx {
     // WSLBypasser once per session). Methods rarely need to read these.
     int8_t   txPowerDb;
     uint8_t  burstPattern;
-    // LEGO custom method: bitmask of building blocks (see LEGO_* in config.h).
-    uint16_t legoBlocks;
 };
 
 // Greedy broadcast/targeted deauth on every AP on the current channel.

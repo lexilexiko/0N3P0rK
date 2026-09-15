@@ -71,47 +71,118 @@ static const Item SYSTEM[] = {
 };
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
+// RADIO top-level: three navigation items.
+// All tuning knobs live in RADIO_EDIT (opened via EDIT action).
+// PACK and HS METHOD stay here for quick one-click switching.
 static const Item RADIO[] = {
-    {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
-    {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
-    {"LEGO EDIT", Kind::ACTION, 32, 0, 0, 0}, // build custom LEGO method
-    {"RESET",     Kind::ACTION, 19, 0, 0, 0}, // stock radio — next to method
-    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
-    {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
-    {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
-    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
-    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
-    {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
-    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
-    {"REASON",    Kind::VALUE,  15, 1, 8, 1},
-    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
-    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
-    {"HS FILE B", Kind::VALUE,  28, 1024, 8192, 1024},
-    {"RING",      Kind::VALUE,  29, 4, 32, 1},
-    // Porkchop-style knobs. ID 20+ keeps them out of the way of the
-    // legacy IDs already on disk; legacy fields stay exactly the same
-    // bytes for backwards compatibility with saved NVS configs.
-    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},     // random ms between mgmt frames
-    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},     // seconds per-AP after kick
-    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
-    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
-    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},      // 0=PAIR 1=+M3 2=FULL
-    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
-    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
-    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
-    {"AUTO SKIP", Kind::VALUE,  50, 0, 60, 1},     // sec after pair → skip AP (0=off)
-    {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
-    {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
-    {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
-    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
-    {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
-    {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
-    {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
-    {"TX PWR",    Kind::VALUE,  30, 1, 20, 1},      // injected-frame TX dBm (1..20)
-    {"BURST",     Kind::VALUE,  31, 0, 3, 1},       // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
+    {"PACK",    Kind::VALUE,  18, 0, 0, 1},   // max resolved at runtime
+    {"METHOD",  Kind::VALUE,  7,  0, 0, 1},   // max resolved at runtime
+    {"EDIT",    Kind::ACTION, 60, 0, 0, 0},   // open RADIO_EDIT for current method
+    {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
+    // Sniffer-direct settings that affect CAPTURE not the method:
+    {"HOP MS",  Kind::VALUE,  0,  50, 2000, 50},
+    {"LOCK MS", Kind::VALUE,  1,  0, 15000, 500},
+    {"LOCK HS", Kind::TOGGLE, 2,  0, 1, 1},
+    {"HS DEPTH",Kind::VALUE,  24, 0, 2, 1},
+    {"RND MAC", Kind::TOGGLE, 4,  0, 1, 1},
+    {"HOP SET", Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"ATK RSSI",Kind::VALUE,  5,  -90, -50, 5},
+    {"HS FILE B",Kind::VALUE, 28, 1024, 8192, 1024},
+    {"RING",    Kind::VALUE,  29, 4, 32, 1},
+    {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
+    {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
+    {"AUTO SKIP",Kind::VALUE, 50, 0, 60, 1},
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
+
+// ── RADIO EDIT ────────────────────────────────────────────────────────────
+// All items that exist. buildEditItems() picks the subset for the current
+// method and copies them into s_editItems. Max 24 items.
+
+static const Item ALL_RADIO_KNOBS[] = {
+    // Attack behaviour (all methods)
+    {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
+    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
+    {"PAUSE MS",  Kind::VALUE,  16, 0, 3000, 100},
+    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
+    {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
+    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
+    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
+    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
+    {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
+    {"REASON",    Kind::VALUE,  15, 1, 8, 1},
+    // Porkchop/scoring
+    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},
+    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},
+    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10},
+    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},
+    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},
+    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
+    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},
+    {"BURST",     Kind::VALUE,  31, 0, 3, 1},
+};
+static const uint8_t ALL_KNOBS_N = sizeof(ALL_RADIO_KNOBS) / sizeof(ALL_RADIO_KNOBS[0]);
+
+// Per-method knob ID masks. IDs here match the Item id field above.
+// Each method declares which IDs it actually reads from Ctx.
+struct MethodKnobs {
+    const char* name;
+    uint8_t ids[18];  // 0-terminated list of knob IDs used by this method
+};
+
+static const MethodKnobs METHOD_KNOBS[] = {
+    // OURS: kick burst, fallback, bidir, csa, auth flood, depth
+    { "OURS",     {9, 8, 10, 13, 14, 0} },
+    // PAN: kick burst, fallback, bidir, eapolTx, csa, authFlood, reason, depth
+    { "PAN",      {9, 8, 10, 11, 13, 14, 15, 0} },
+    // PMKID: pmkid toggle, pause, depth, cooldown, jitter
+    { "PMKID",    {12, 16, 21, 20, 0} },
+    // CSA: csa, depth, cooldown, jitter
+    { "CSA",      {13, 21, 20, 0} },
+    // PORKCHOP: all knobs
+    { "PORKCHOP", {9, 8, 10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 25, 26, 27, 31, 0} },
+};
+static const uint8_t METHOD_KNOBS_N = sizeof(METHOD_KNOBS) / sizeof(METHOD_KNOBS[0]);
+
+static Item s_editItems[20];
+static uint8_t s_editN = 0;
+
+// Build edit list for the currently selected method
+static void buildEditItems() {
+    s_editN = 0;
+    RadioConfig& r = Config::radio();
+    // Find method name
+    const char* mname = "OURS";
+    if (r.hsMethod > 0) {
+        const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
+        if (n) mname = n;
+    }
+    // Find knob list for this method (case-insensitive prefix match)
+    const uint8_t* ids = nullptr;
+    for (uint8_t m = 0; m < METHOD_KNOBS_N; m++) {
+        if (strncasecmp(METHOD_KNOBS[m].name, mname, strlen(METHOD_KNOBS[m].name)) == 0) {
+            ids = METHOD_KNOBS[m].ids;
+            break;
+        }
+    }
+    if (!ids) {
+        // Unknown method — show all knobs
+        for (uint8_t k = 0; k < ALL_KNOBS_N && s_editN < 20; k++) {
+            s_editItems[s_editN++] = ALL_RADIO_KNOBS[k];
+        }
+        return;
+    }
+    // Copy only the matching knobs in the declared order
+    for (uint8_t i = 0; ids[i] != 0 && s_editN < 20; i++) {
+        for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+            if (ALL_RADIO_KNOBS[k].id == ids[i]) {
+                s_editItems[s_editN++] = ALL_RADIO_KNOBS[k];
+                break;
+            }
+        }
+    }
+}
 
 static const Item BLE[] = {
     {"BLE BURST", Kind::VALUE, 0, 50, 500, 50},
@@ -174,7 +245,6 @@ static const char* const H_SYSTEM[] = {
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",
     "AUTO / ALL / CLIENTS / FOCUS / HERD.",
-    "BUILD CUSTOM LEGO METHOD (BLOCKS).",
     "ENT = BACK TO STOCK RADIO.",
     "AUTO: SEC THEN NEXT METHOD.",
     "DEAUTH ROUNDS PER AP.",
@@ -236,13 +306,6 @@ static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
 static bool s_bind = false;
-// LEGO method builder sub-screen (within RADIO).
-static bool     s_lego       = false;
-static uint8_t  s_legoIdx    = 0;
-static uint8_t  s_legoScroll = 0;
-// Working copy: legoBlocks edits happen here during editor session.
-// Only written to Config on ENT/SAVE. BACK discards without touching Config.
-static uint16_t s_legoWork   = 0;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
@@ -263,6 +326,7 @@ static bool s_scanning = false;
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
+    if (s_page == SettingsPage::RADIO_EDIT) { *n = s_editN; return s_editItems; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
@@ -344,19 +408,6 @@ static const char* burstName(uint8_t s) {
         default: return "?";
     }
 }
-// ---- LEGO method builder: the selectable building blocks ----------------
-struct LegoDef { const char* name; uint16_t bit; };
-static const LegoDef LEGO_DEFS[] = {
-    {"DEAUTH",    LEGO_DEAUTH},
-    {"DISASSOC",  LEGO_DISASSOC},
-    {"BIDIR",     LEGO_BIDIR},
-    {"EAPOL",     LEGO_EAPOL},
-    {"PMKID",     LEGO_PMKID},
-    {"CSA",       LEGO_CSA},
-    {"AUTH FLOOD",LEGO_AUTHFLOOD},
-    {"SWEEP",     LEGO_SWEEP},
-};
-static const uint8_t LEGO_N = sizeof(LEGO_DEFS) / sizeof(LEGO_DEFS[0]);
 // HsMethod layout for the saved value (kept stable across versions so old
 // NVS blobs still parse): 0 = AUTO (special), then explicit methods use
 // 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
@@ -855,9 +906,6 @@ void show(SettingsPage page) {
     s_editing = false;
     s_text = false;
     s_bind = false;
-    s_lego = false;
-    s_legoIdx = 0;
-    s_legoScroll = 0;
     s_keyWas = true;
     s_openMs = millis();
     if (page == SettingsPage::CONNECT) {
@@ -878,7 +926,6 @@ void hide() {
     s_editing = false;
     s_text = false;
     s_bind = false;
-    s_lego = false;
 }
 
 bool isActive() { return s_active; }
@@ -890,7 +937,6 @@ const char* bottomHint() {
         return ";/. pick  ENT  R rescan";
     }
     if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
-    if (s_page == SettingsPage::RADIO && s_lego) return ";/ pick  ENT toggle  ` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
@@ -901,10 +947,7 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
         if (it[s_idx].kind == Kind::TEXT)
             return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
-        if (it[s_idx].kind == Kind::ACTION)
-            return (s_page == SettingsPage::RADIO && it[s_idx].id == 32)
-                       ? "ENT build LEGO (blocks)"
-                       : "ENT reset radio to STOCK";
+        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
         return "ENT edit  ;/.  ` back";
     }
     return ";/.  ENT  ` back";
@@ -991,43 +1034,6 @@ static void updateConnect() {
     SFX::play(SFX::MENU_CLICK);
 }
 
-// ---- LEGO method builder input ------------------------------------------
-static void updateLego() {
-    auto keys = M5Cardputer.Keyboard.keysState();
-    bool up   = M5Cardputer.Keyboard.isKeyPressed(';');
-    bool down = M5Cardputer.Keyboard.isKeyPressed('.');
-    if (keyEsc()) {
-        // BACK/CANCEL — discard working copy, Config unchanged.
-        s_lego = false;
-        s_legoWork = 0;
-        SFX::play(SFX::BACK_NAV);
-        return;
-    }
-    if (up && s_legoIdx > 0) {
-        s_legoIdx--;
-        if (s_legoIdx < s_legoScroll) s_legoScroll = s_legoIdx;
-        SFX::play(SFX::MENU_CLICK);
-        return;
-    }
-    if (down && s_legoIdx + 1 < LEGO_N) {
-        s_legoIdx++;
-        if (s_legoIdx >= s_legoScroll + 5) s_legoScroll = (uint8_t)(s_legoIdx - 5 + 1);
-        SFX::play(SFX::MENU_CLICK);
-        return;
-    }
-    if (!keys.enter) return;
-    // ENT on a block: toggle it in the working copy only.
-    const uint16_t bit = LEGO_DEFS[s_legoIdx].bit;
-    s_legoWork = (s_legoWork & LEGO_ALL) ^ bit;
-    SFX::play(SFX::CONFIRM);
-    Display::showToast((s_legoWork & bit) ? "BLOCK ON" : "BLOCK OFF", 600);
-    // Auto-save on each toggle so the user sees the result persist.
-    RadioConfig& r = Config::radio();
-    r.legoBlocks = s_legoWork;
-    Config::markRadioCustom();
-    Config::save();
-}
-
 void update() {
     if (!s_active) return;
     if (App::windowHidden()) return;
@@ -1054,11 +1060,6 @@ void update() {
             SFX::play(SFX::MENU_CLICK);
         }
         (void)keys;
-        return;
-    }
-
-    if (s_page == SettingsPage::RADIO && s_lego) {
-        updateLego();
         return;
     }
 
@@ -1183,6 +1184,13 @@ void update() {
             SFX::play(SFX::BACK_NAV);
             return;
         }
+        // RADIO_EDIT → back to RADIO, land on EDIT row
+        if (s_page == SettingsPage::RADIO_EDIT) {
+            s_page = SettingsPage::RADIO;
+            s_idx = 2; s_scroll = 0;
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
         hide();
         return;
     }
@@ -1223,15 +1231,26 @@ void update() {
             Config::resetRadio();
             SFX::play(SFX::CONFIRM);
             Display::showToast("RADIO RESET", 1000);
-        } else if (s_page == SettingsPage::RADIO && cur.id == 32) {
-            s_lego = true;
-            s_legoIdx = 0;
-            s_legoScroll = 0;
-            // Snapshot current legoBlocks into working copy.
-            // Changes happen in s_legoWork — Config is only updated on ENT/SAVE.
-            s_legoWork = Config::radio().legoBlocks & LEGO_ALL;
+        } else if (s_page == SettingsPage::RADIO && cur.id == 60) {
+            // EDIT: build knob list for current method and open RADIO_EDIT
+            buildEditItems();
+            s_page = SettingsPage::RADIO_EDIT;
+            s_idx = 0; s_scroll = 0;
             SFX::play(SFX::MENU_CLICK);
-            Display::showToast("LegoMeto", 600);
+            // Show method name in toast
+            const char* mname = "OURS";
+            RadioConfig& r = Config::radio();
+            if (r.hsMethod > 0) {
+                const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
+                if (n) mname = n;
+            }
+            char toast[24]; snprintf(toast, sizeof(toast), "EDIT: %s", mname);
+            Display::showToast(toast, 800);
+        } else if (s_page == SettingsPage::RADIO_EDIT && cur.id == 99) {
+            // Back from RADIO_EDIT
+            s_page = SettingsPage::RADIO;
+            s_idx = 2; s_scroll = 0; // land on EDIT row
+            SFX::play(SFX::BACK_NAV);
         }
         return;
     }
@@ -1408,53 +1427,6 @@ static void drawStatus(M5Canvas& canvas) {
     canvas.setFont(&fonts::Font0);
 }
 
-// ---- LEGO method builder screen ------------------------------------------
-static void drawLego(M5Canvas& canvas) {
-    const uint16_t UI_BG = 0x2145, UI_PANEL = 0x3A8A, UI_TITLE = 0xFFE0,
-                   UI_TEXT = 0xEF5D, UI_SEL = 0xFDB6, UI_DIM = 0x9CD3;
-    canvas.fillSprite(UI_BG);
-    canvas.setTextDatum(top_center);
-    canvas.setTextSize(2);
-    canvas.setTextColor(UI_TITLE);
-    canvas.drawString("LegoMeto", DISPLAY_W / 2, 2);
-    canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
-    canvas.setTextDatum(top_left);
-    canvas.setTextSize(2);
-
-    const int y0 = 24, lh = 18;
-    const uint8_t vis = 5;
-    // Show working copy — not saved Config — so BACK correctly shows
-    // the original state if the user decides to cancel.
-    uint16_t m = s_legoWork & LEGO_ALL;
-    for (uint8_t i = 0; i < vis && (s_legoScroll + i) < LEGO_N; i++) {
-        uint8_t idx = (uint8_t)(s_legoScroll + i);
-        const LegoDef& ld = LEGO_DEFS[idx];
-        int y = y0 + i * lh;
-        if (idx == s_legoIdx) {
-            canvas.fillRect(5, y - 2, DISPLAY_W - 10, lh, UI_SEL);
-            canvas.fillRect(5, y - 2, 3, lh, UI_TITLE);
-            canvas.setTextColor(UI_BG);
-        } else {
-            canvas.fillRect(5, y - 1, DISPLAY_W - 10, lh - 2, UI_PANEL);
-            canvas.setTextColor(UI_TEXT);
-        }
-        canvas.drawString(ld.name, 12, y);
-        canvas.setTextDatum(top_right);
-        canvas.drawString((m & ld.bit) ? "ON" : "OFF", DISPLAY_W - 10, y);
-        canvas.setTextDatum(top_left);
-    }
-
-    canvas.setTextSize(1);
-    canvas.setTextColor(UI_DIM);
-    if (s_legoScroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
-    if (s_legoScroll + vis < LEGO_N) canvas.drawString("v", DISPLAY_W - 12, y0 + (vis - 1) * lh);
-    canvas.setTextColor(UI_TITLE);
-    canvas.setTextDatum(top_center);
-    canvas.drawString(";/ pick  ENT toggle  ` back", DISPLAY_W / 2, MAIN_H - 10);
-    canvas.setTextDatum(top_left);
-    canvas.setFont(&fonts::Font0);
-}
-
 void draw(M5Canvas& canvas) {
     if (s_page == SettingsPage::CONNECT) {
         drawConnect(canvas);
@@ -1462,10 +1434,6 @@ void draw(M5Canvas& canvas) {
     }
     if (s_page == SettingsPage::STATUS) {
         drawStatus(canvas);
-        return;
-    }
-    if (s_page == SettingsPage::RADIO && s_lego) {
-        drawLego(canvas);
         return;
     }
 
@@ -1476,6 +1444,18 @@ void draw(M5Canvas& canvas) {
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
+    else if (s_page == SettingsPage::RADIO_EDIT) {
+        // Show "EDIT: METHODNAME" as title
+        static char editTitle[24];
+        const char* mname = "OURS";
+        RadioConfig& r = Config::radio();
+        if (r.hsMethod > 0) {
+            const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
+            if (n) mname = n;
+        }
+        snprintf(editTitle, sizeof(editTitle), "EDIT: %s", mname);
+        title = editTitle;
+    }
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
 

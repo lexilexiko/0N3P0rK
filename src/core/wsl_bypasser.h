@@ -20,11 +20,6 @@ bool sendDisassocFrame(const uint8_t* bssid, uint8_t channel, const uint8_t* sta
 
 bool sendAuthentication(const uint8_t* bssid);
 bool sendAssociationRequest(const uint8_t* bssid, const char* ssid);
-// Broadcast (null/"") or directed probe request. A wildcard probe makes
-// hidden-SSID APs on the current channel answer with a clear-text probe
-// response (sniffer's storeBeacon() already ingests 0x50), so this is the
-// active part of the LEGO method's SWEEP block.
-bool sendProbeRequest(const char* ssid);
 bool sendEAPOLStart(const uint8_t* bssid, const uint8_t* clientMac);
 bool sendEAPOLLogoff(const uint8_t* bssid, const uint8_t* clientMac);
 bool sendCSABeacon(const uint8_t* bssid, const char* ssid,
