@@ -106,8 +106,6 @@ static const Item RADIO[] = {
     {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
     {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
-    {"TX PWR",    Kind::VALUE,  30, 1, 20, 1},      // injected-frame TX dBm (1..20)
-    {"BURST",     Kind::VALUE,  31, 0, 3, 1},       // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -201,9 +199,7 @@ static const char* const H_RADIO[] = {
     "KICK CLIENTS ON AGGRO / EP.",
     "NEW MAC EACH ATTACK START.",
     "SKIP WEAK APS FOR KICK.",
-    "ALL / PRI 1-6-11 FIRST / CORE.",
-    "TX POWER OF INJECTED KICK FRAMES (DBM).",
-    "BURST: 0=TIGHT 1=RND 2=CLUSTER 3=PULSE.",
+    "ALL / PRI 1-6-11 FIRST / CORE."
 };
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
@@ -323,18 +319,6 @@ static const char* hsDepthName(uint8_t s) {
         default: return "?";
     }
 }
-// BURST (RADIO id 31): how kickBurst rounds are spaced (see
-// WSLBypasser::setBurstPattern). 0=STRAIGHT (tight) 1=RANDOM (anti-WIDS
-// jitter, default) 2=CLUSTER (burst then long rest) 3=PULSE (rhythm).
-static const char* burstName(uint8_t s) {
-    switch (s) {
-        case 0:  return "STRAIGHT";
-        case 1:  return "RANDOM";
-        case 2:  return "CLUSTER";
-        case 3:  return "PULSE";
-        default: return "?";
-    }
-}
 // HsMethod layout for the saved value (kept stable across versions so old
 // NVS blobs still parse): 0 = AUTO (special), then explicit methods use
 // 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
@@ -426,8 +410,6 @@ static int getValue(const Item& it) {
             case 26: return r.strictLock ? 1 : 0;
             case 27: return r.depthHoldSec;
             case 50: return r.autoStopSec;
-            case 30: return r.txPowerDb;
-            case 31: return r.burstPattern;
             default: return 0;
         }
     }
@@ -498,10 +480,6 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 30) {
-        snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 31) {
-        strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -768,8 +746,6 @@ static bool setValue(const Item& it, int v) {
             case 26: r.strictLock = v != 0; break;
             case 27: r.depthHoldSec = (uint8_t)v; break;
             case 50: r.autoStopSec = (uint8_t)v; break;
-            case 30: r.txPowerDb = (int8_t)v; break;
-            case 31: r.burstPattern = (uint8_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

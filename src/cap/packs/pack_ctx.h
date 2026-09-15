@@ -44,11 +44,6 @@ struct Preset {
     uint8_t  dataAct;        // 0=beacon activity 1=data-frame activity (FOCUS)
     bool     strictLock;     // FOCUS: only kick locked BSSID while lock active
     uint8_t  depthHoldSec;   // extra sec hold after pair when hsDepth>0
-    // PWR / BURST: injected-frame power (dBm, default 20 = max) and burst
-    // shaping (0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE). Added at the END so
-    // existing positional Preset{...} initialisers keep their meaning.
-    int8_t   txPowerDb;      // 1..20 dBm injection power for this pack
-    uint8_t  burstPattern;   // burst shape for sendBidirectionalKick
 
     constexpr Preset(bool bk = false, bool et = false, bool pp = false,
                      bool ch = false, bool af = false, uint8_t kb = 2,
@@ -56,15 +51,13 @@ struct Preset {
                      uint16_t hms = 300,
                      uint8_t jit = 0, uint8_t cd = 0, int16_t thr = 0,
                      uint8_t depth = 0, uint8_t dact = 0,
-                     bool slock = true, uint8_t dhold = 0,
-                     int8_t pwr = 20, uint8_t burst = 1) noexcept
+                     bool slock = true, uint8_t dhold = 0) noexcept
         : bidirKick(bk), eapolTx(et), pmkidProbe(pp), csaHerd(ch),
           authFlood(af), kickBurst(kb), pauseMs(pms), lockMs(lms),
           hopMs(hms),
           jitterMs(jit), cooldownSec(cd), scoreThr(thr),
           hsDepth(depth), dataAct(dact),
-          strictLock(slock), depthHoldSec(dhold),
-          txPowerDb(pwr), burstPattern(burst) {}
+          strictLock(slock), depthHoldSec(dhold) {}
 };
 
 // ---- Registry ------------------------------------------------------------
