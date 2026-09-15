@@ -320,8 +320,8 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
 }
 
 // Method dispatch reads from Methods::table() (see methods/method_ctx.h).
-// Adding a capture method = adding a row to METHOD_LIST() in method_ctx.h;
-// the compiler rebuilds the table, this file doesn't need a thing.
+// Adding a capture method = dropping a method_*.cpp with one
+// CAP_METHOD_REGISTER() line; this file doesn't need a thing.
 //
 // s_activeMethod is the index into that table; 0 is the default. The AUTO
 // mode rotates through [1..count) after a fallback timeout, see

@@ -117,7 +117,8 @@ void resetCsaHerdState();
 // settings_menu/config. Just drop the file in src/cap/methods/ and the
 // static Registrar constructor below adds it before main() runs:
 //
-//     CAP_METHOD_REGISTER("MYNAME", myname_kick, nullptr, nullptr)
+//     CAP_METHOD_REGISTER("MYNAME", myname_kick, nullptr, nullptr, mynameKnobs)
+// (last arg = 0-terminated RADIO knob id list, or nullptr for none)
 //
 // Order in the UI / AUTO rotation is the link order of .cpp files (left
 // to right, OURS first because it lives next to the README). Rename the

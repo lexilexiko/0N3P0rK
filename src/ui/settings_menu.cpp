@@ -98,7 +98,8 @@ static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
 
 // ── RADIO EDIT ────────────────────────────────────────────────────────────
 // All items that exist. buildEditItems() picks the subset for the current
-// method and copies them into s_editItems. Max 24 items.
+// method and copies them into s_editItems. Max 20 items (fits the biggest
+// method knob list with headroom).
 
 static const Item ALL_RADIO_KNOBS[] = {
     // Method-scoped attack behaviour — each entry maps to a Ctx field the
