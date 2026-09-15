@@ -245,36 +245,40 @@ static const char* const H_SYSTEM[] = {
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",
     "AUTO / ALL / CLIENTS / FOCUS / HERD.",
+    "OPEN KNOB EDITOR FOR CURRENT METHOD.",
     "ENT = BACK TO STOCK RADIO.",
-    "AUTO: SEC THEN NEXT METHOD.",
+    "HOW LONG YOU SIT ON A CH.",
+    "HOLD CHANNEL AFTER EAPOL.",
+    "LOCK WHEN HANDSHAKE LANDS.",
+    "PAIR / +M3 / FULL 4-WAY.",
+    "NEW MAC EACH ATTACK START.",
+    "ALL / PRI 1-6-11 FIRST / CORE.",
+    "SKIP WEAK APS FOR KICK.",
+    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
+    "CAPTURE RING: 4/8/12/16/24/32 SLOTS. MORE USES MORE RAM.",
+    "RICH RADIOTAP CH/RSSI IN PCAP.",
+    "TX POWER OF INJECTED KICK FRAMES (DBM).",
+    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
+};
+// Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
+static const char* const H_KNOBS[] = {
     "DEAUTH ROUNDS PER AP.",
+    "AUTO: SEC THEN NEXT METHOD.",
+    "LISTEN AFTER M1, NO KICK.",
+    "KICK CLIENTS ON AGGRO / EP.",
     "KICK BOTH WAYS AP<->STA.",
+    "RANDOM AUTH IF NO CLIENTS.",
     "EAPOL-START / LOGOFF TX.",
     "AUTH+ASSOC FOR PMKID.",
     "SPOOF CSA BEACON TO HERD.",
-    "RANDOM AUTH IF NO CLIENTS.",
     "802.11 DEAUTH REASON CODE.",
-    "LISTEN AFTER M1, NO KICK.",
-    "RICH RADIOTAP CH/RSSI IN PCAP.",
-    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
-    "CAPTURE RING: 4/8/12/16/24/32 SLOTS. MORE USES MORE RAM.",
     "ANTI-WIDS GAP BETWEEN MGMT.",
     "SEC COOLDOWN AFTER KICK/AP.",
     "MIN SCORE TO ATTACK (FOCUS).",
     "MIN CHANNEL DWELL MS.",
-    "PAIR / +M3 / FULL 4-WAY.",
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
     "EXTRA SEC HOLD AFTER PAIR.",
-    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
-    "HOW LONG YOU SIT ON A CH.",
-    "HOLD CHANNEL AFTER EAPOL.",
-    "LOCK WHEN HANDSHAKE LANDS.",
-    "KICK CLIENTS ON AGGRO / EP.",
-    "NEW MAC EACH ATTACK START.",
-    "SKIP WEAK APS FOR KICK.",
-    "ALL / PRI 1-6-11 FIRST / CORE.",
-    "TX POWER OF INJECTED KICK FRAMES (DBM).",
     "BURST: 0=TIGHT 1=RND 2=CLUSTER 3=PULSE.",
 };
 static const char* const H_BLE[] = {
@@ -427,6 +431,13 @@ static const char* radioPackName(uint8_t s) {
     return n ? n : "STOCK";
 }
 
+// RADIO and RADIO_EDIT share the same knob IDs (they read/write the same
+// RadioConfig fields), so getValue/setValue/formatValue must treat them the
+// same — otherwise the EDIT page falls through to the BLE fields below.
+static bool isRadioPage() {
+    return s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_EDIT;
+}
+
 static int getValue(const Item& it) {
     PersonalityConfig& p = Config::personality();
     RadioConfig& r = Config::radio();
@@ -466,7 +477,7 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
-    if (s_page == SettingsPage::RADIO) {
+    if (isRadioPage()) {
         switch (it.id) {
             case 0: return r.hopMs;
             case 1: return r.lockMs;
@@ -551,29 +562,29 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 6) {
+    } else if (isRadioPage() && it.id == 6) {
         strncpy(raw, hopSetName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 7) {
+    } else if (isRadioPage() && it.id == 7) {
         strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 18) {
+    } else if (isRadioPage() && it.id == 18) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 24) {
+    } else if (isRadioPage() && it.id == 24) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 28) {
+    } else if (isRadioPage() && it.id == 28) {
         snprintf(raw, sizeof(raw), "%dB", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 8) {
+    } else if (isRadioPage() && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 27) {
+    } else if (isRadioPage() && it.id == 27) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 21) {
+    } else if (isRadioPage() && it.id == 21) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 30) {
+    } else if (isRadioPage() && it.id == 30) {
         snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 31) {
+    } else if (isRadioPage() && it.id == 31) {
         strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
@@ -591,7 +602,7 @@ static bool setValue(const Item& it, int v) {
     // HS METHOD (RADIO id 7) is the only item whose max grows with the
     // method registry — clamp it explicitly so the rest of the function
     // can keep using a single minV/maxV range.
-    if (s_page == SettingsPage::RADIO && it.id == 7) {
+    if (isRadioPage() && it.id == 7) {
         int maxV = (int)Cap::Methods::count(); // AUTO takes slot 0
         if (v < 0) v = maxV;
         if (v > maxV) v = 0;
@@ -609,7 +620,7 @@ static bool setValue(const Item& it, int v) {
     // back. `v` is `getValue()+/-step` in the RAW on-disk domain, so its
     // direction relative to the current raw value tells us which way the
     // user pressed even when the raw jump (e.g. off of 0xFF) isn't +/-1.
-    if (s_page == SettingsPage::RADIO && it.id == 18) {
+    if (isRadioPage() && it.id == 18) {
         int packCount = (int)Cap::Packs::count();
         int lastSlot = packCount + 1; // logical slot for CUSTOM
         int curSlot = (r.pack == RADIO_PACK_CUSTOM) ? lastSlot : (int)r.pack;
@@ -624,7 +635,7 @@ static bool setValue(const Item& it, int v) {
     }
 
     // HS FILE B has four intentional sizes rather than a linear range.
-    if (s_page == SettingsPage::RADIO && it.id == 28) {
+    if (isRadioPage() && it.id == 28) {
         static const uint16_t sizes[] = {1024, 2048, 4096, 8192};
         int current = (int)r.hsFileBytes;
         uint8_t slot = 1;
@@ -642,7 +653,7 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
 
-    if (s_page == SettingsPage::RADIO && it.id == 29) {
+    if (isRadioPage() && it.id == 29) {
         static const uint8_t slots[] = {4, 8, 12, 16, 24, 32};
         int current = (int)r.ringSlots;
         uint8_t slot = 2;
@@ -808,7 +819,7 @@ static bool setValue(const Item& it, int v) {
         Config::save();
         return true;
     }
-    if (s_page == SettingsPage::RADIO) {
+    if (isRadioPage()) {
         // PACK (id 18) is handled above, before the generic minV/maxV clamp.
         switch (it.id) {
             case 0: r.hopMs = (uint16_t)v; break;
@@ -937,6 +948,7 @@ const char* bottomHint() {
         return ";/. pick  ENT  R rescan";
     }
     if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
+    if (s_page == SettingsPage::RADIO_EDIT) return ";/ pick  ENT edit  ` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
@@ -947,7 +959,11 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
         if (it[s_idx].kind == Kind::TEXT)
             return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
-        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
+        if (it[s_idx].kind == Kind::ACTION) {
+            if (s_page == SettingsPage::RADIO && it[s_idx].id == 60)
+                return "ENT open knob editor";
+            return "ENT reset radio to STOCK";
+        }
         return "ENT edit  ;/.  ` back";
     }
     return ";/.  ENT  ` back";
@@ -1497,14 +1513,27 @@ void draw(M5Canvas& canvas) {
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
 
     const char* const* hints = H_SCENE;
+    uint8_t hintIdx = s_idx;
     if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
     else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
-    if (s_idx < n) {
+    else if (s_page == SettingsPage::RADIO_EDIT) {
+        // Each EDITED item is a copy of an ALL_RADIO_KNOBS entry — find the
+        // matching hint by id so the description matches the highlighted knob.
+        hints = H_KNOBS;
+        hintIdx = 0;
+        for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+            if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) {
+                hintIdx = k;
+                break;
+            }
+        }
+    }
+    if (s_idx < n && (s_page != SettingsPage::RADIO_EDIT || hintIdx < ALL_KNOBS_N)) {
         canvas.setTextColor(UI_TITLE);
         canvas.setTextDatum(top_center);
-        canvas.drawString(hints[s_idx], DISPLAY_W / 2, MAIN_H - 10);
+        canvas.drawString(hints[hintIdx], DISPLAY_W / 2, MAIN_H - 10);
         canvas.setTextDatum(top_left);
     }
 }
