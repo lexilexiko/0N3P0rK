@@ -121,29 +121,6 @@ static const Item ALL_RADIO_KNOBS[] = {
 };
 static const uint8_t ALL_KNOBS_N = sizeof(ALL_RADIO_KNOBS) / sizeof(ALL_RADIO_KNOBS[0]);
 
-// Per-method knob ID masks. IDs here match the Item id field above.
-// Names MUST match Cap::Methods registry names (ALL/CLIENTS/FOCUS/HERD),
-// otherwise the method is treated as unknown and no knobs are shown.
-struct MethodKnobs {
-    const char* name;
-    uint8_t ids[18];  // 0-terminated list of knob IDs used by this method
-};
-
-static const MethodKnobs METHOD_KNOBS[] = {
-    // ALL — broadcast deauth/disassoc. Reads: rounds, bidir gate,
-    // pack-side CSA/auth-flood, deauth reason, burst spacing.
-    { "ALL",     {9, 10, 13, 14, 15, 31, 0} },
-    // CLIENTS — per-client stack. Reads ALL's knobs + EAPOL TX + PMKID probe.
-    { "CLIENTS", {9, 10, 11, 12, 13, 14, 15, 31, 0} },
-    // FOCUS — scored single-target. Reads CLIENTS' knobs + scoring extras:
-    // jitter, cooldown, score threshold, data activity, strict lock.
-    { "FOCUS",   {9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 25, 26, 31, 0} },
-    // HERD — pure CSA beacons, no method-scoped knobs (HS DEPTH / RSSI are
-    // already on the top RADIO page).
-    { "HERD",    {0} },
-};
-static const uint8_t METHOD_KNOBS_N = sizeof(METHOD_KNOBS) / sizeof(METHOD_KNOBS[0]);
-
 static Item s_editItems[20];
 static uint8_t s_editN = 0;
 
@@ -161,19 +138,15 @@ static const char* currentMethodName() {
     return "ALL";
 }
 
-// Build edit list for the currently selected method
+// Build edit list for the currently selected method. Each method declares
+// its own knob list right next to its registration (Entry::knobIds in
+// method_ctx.h) — so adding a new method only touches the method file.
 static void buildEditItems() {
     s_editN = 0;
     const char* mname = currentMethodName();
-    // Find knob list for this method (case-insensitive prefix match)
-    const uint8_t* ids = nullptr;
-    for (uint8_t m = 0; m < METHOD_KNOBS_N; m++) {
-        if (strncasecmp(METHOD_KNOBS[m].name, mname, strlen(METHOD_KNOBS[m].name)) == 0) {
-            ids = METHOD_KNOBS[m].ids;
-            break;
-        }
-    }
-    if (!ids) return;   // unknown method → nothing to edit
+    const Cap::Methods::Entry* me = Cap::Methods::findByName(mname);
+    if (!me || !me->knobIds) return;   // unknown / no scoped knobs → nothing
+    const uint8_t* ids = me->knobIds;
     // Copy only the matching knobs in the declared order
     for (uint8_t i = 0; ids[i] != 0 && s_editN < 20; i++) {
         for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {

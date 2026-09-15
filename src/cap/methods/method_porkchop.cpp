@@ -385,7 +385,12 @@ void porkchop(const Ctx& ctx) {
     if (ctx.csaHerd) csaHerd(ctx);
 }
 
-CAP_METHOD_REGISTER("FOCUS", porkchop, pmkidProbePorkchop, resetPorkchopState)
+// RADIO→EDIT knobs this method actually reads from Ctx (0-terminated).
+// 9=KICK N 10=BIDIR 11=EAPOL TX 12=PMKID 13=CSA 14=AUTH FLOOD 15=REASON
+// 20=JITTER MS 21=COOLDOWN 22=SCORE THR 25=DATA ACT 26=STRICT LK 31=BURST
+static const uint8_t porkchopKnobs[] = {9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 25, 26, 31, 0};
+
+CAP_METHOD_REGISTER("FOCUS", porkchop, pmkidProbePorkchop, resetPorkchopState, porkchopKnobs)
 
 } // namespace Methods
 } // namespace Cap

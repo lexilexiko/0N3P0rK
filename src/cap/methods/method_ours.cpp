@@ -50,7 +50,11 @@ void ours(const Ctx& ctx) {
     if (ctx.csaHerd) csaHerd(ctx);
 }
 
-CAP_METHOD_REGISTER("ALL", ours, nullptr, nullptr)
+// RADIO→EDIT knobs this method actually reads from Ctx (0-terminated).
+// 9=KICK N 10=BIDIR 13=CSA 14=AUTH FLOOD 15=REASON 31=BURST
+static const uint8_t oursKnobs[] = {9, 10, 13, 14, 15, 31, 0};
+
+CAP_METHOD_REGISTER("ALL", ours, nullptr, nullptr, oursKnobs)
 
 } // namespace Methods
 } // namespace Cap
