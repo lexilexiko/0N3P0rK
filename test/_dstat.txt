@@ -1,0 +1,11 @@
+﻿git : warning: in the working copy of 'src/ui/display.cpp', LF will be replaced by C
+RLF the next time Git touches it
+строка:1 знак:34
++ ... st\0N3P0rK-Lego'; git --no-pager diff --stat HEAD -- src 2>&1 | Out-F ...
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: in the... Git touches it:Stri 
+   ng) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ src/ui/display.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)

@@ -602,16 +602,18 @@ void Display::drawBottomBar() {
                 else if (!strcmp(n, "FOCUS"))  packCh = 'F';
                 else if (!strcmp(n, "LOUD"))   packCh = 'L';
                 else if (!strcmp(n, "MAX"))    packCh = 'X';
+                else if (!strcmp(n, "EVIL"))   packCh = 'E';
                 else packCh = (char)n[0]; // first letter fallback
             }
         }
-        // Compact method letter: ALL/CLIENTS/FOCUS/HERD (+ AUTO)
+        // Compact method letter: ALL/CLIENTS/FOCUS/HERD/eViL (+ AUTO)
         const char* mtag = c.methodTag[0] ? c.methodTag : "ALL";
         char methCh = mtag[0] ? mtag[0] : '?';
         if (!strcmp(mtag, "ALL"))          methCh = 'A';
         else if (!strcmp(mtag, "CLIENTS")) methCh = 'C';
         else if (!strcmp(mtag, "FOCUS"))   methCh = 'F';
         else if (!strcmp(mtag, "HERD"))    methCh = 'H';
+        else if (!strcmp(mtag, "eViL"))    methCh = 'E';
         else if (!strcmp(mtag, "AUTO"))    methCh = '~';
         // Unique networks with saved HS/PMKID — not raw EAPOL frame count
         // (that grew huge and looked like "kilobyte" garbage on the bar).
