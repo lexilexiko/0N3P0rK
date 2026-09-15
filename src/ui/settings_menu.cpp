@@ -101,63 +101,70 @@ static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
 // method and copies them into s_editItems. Max 24 items.
 
 static const Item ALL_RADIO_KNOBS[] = {
-    // Attack behaviour (all methods)
+    // Method-scoped attack behaviour — each entry maps to a Ctx field the
+    // methods actually read. Sniffer-level knobs (HOP/LOCK/DEAUTH/RSSI/HS
+    // FILE/RING/FALLBACK/PAUSE/DWELL) live in the top RADIO page instead.
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
-    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
-    {"PAUSE MS",  Kind::VALUE,  16, 0, 3000, 100},
-    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
     {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
-    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
     {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
     {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
     {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
+    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
-    // Porkchop/scoring
+    // FOCUS / scoring (only FOCUS reads these)
     {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},
     {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},
     {"SCORE THR", Kind::VALUE,  22, -100, 200, 10},
-    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},
     {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},
     {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
-    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},
 };
 static const uint8_t ALL_KNOBS_N = sizeof(ALL_RADIO_KNOBS) / sizeof(ALL_RADIO_KNOBS[0]);
 
 // Per-method knob ID masks. IDs here match the Item id field above.
-// Each method declares which IDs it actually reads from Ctx.
+// Names MUST match Cap::Methods registry names (ALL/CLIENTS/FOCUS/HERD),
+// otherwise the method is treated as unknown and no knobs are shown.
 struct MethodKnobs {
     const char* name;
     uint8_t ids[18];  // 0-terminated list of knob IDs used by this method
 };
 
 static const MethodKnobs METHOD_KNOBS[] = {
-    // OURS: kick burst, fallback, bidir, csa, auth flood, depth
-    { "OURS",     {9, 8, 10, 13, 14, 0} },
-    // PAN: kick burst, fallback, bidir, eapolTx, csa, authFlood, reason, depth
-    { "PAN",      {9, 8, 10, 11, 13, 14, 15, 0} },
-    // PMKID: pmkid toggle, pause, depth, cooldown, jitter
-    { "PMKID",    {12, 16, 21, 20, 0} },
-    // CSA: csa, depth, cooldown, jitter
-    { "CSA",      {13, 21, 20, 0} },
-    // PORKCHOP: all knobs
-    { "PORKCHOP", {9, 8, 10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 25, 26, 27, 31, 0} },
+    // ALL — broadcast deauth/disassoc. Reads: rounds, bidir gate,
+    // pack-side CSA/auth-flood, deauth reason, burst spacing.
+    { "ALL",     {9, 10, 13, 14, 15, 31, 0} },
+    // CLIENTS — per-client stack. Reads ALL's knobs + EAPOL TX + PMKID probe.
+    { "CLIENTS", {9, 10, 11, 12, 13, 14, 15, 31, 0} },
+    // FOCUS — scored single-target. Reads CLIENTS' knobs + scoring extras:
+    // jitter, cooldown, score threshold, data activity, strict lock.
+    { "FOCUS",   {9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 25, 26, 31, 0} },
+    // HERD — pure CSA beacons, no method-scoped knobs (HS DEPTH / RSSI are
+    // already on the top RADIO page).
+    { "HERD",    {0} },
 };
 static const uint8_t METHOD_KNOBS_N = sizeof(METHOD_KNOBS) / sizeof(METHOD_KNOBS[0]);
 
 static Item s_editItems[20];
 static uint8_t s_editN = 0;
 
+// Name of the method whose knobs EDIT should show. AUTO hsMethod (0) starts
+// on the first registry entry, so its knobs are those of that method.
+static const char* currentMethodName() {
+    RadioConfig& r = Config::radio();
+    if (r.hsMethod > 0) {
+        const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
+        if (n) return n;
+    } else {
+        const char* n = Cap::Methods::name(0);
+        if (n) return n;
+    }
+    return "ALL";
+}
+
 // Build edit list for the currently selected method
 static void buildEditItems() {
     s_editN = 0;
-    RadioConfig& r = Config::radio();
-    // Find method name
-    const char* mname = "OURS";
-    if (r.hsMethod > 0) {
-        const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
-        if (n) mname = n;
-    }
+    const char* mname = currentMethodName();
     // Find knob list for this method (case-insensitive prefix match)
     const uint8_t* ids = nullptr;
     for (uint8_t m = 0; m < METHOD_KNOBS_N; m++) {
@@ -166,13 +173,7 @@ static void buildEditItems() {
             break;
         }
     }
-    if (!ids) {
-        // Unknown method — show all knobs
-        for (uint8_t k = 0; k < ALL_KNOBS_N && s_editN < 20; k++) {
-            s_editItems[s_editN++] = ALL_RADIO_KNOBS[k];
-        }
-        return;
-    }
+    if (!ids) return;   // unknown method → nothing to edit
     // Copy only the matching knobs in the declared order
     for (uint8_t i = 0; ids[i] != 0 && s_editN < 20; i++) {
         for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
@@ -263,22 +264,17 @@ static const char* const H_RADIO[] = {
 // Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
 static const char* const H_KNOBS[] = {
     "DEAUTH ROUNDS PER AP.",
-    "AUTO: SEC THEN NEXT METHOD.",
-    "LISTEN AFTER M1, NO KICK.",
-    "KICK CLIENTS ON AGGRO / EP.",
     "KICK BOTH WAYS AP<->STA.",
-    "RANDOM AUTH IF NO CLIENTS.",
     "EAPOL-START / LOGOFF TX.",
     "AUTH+ASSOC FOR PMKID.",
     "SPOOF CSA BEACON TO HERD.",
+    "RANDOM AUTH IF NO CLIENTS.",
     "802.11 DEAUTH REASON CODE.",
     "ANTI-WIDS GAP BETWEEN MGMT.",
     "SEC COOLDOWN AFTER KICK/AP.",
     "MIN SCORE TO ATTACK (FOCUS).",
-    "MIN CHANNEL DWELL MS.",
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
-    "EXTRA SEC HOLD AFTER PAIR.",
     "BURST: 0=TIGHT 1=RND 2=CLUSTER 3=PULSE.",
 };
 static const char* const H_BLE[] = {
@@ -1250,17 +1246,16 @@ void update() {
         } else if (s_page == SettingsPage::RADIO && cur.id == 60) {
             // EDIT: build knob list for current method and open RADIO_EDIT
             buildEditItems();
+            if (s_editN == 0) {
+                SFX::play(SFX::ERROR);
+                Display::showToast("NO EDIT KNOBS", 1000);
+                return;
+            }
             s_page = SettingsPage::RADIO_EDIT;
             s_idx = 0; s_scroll = 0;
             SFX::play(SFX::MENU_CLICK);
-            // Show method name in toast
-            const char* mname = "OURS";
-            RadioConfig& r = Config::radio();
-            if (r.hsMethod > 0) {
-                const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
-                if (n) mname = n;
-            }
-            char toast[24]; snprintf(toast, sizeof(toast), "EDIT: %s", mname);
+            char toast[24];
+            snprintf(toast, sizeof(toast), "EDIT: %s", currentMethodName());
             Display::showToast(toast, 800);
         } else if (s_page == SettingsPage::RADIO_EDIT && cur.id == 99) {
             // Back from RADIO_EDIT
@@ -1463,13 +1458,7 @@ void draw(M5Canvas& canvas) {
     else if (s_page == SettingsPage::RADIO_EDIT) {
         // Show "EDIT: METHODNAME" as title
         static char editTitle[24];
-        const char* mname = "OURS";
-        RadioConfig& r = Config::radio();
-        if (r.hsMethod > 0) {
-            const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
-            if (n) mname = n;
-        }
-        snprintf(editTitle, sizeof(editTitle), "EDIT: %s", mname);
+        snprintf(editTitle, sizeof(editTitle), "EDIT: %s", currentMethodName());
         title = editTitle;
     }
     else if (s_page == SettingsPage::BLE) title = "BLE";
