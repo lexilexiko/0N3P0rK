@@ -91,6 +91,7 @@ static const Item RADIO[] = {
     {"RING",    Kind::VALUE,  29, 4, 32, 1},
     {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
+    {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
     {"AUTO SKIP",Kind::VALUE, 50, 0, 60, 1},
 };
 
@@ -118,7 +119,6 @@ static const Item ALL_RADIO_KNOBS[] = {
     {"SCORE THR", Kind::VALUE,  22, -100, 200, 10},
     {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},
     {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
-    {"BURST",     Kind::VALUE,  31, 0, 3, 1},
 };
 static const uint8_t ALL_KNOBS_N = sizeof(ALL_RADIO_KNOBS) / sizeof(ALL_RADIO_KNOBS[0]);
 

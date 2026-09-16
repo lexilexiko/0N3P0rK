@@ -90,6 +90,34 @@ void uiDrawMarquee(M5Canvas& canvas, const char* s, int x, int y, int maxPx, int
     canvas.drawString(tmp, x - pix, y);
 }
 
+static bool parseBarMac(const char* s, uint8_t out[6]) {
+    if (!s || !s[0] || !out) return false;
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return -1;
+    };
+    for (int i = 0; i < 6; i++) {
+        int a = hex(s[0]), b = hex(s[1]);
+        if (a < 0 || b < 0) return false;
+        out[i] = (uint8_t)((a << 4) | b);
+        s += 2;
+        if (i < 5) {
+            if (*s != ':') return false;
+            s++;
+        }
+    }
+    return true;
+}
+
+static uint16_t dimRgb565(uint16_t col) {
+    uint8_t r = ((col >> 11) & 0x1F) >> 1;
+    uint8_t g = ((col >> 5)  & 0x3F) >> 1;
+    uint8_t b = (col & 0x1F) >> 1;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
 M5Canvas Display::topBar(&M5.Display);
 M5Canvas Display::mainCanvas(&M5.Display);
 M5Canvas Display::bottomBar(&M5.Display);
@@ -712,18 +740,72 @@ void Display::drawBottomBar() {
     }
 
     if (capLive && App::mode() != AppMode::SPECTRUM &&
-        left[0] && strcmp(left, "SCAN") != 0)
+        left[0] && strncmp(left, "SCAN", 4) != 0)
         bottomBar.setTextColor(0xFE60);
     bottomBar.setTextWrap(false);
-    int rightPx = rightName[0] ? ((int)strlen(rightName) * 6 + 8) : 0;
-    int leftMax = DISPLAY_W - 6 - rightPx;
-    if (leftMax < 48) leftMax = 48;
+
+    // M1-M4 pills sit BETWEEN the SSID (left) and the A* F/F &N #ch (right).
+    // Always reserved while capturing so the SSID never draws over them.
+    // "1-2-3-4" = 4*6 + 3*5 = 39 px, plus 4 px gap.
+    const bool showMx = capLive && App::mode() != AppMode::SPECTRUM;
+    const int mBlockW = showMx ? 43 : 0;
+    int rightPx = rightName[0] ? ((int)strlen(rightName) * 6 + 6) : 0;
+    int leftMax = DISPLAY_W - 6 - rightPx - mBlockW;
+    if (leftMax < 42) leftMax = 42;
     uiDrawMarquee(bottomBar, left, 2, 3, leftMax);
     bottomBar.setTextColor(TEXT_COL);
     if (rightName[0]) {
         bottomBar.setTextDatum(top_right);
         bottomBar.drawString(rightName, DISPLAY_W - 2, 3);
         bottomBar.setTextDatum(top_left);
+    }
+
+    // M1/M2/M3/M4 live capture — THIS target only (not OR of every slot).
+    // Empty slots stay dim so the 4-way is always readable.
+    //   unseen     = dark
+    //   M1 waiting = grey
+    //   M2 waiting = yellow (seen, replay not matched)
+    //   M1+M2 pair = green  (crackable)
+    //   M3         = cyan
+    //   M4         = white
+    //   written    = half-bright
+    if (showMx) {
+        const Cap::Counters& cc = Cap::counters();
+        uint8_t gm = 0;
+        uint8_t mac[6];
+        if (cc.targetBssid[0] && parseBarMac(cc.targetBssid, mac))
+            gm = Hc22000::handshakeMask(mac);
+        bool pairValid = (gm & 0x10) != 0;
+        bool written   = (gm & 0x20) != 0;
+        struct { uint8_t bit; const char* lbl; uint16_t colOk; uint16_t colWait; } msgs[4] = {
+            { 0x01, "1", 0x07E0, 0x7BEF },
+            { 0x02, "2", 0x07E0, 0xFFE0 },
+            { 0x04, "3", 0x07FF, 0x07FF },
+            { 0x08, "4", 0xFFFF, 0xFFFF },
+        };
+        int x = DISPLAY_W - 2 - rightPx - mBlockW;
+        if (x < 50) x = 50;
+        const int y = 3;
+        bottomBar.setTextSize(1);
+        bottomBar.setTextDatum(top_left);
+        for (uint8_t mi = 0; mi < 4; mi++) {
+            bool seen = (gm & msgs[mi].bit) != 0;
+            uint16_t col = 0x3186; // unseen
+            if (seen) {
+                if (mi <= 1) col = pairValid ? msgs[mi].colOk : msgs[mi].colWait;
+                else         col = msgs[mi].colOk;
+                if (written) col = dimRgb565(col);
+            }
+            bottomBar.setTextColor(col);
+            bottomBar.drawString(msgs[mi].lbl, x, y);
+            x += 7;
+            if (mi < 3) {
+                bottomBar.setTextColor(0x4208);
+                bottomBar.drawString("-", x, y);
+                x += 5;
+            }
+        }
+        bottomBar.setTextColor(TEXT_COL);
     }
 }
 

@@ -77,7 +77,7 @@ void pan(const Ctx& ctx) {
 
 // RADIO→EDIT knobs this method actually reads from Ctx (0-terminated).
 // 9=KICK N 10=BIDIR 11=EAPOL TX 12=PMKID 13=CSA 14=AUTH FLOOD 15=REASON 31=BURST
-static const uint8_t panKnobs[] = {9, 10, 11, 12, 13, 14, 15, 31, 0};
+static const uint8_t panKnobs[] = {9, 10, 11, 12, 13, 14, 15, 0};
 
 CAP_METHOD_REGISTER("CLIENTS", pan, pmkidProbe, resetPmkidState, panKnobs)
 
