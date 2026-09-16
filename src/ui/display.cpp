@@ -646,14 +646,29 @@ void Display::drawBottomBar() {
         // Unique networks with saved HS/PMKID — not raw EAPOL frame count
         // (that grew huge and looked like "kilobyte" garbage on the bar).
         uint16_t hsN = Hc22000::pairCount();
-        // e.g. "A* F/F &3 #06" — &N = handshakes, #ch = channel
-        snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u",
-                 tag,
-                 Cap::isLocked() ? "*" : "",
-                 packCh,
-                 methCh,
-                 (unsigned)hsN,
-                 (unsigned)c.currentChannel);
+        // e.g. "A* F/F $4 &3 #06"
+        //   $N = clients on the attacked network (bar focus only)
+        //   &N = captured handshakes, #NN = channel
+        // $N appears whenever we have a real focus (LOCK/PIN/HS/EAPOL), so the
+        // bar answers "how many people sit on the net we're hitting?".
+        if (c.targetMode != 0) {
+            snprintf(rightName, sizeof(rightName), "%s%s %c/%c $%u &%u #%02u",
+                     tag,
+                     Cap::isLocked() ? "*" : "",
+                     packCh,
+                     methCh,
+                     (unsigned)Cap::targetClients(),
+                     (unsigned)hsN,
+                     (unsigned)c.currentChannel);
+        } else {
+            snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u",
+                     tag,
+                     Cap::isLocked() ? "*" : "",
+                     packCh,
+                     methCh,
+                     (unsigned)hsN,
+                     (unsigned)c.currentChannel);
+        }
     } else if (bottomHint[0]) {
         strncpy(left, bottomHint, sizeof(left) - 1);
     } else {

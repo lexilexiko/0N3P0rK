@@ -61,4 +61,9 @@ struct Counters {
 };
 const Counters& counters();
 
+// Live client count of the network the bottom bar is focused on
+// (bar target → last kick → lock-on-BSSID → last HS). 0 when nothing is
+// focused or the target has no clients tracked on this channel yet.
+uint8_t targetClients();
+
 } // namespace Cap
