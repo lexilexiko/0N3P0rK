@@ -702,11 +702,39 @@ uint8_t handshakeMask(const uint8_t* bssid) {
     uint8_t result = 0;
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
-            if (s_hs[i].haveAnonce)  result |= 0x01; // M1
-            if (s_hs[i].haveM2)      result |= 0x02; // M2
-            if (s_hs[i].haveAnonce3) result |= 0x04; // M3
-            if (s_hs[i].haveM4)      result |= 0x08; // M4
+            const Hs& h = s_hs[i];
+            if (h.haveAnonce)  result |= 0x01; // M1
+            if (h.haveM2)      result |= 0x02; // M2
+            if (h.haveAnonce3) result |= 0x04; // M3
+            if (h.haveM4)      result |= 0x08; // M4
+            if (h.haveAnonce && h.haveM2 &&
+                memcmp(h.anonceReplay, h.m2Replay, 8) == 0)
+                result |= 0x10; // pair valid
+            if (h.wroteEapol || h.wrotePmkid)
+                result |= 0x20; // written
         }
+    }
+    portEXIT_CRITICAL(&s_hsMux);
+    return result;
+}
+
+uint8_t globalHandshakeMask() {
+    portENTER_CRITICAL(&s_hsMux);
+    uint8_t result = 0;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (!s_hs[i].used) continue;
+        const Hs& h = s_hs[i];
+        if (h.haveAnonce)  result |= 0x01; // M1 seen
+        if (h.haveM2)      result |= 0x02; // M2 seen
+        if (h.haveAnonce3) result |= 0x04; // M3 seen
+        if (h.haveM4)      result |= 0x08; // M4 seen
+        // bit4: pair valid (M1+M2 replay-matched, crackable)
+        if (h.haveAnonce && h.haveM2 &&
+            memcmp(h.anonceReplay, h.m2Replay, 8) == 0)
+            result |= 0x10;
+        // bit5: already written to SD
+        if (h.wroteEapol || h.wrotePmkid)
+            result |= 0x20;
     }
     portEXIT_CRITICAL(&s_hsMux);
     return result;

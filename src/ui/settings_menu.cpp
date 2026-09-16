@@ -71,11 +71,41 @@ static const Item SYSTEM[] = {
 };
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
+// RADIO top-level: three navigation items.
+// All tuning knobs live in RADIO_EDIT (opened via EDIT action).
+// PACK and HS METHOD stay here for quick one-click switching.
 static const Item RADIO[] = {
-    {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
-    {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
-    {"RESET",     Kind::ACTION, 19, 0, 0, 0}, // stock radio — next to method
-    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
+    {"PACK",    Kind::VALUE,  18, 0, 0, 1},   // max resolved at runtime
+    {"METHOD",  Kind::VALUE,  7,  0, 0, 1},   // max resolved at runtime
+    {"EDIT",    Kind::ACTION, 60, 0, 0, 0},   // open RADIO_EDIT for current method
+    {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
+    // Sniffer-direct settings that affect CAPTURE not the method:
+    {"HOP MS",  Kind::VALUE,  0,  50, 2000, 50},
+    {"LOCK MS", Kind::VALUE,  1,  0, 15000, 500},
+    {"LOCK HS", Kind::TOGGLE, 2,  0, 1, 1},
+    {"HS DEPTH",Kind::VALUE,  24, 0, 2, 1},
+    {"RND MAC", Kind::TOGGLE, 4,  0, 1, 1},
+    {"HOP SET", Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"ATK RSSI",Kind::VALUE,  5,  -90, -50, 5},
+    {"HS FILE B",Kind::VALUE, 28, 1024, 8192, 1024},
+    {"RING",    Kind::VALUE,  29, 4, 32, 1},
+    {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
+    {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
+    {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
+    {"AUTO SKIP",Kind::VALUE, 50, 0, 60, 1},
+};
+
+static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
+
+// ── RADIO EDIT ────────────────────────────────────────────────────────────
+// All items that exist. buildEditItems() picks the subset for the current
+// method and copies them into s_editItems. Max 20 items (fits the biggest
+// method knob list with headroom).
+
+static const Item ALL_RADIO_KNOBS[] = {
+    // Method-scoped attack behaviour — each entry maps to a Ctx field the
+    // methods actually read. Sniffer-level knobs (HOP/LOCK/DEAUTH/RSSI/HS
+    // FILE/RING/FALLBACK/PAUSE/DWELL) live in the top RADIO page instead.
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
     {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
     {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
@@ -83,32 +113,51 @@ static const Item RADIO[] = {
     {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
     {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
-    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
-    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
-    {"HS FILE B", Kind::VALUE,  28, 1024, 8192, 1024},
-    {"RING",      Kind::VALUE,  29, 4, 32, 1},
-    // Porkchop-style knobs. ID 20+ keeps them out of the way of the
-    // legacy IDs already on disk; legacy fields stay exactly the same
-    // bytes for backwards compatibility with saved NVS configs.
-    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},     // random ms between mgmt frames
-    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},     // seconds per-AP after kick
-    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
-    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
-    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},      // 0=PAIR 1=+M3 2=FULL
-    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
-    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
-    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
-    {"AUTO SKIP", Kind::VALUE,  50, 0, 60, 1},     // sec after pair → skip AP (0=off)
-    {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
-    {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
-    {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
-    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
-    {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
-    {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
-    {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    // FOCUS / scoring (only FOCUS reads these)
+    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},
+    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},
+    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10},
+    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},
+    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},
 };
+static const uint8_t ALL_KNOBS_N = sizeof(ALL_RADIO_KNOBS) / sizeof(ALL_RADIO_KNOBS[0]);
 
-static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
+static Item s_editItems[20];
+static uint8_t s_editN = 0;
+
+// Name of the method whose knobs EDIT should show. AUTO hsMethod (0) starts
+// on the first registry entry, so its knobs are those of that method.
+static const char* currentMethodName() {
+    RadioConfig& r = Config::radio();
+    if (r.hsMethod > 0) {
+        const char* n = Cap::Methods::name((uint8_t)(r.hsMethod - 1));
+        if (n) return n;
+    } else {
+        const char* n = Cap::Methods::name(0);
+        if (n) return n;
+    }
+    return "ALL";
+}
+
+// Build edit list for the currently selected method. Each method declares
+// its own knob list right next to its registration (Entry::knobIds in
+// method_ctx.h) — so adding a new method only touches the method file.
+static void buildEditItems() {
+    s_editN = 0;
+    const char* mname = currentMethodName();
+    const Cap::Methods::Entry* me = Cap::Methods::findByName(mname);
+    if (!me || !me->knobIds) return;   // unknown / no scoped knobs → nothing
+    const uint8_t* ids = me->knobIds;
+    // Copy only the matching knobs in the declared order
+    for (uint8_t i = 0; ids[i] != 0 && s_editN < 20; i++) {
+        for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+            if (ALL_RADIO_KNOBS[k].id == ids[i]) {
+                s_editItems[s_editN++] = ALL_RADIO_KNOBS[k];
+                break;
+            }
+        }
+    }
+}
 
 static const Item BLE[] = {
     {"BLE BURST", Kind::VALUE, 0, 50, 500, 50},
@@ -171,8 +220,23 @@ static const char* const H_SYSTEM[] = {
 static const char* const H_RADIO[] = {
     "STOCK / FOCUS / MAX. TUNE=CUST.",
     "AUTO / ALL / CLIENTS / FOCUS / HERD.",
+    "OPEN KNOB EDITOR FOR CURRENT METHOD.",
     "ENT = BACK TO STOCK RADIO.",
-    "AUTO: SEC THEN NEXT METHOD.",
+    "HOW LONG YOU SIT ON A CH.",
+    "HOLD CHANNEL AFTER EAPOL.",
+    "LOCK WHEN HANDSHAKE LANDS.",
+    "PAIR / +M3 / FULL 4-WAY.",
+    "NEW MAC EACH ATTACK START.",
+    "ALL / PRI 1-6-11 FIRST / CORE.",
+    "SKIP WEAK APS FOR KICK.",
+    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
+    "CAPTURE RING: 4/8/12/16/24/32 SLOTS. MORE USES MORE RAM.",
+    "RICH RADIOTAP CH/RSSI IN PCAP.",
+    "TX POWER OF INJECTED KICK FRAMES (DBM).",
+    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
+};
+// Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
+static const char* const H_KNOBS[] = {
     "DEAUTH ROUNDS PER AP.",
     "KICK BOTH WAYS AP<->STA.",
     "EAPOL-START / LOGOFF TX.",
@@ -180,26 +244,12 @@ static const char* const H_RADIO[] = {
     "SPOOF CSA BEACON TO HERD.",
     "RANDOM AUTH IF NO CLIENTS.",
     "802.11 DEAUTH REASON CODE.",
-    "LISTEN AFTER M1, NO KICK.",
-    "RICH RADIOTAP CH/RSSI IN PCAP.",
-    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
-    "CAPTURE RING: 4/8/12/16/24/32 SLOTS. MORE USES MORE RAM.",
     "ANTI-WIDS GAP BETWEEN MGMT.",
     "SEC COOLDOWN AFTER KICK/AP.",
     "MIN SCORE TO ATTACK (FOCUS).",
-    "MIN CHANNEL DWELL MS.",
-    "PAIR / +M3 / FULL 4-WAY.",
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
-    "EXTRA SEC HOLD AFTER PAIR.",
-    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
-    "HOW LONG YOU SIT ON A CH.",
-    "HOLD CHANNEL AFTER EAPOL.",
-    "LOCK WHEN HANDSHAKE LANDS.",
-    "KICK CLIENTS ON AGGRO / EP.",
-    "NEW MAC EACH ATTACK START.",
-    "SKIP WEAK APS FOR KICK.",
-    "ALL / PRI 1-6-11 FIRST / CORE."
+    "BURST: 0=TIGHT 1=RND 2=CLUSTER 3=PULSE.",
 };
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
@@ -250,6 +300,7 @@ static bool s_scanning = false;
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
+    if (s_page == SettingsPage::RADIO_EDIT) { *n = s_editN; return s_editItems; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
@@ -319,6 +370,18 @@ static const char* hsDepthName(uint8_t s) {
         default: return "?";
     }
 }
+// BURST (RADIO id 31): how kickBurst rounds are spaced (see
+// WSLBypasser::setBurstPattern). 0=STRAIGHT (tight) 1=RANDOM (anti-WIDS
+// jitter, default) 2=CLUSTER (burst then long rest) 3=PULSE (rhythm).
+static const char* burstName(uint8_t s) {
+    switch (s) {
+        case 0:  return "STRAIGHT";
+        case 1:  return "RANDOM";
+        case 2:  return "CLUSTER";
+        case 3:  return "PULSE";
+        default: return "?";
+    }
+}
 // HsMethod layout for the saved value (kept stable across versions so old
 // NVS blobs still parse): 0 = AUTO (special), then explicit methods use
 // 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
@@ -336,6 +399,13 @@ static const char* radioPackName(uint8_t s) {
     if (s == RADIO_PACK_CUSTOM) return "CUSTOM";
     const char* n = Cap::Packs::name((uint8_t)(s - 1));
     return n ? n : "STOCK";
+}
+
+// RADIO and RADIO_EDIT share the same knob IDs (they read/write the same
+// RadioConfig fields), so getValue/setValue/formatValue must treat them the
+// same — otherwise the EDIT page falls through to the BLE fields below.
+static bool isRadioPage() {
+    return s_page == SettingsPage::RADIO || s_page == SettingsPage::RADIO_EDIT;
 }
 
 static int getValue(const Item& it) {
@@ -377,7 +447,7 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
-    if (s_page == SettingsPage::RADIO) {
+    if (isRadioPage()) {
         switch (it.id) {
             case 0: return r.hopMs;
             case 1: return r.lockMs;
@@ -410,6 +480,8 @@ static int getValue(const Item& it) {
             case 26: return r.strictLock ? 1 : 0;
             case 27: return r.depthHoldSec;
             case 50: return r.autoStopSec;
+            case 30: return r.txPowerDb;
+            case 31: return r.burstPattern;
             default: return 0;
         }
     }
@@ -460,26 +532,30 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 6) {
+    } else if (isRadioPage() && it.id == 6) {
         strncpy(raw, hopSetName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 7) {
+    } else if (isRadioPage() && it.id == 7) {
         strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 18) {
+    } else if (isRadioPage() && it.id == 18) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 24) {
+    } else if (isRadioPage() && it.id == 24) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 28) {
+    } else if (isRadioPage() && it.id == 28) {
         snprintf(raw, sizeof(raw), "%dB", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 8) {
+    } else if (isRadioPage() && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
-    } else if (s_page == SettingsPage::RADIO && it.id == 27) {
+    } else if (isRadioPage() && it.id == 27) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
-    } else if (s_page == SettingsPage::RADIO && it.id == 21) {
+    } else if (isRadioPage() && it.id == 21) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
+    } else if (isRadioPage() && it.id == 30) {
+        snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
+    } else if (isRadioPage() && it.id == 31) {
+        strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -496,7 +572,7 @@ static bool setValue(const Item& it, int v) {
     // HS METHOD (RADIO id 7) is the only item whose max grows with the
     // method registry — clamp it explicitly so the rest of the function
     // can keep using a single minV/maxV range.
-    if (s_page == SettingsPage::RADIO && it.id == 7) {
+    if (isRadioPage() && it.id == 7) {
         int maxV = (int)Cap::Methods::count(); // AUTO takes slot 0
         if (v < 0) v = maxV;
         if (v > maxV) v = 0;
@@ -514,7 +590,7 @@ static bool setValue(const Item& it, int v) {
     // back. `v` is `getValue()+/-step` in the RAW on-disk domain, so its
     // direction relative to the current raw value tells us which way the
     // user pressed even when the raw jump (e.g. off of 0xFF) isn't +/-1.
-    if (s_page == SettingsPage::RADIO && it.id == 18) {
+    if (isRadioPage() && it.id == 18) {
         int packCount = (int)Cap::Packs::count();
         int lastSlot = packCount + 1; // logical slot for CUSTOM
         int curSlot = (r.pack == RADIO_PACK_CUSTOM) ? lastSlot : (int)r.pack;
@@ -529,7 +605,7 @@ static bool setValue(const Item& it, int v) {
     }
 
     // HS FILE B has four intentional sizes rather than a linear range.
-    if (s_page == SettingsPage::RADIO && it.id == 28) {
+    if (isRadioPage() && it.id == 28) {
         static const uint16_t sizes[] = {1024, 2048, 4096, 8192};
         int current = (int)r.hsFileBytes;
         uint8_t slot = 1;
@@ -547,7 +623,7 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
 
-    if (s_page == SettingsPage::RADIO && it.id == 29) {
+    if (isRadioPage() && it.id == 29) {
         static const uint8_t slots[] = {4, 8, 12, 16, 24, 32};
         int current = (int)r.ringSlots;
         uint8_t slot = 2;
@@ -713,7 +789,7 @@ static bool setValue(const Item& it, int v) {
         Config::save();
         return true;
     }
-    if (s_page == SettingsPage::RADIO) {
+    if (isRadioPage()) {
         // PACK (id 18) is handled above, before the generic minV/maxV clamp.
         switch (it.id) {
             case 0: r.hopMs = (uint16_t)v; break;
@@ -746,6 +822,8 @@ static bool setValue(const Item& it, int v) {
             case 26: r.strictLock = v != 0; break;
             case 27: r.depthHoldSec = (uint8_t)v; break;
             case 50: r.autoStopSec = (uint8_t)v; break;
+            case 30: r.txPowerDb = (int8_t)v; break;
+            case 31: r.burstPattern = (uint8_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that
@@ -840,6 +918,7 @@ const char* bottomHint() {
         return ";/. pick  ENT  R rescan";
     }
     if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
+    if (s_page == SettingsPage::RADIO_EDIT) return ";/ pick  ENT edit  ` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
@@ -850,7 +929,11 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
         if (it[s_idx].kind == Kind::TEXT)
             return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
-        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
+        if (it[s_idx].kind == Kind::ACTION) {
+            if (s_page == SettingsPage::RADIO && it[s_idx].id == 60)
+                return "ENT open knob editor";
+            return "ENT reset radio to STOCK";
+        }
         return "ENT edit  ;/.  ` back";
     }
     return ";/.  ENT  ` back";
@@ -1087,6 +1170,13 @@ void update() {
             SFX::play(SFX::BACK_NAV);
             return;
         }
+        // RADIO_EDIT → back to RADIO, land on EDIT row
+        if (s_page == SettingsPage::RADIO_EDIT) {
+            s_page = SettingsPage::RADIO;
+            s_idx = 2; s_scroll = 0;
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
         hide();
         return;
     }
@@ -1127,6 +1217,25 @@ void update() {
             Config::resetRadio();
             SFX::play(SFX::CONFIRM);
             Display::showToast("RADIO RESET", 1000);
+        } else if (s_page == SettingsPage::RADIO && cur.id == 60) {
+            // EDIT: build knob list for current method and open RADIO_EDIT
+            buildEditItems();
+            if (s_editN == 0) {
+                SFX::play(SFX::ERROR);
+                Display::showToast("NO EDIT KNOBS", 1000);
+                return;
+            }
+            s_page = SettingsPage::RADIO_EDIT;
+            s_idx = 0; s_scroll = 0;
+            SFX::play(SFX::MENU_CLICK);
+            char toast[24];
+            snprintf(toast, sizeof(toast), "EDIT: %s", currentMethodName());
+            Display::showToast(toast, 800);
+        } else if (s_page == SettingsPage::RADIO_EDIT && cur.id == 99) {
+            // Back from RADIO_EDIT
+            s_page = SettingsPage::RADIO;
+            s_idx = 2; s_scroll = 0; // land on EDIT row
+            SFX::play(SFX::BACK_NAV);
         }
         return;
     }
@@ -1320,6 +1429,12 @@ void draw(M5Canvas& canvas) {
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
+    else if (s_page == SettingsPage::RADIO_EDIT) {
+        // Show "EDIT: METHODNAME" as title
+        static char editTitle[24];
+        snprintf(editTitle, sizeof(editTitle), "EDIT: %s", currentMethodName());
+        title = editTitle;
+    }
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
 
@@ -1361,14 +1476,27 @@ void draw(M5Canvas& canvas) {
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
 
     const char* const* hints = H_SCENE;
+    uint8_t hintIdx = s_idx;
     if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
     else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
-    if (s_idx < n) {
+    else if (s_page == SettingsPage::RADIO_EDIT) {
+        // Each EDITED item is a copy of an ALL_RADIO_KNOBS entry — find the
+        // matching hint by id so the description matches the highlighted knob.
+        hints = H_KNOBS;
+        hintIdx = 0;
+        for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+            if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) {
+                hintIdx = k;
+                break;
+            }
+        }
+    }
+    if (s_idx < n && (s_page != SettingsPage::RADIO_EDIT || hintIdx < ALL_KNOBS_N)) {
         canvas.setTextColor(UI_TITLE);
         canvas.setTextDatum(top_center);
-        canvas.drawString(hints[s_idx], DISPLAY_W / 2, MAIN_H - 10);
+        canvas.drawString(hints[hintIdx], DISPLAY_W / 2, MAIN_H - 10);
         canvas.setTextDatum(top_left);
     }
 }

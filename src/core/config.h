@@ -88,11 +88,11 @@ static const uint8_t HOP_SET_COUNT = 3;
 // The enum values are the on-disk format for the radio.hsMethod byte:
 //   0      -> AUTO (special, not a real method)
 //   1..N   -> Methods::name(idx - 1) from cap/methods/method_registry.cpp
-// Adding a new method no longer requires touching this enum — just add a
-// row to METHOD_LIST() in method_ctx.h and the new entry shows up in the
-// radio settings UI at the next index. Values written by older firmware
+// Adding a new method no longer requires touching this enum — just drop a
+// method_*.cpp with one CAP_METHOD_REGISTER() and the new entry shows up in
+// the radio settings UI at the next index. Values written by older firmware
 // (OURS=1, PAN=2) keep resolving to the same name because the first two
-// registry rows are still OURS and PAN in that order.
+// registry rows are still ALL and CLIENTS in that order.
 enum class HsMethod : uint8_t { AUTO = 0, OURS = 1, PAN = 2 };
 // Runtime count for the UI is 1 + Cap::Methods::count(); see
 // HS_METHOD_COUNT below. Use HS_METHOD_COUNT for legacy code that needs a
@@ -172,6 +172,14 @@ struct RadioConfig {
     // Prevents PCAP from growing too large (wpa-sec rejects >800-byte EAPOL).
     // 0 = never auto-stop. Suggested: 3-10 sec.
     uint8_t autoStopSec = 0;
+    // PWR / BURST radio knobs for injected frames (deauth/disassoc kicks).
+    // txPowerDb is applied once per capture session (WSLBypasser::setTxPowerDb)
+    // via esp_wifi_set_max_tx_power(); lower = quieter/stealthier, higher =
+    // better reach. burstPattern shapes how kickBurst rounds are spaced in
+    // WSLBypasser::sendBidirectionalKick and in the raw broadcast kick pairs
+    // of ALL/CLIENTS/FOCUS. 0=STRAIGHT 1=RANDOM(default) 2=CLUSTER 3=PULSE.
+    int8_t   txPowerDb = 20;      // 1..20 dBm injected-frame power (default max)
+    uint8_t  burstPattern = 1;    // 0=STRAIGHT 1=RANDOM(default=legacy) 2=CLUSTER 3=PULSE
 };
 
 struct BleConfig {

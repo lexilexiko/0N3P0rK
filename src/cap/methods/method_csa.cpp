@@ -68,7 +68,9 @@ void csaHerd(const Ctx& ctx) {
     }
 }
 
-CAP_METHOD_REGISTER("HERD", csaHerd, nullptr, resetCsaHerdState)
+// No method-scoped RADIO knobs (HERD is pure CSA beacons; HS DEPTH and
+// ATK RSSI live on the top RADIO page, shared by all methods).
+CAP_METHOD_REGISTER("HERD", csaHerd, nullptr, resetCsaHerdState, nullptr)
 
 } // namespace Methods
 } // namespace Cap

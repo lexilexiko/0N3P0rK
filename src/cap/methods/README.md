@@ -46,9 +46,13 @@ void myreset() {
 
 // ОБЯЗАТЕЛЬНО: одна строка регистрации в самом конце файла.
 // Любой из PROBE/RESET может быть nullptr, если не нужен.
-CAP_METHOD_REGISTER("MYMETHOD", mymethod, myprobe, myreset)
-// или без probe/reset:
-// CAP_METHOD_REGISTER("MYMETHOD", mymethod, nullptr, nullptr)
+// KNOBS — имя статического массива ручек метода (0-terminated список id
+// крутилок RADIO, которые метод реально читает), либо nullptr если таких
+// нет. Именно по нему меню RADIO→EDIT строит список настроек метода.
+static const uint8_t mymethodKnobs[] = {9, 10, 13, 14, 31, 0}; // KICK N BIDIR CSA AUTH FLOOD BURST
+CAP_METHOD_REGISTER("MYMETHOD", mymethod, myprobe, myreset, mymethodKnobs)
+// или без probe/reset/ручек:
+// CAP_METHOD_REGISTER("MYMETHOD", mymethod, nullptr, nullptr, nullptr)
 
 } // namespace Methods
 } // namespace Cap
@@ -61,8 +65,8 @@ CAP_METHOD_REGISTER("MYMETHOD", mymethod, myprobe, myreset)
 1. **Файл лежит в этой папке** (`src/cap/methods/`) — PlatformIO сам его подхватит.
 2. **`#include "method_ctx.h"`** — даёт `Ctx`, `BeaconSlot`, макрос регистрации.
 3. **Тело функции kick** — принимает `const Ctx& ctx`. Сигнатура фиксированная.
-4. **`CAP_METHOD_REGISTER("NAME", kick, probe, reset)`** в namespace `Cap::Methods`, в самом конце файла, после тела функций. Без `;` в конце вызова — макрос сам её ставит.
-5. **Имя (`NAME`)** — 4..7 символов, ASCII. Будет показано в UI как есть, поэтому лучше короткое и читаемое (`OURS`, `PAN`, `KARMA`, `PMKID`...).
+4. **`CAP_METHOD_REGISTER("NAME", kick, probe, reset, KNOBS)`** в namespace `Cap::Methods`, в самом конце файла, после тела функций. Без `;` в конце вызова — макрос сам её ставит. `KNOBS` — статический массив id ручек (что увидит юзер в RADIO→EDIT), или `nullptr`.
+5. **Имя (`NAME`)** — 4..7 символов, ASCII. Будет показано в UI как есть, поэтому лучше короткое и читаемое (`ALL`, `CLIENTS`, `FOCUS`, `HERD`...).
 
 ## Что опционально
 
@@ -153,7 +157,8 @@ void reset_probe_only() {
 }
 
 // kick = nullptr — диспетчер просто не будет нас кикать.
-CAP_METHOD_REGISTER("PMKIDONLY", nullptr, probe_only, reset_probe_only)
+// 5-й аргумент — ручки (nullptr = нет своих крутилок).
+CAP_METHOD_REGISTER("PMKIDONLY", nullptr, probe_only, reset_probe_only, nullptr)
 
 } // namespace Methods
 } // namespace Cap

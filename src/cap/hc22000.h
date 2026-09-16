@@ -23,8 +23,17 @@ uint16_t convertPcap(const char* pcapPath);
 uint16_t convertAllPcaps();
 
 // Bitmask of which EAPOL messages have been seen for this BSSID:
-// bit0=M1 bit1=M2 bit2=M3 bit3=M4. 0 if the BSSID isn't tracked at all.
+// bit0=M1 bit1=M2 bit2=M3 bit3=M4
+// bit4=pair valid (M1+M2 replay matched, crackable)
+// bit5=already written to SD
+// 0 if the BSSID isn't tracked at all.
 uint8_t handshakeMask(const uint8_t* bssid);
+
+// OR of handshakeMask across ALL active slots + extra status bits:
+// bit4=pair valid (M1+M2 replay matched, crackable)
+// bit5=already written to SD
+// Used by the bottom bar to show M1/M2/M3/M4 live without knowing BSSID.
+uint8_t globalHandshakeMask();
 
 // depth: 0 = M1+M2 only (same as hasPair() - already enough to crack),
 // 1 = also require M3, 2 = require the full 4-way (M1..M4). Always
