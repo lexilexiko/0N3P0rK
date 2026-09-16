@@ -1679,6 +1679,23 @@ bool isLocked() { return s_running && s_lockUntil != 0 && millis() < s_lockUntil
 
 const Counters& counters() { return s_cnt; }
 
+// Client count of the focused network for the bottom bar's "$N" badge.
+// Resolution order mirrors the bar's own focus logic: explicit bar target
+// (LOCK/PIN/HS), else the last BSSID we kicked, else the live lock, else the
+// last handshake network. Returns 0 if the target isn't in the live table yet.
+uint8_t targetClients() {
+    if (!s_running) return 0;
+    const uint8_t* t = nullptr;
+    uint8_t mac[6];
+    if (s_cnt.targetBssid[0] && parseColonMac(s_cnt.targetBssid, mac)) t = mac;
+    else if (!isZeroMac(s_kickBssid)) t = s_kickBssid;
+    else if (bssidLocked() && !isZeroMac(s_lockBssid)) t = s_lockBssid;
+    else if (!isZeroMac(s_lastHsBssid)) t = s_lastHsBssid;
+    if (!t) return 0;
+    const BeaconSlot* b = findBeacon(t);
+    return b ? b->clientN : 0;
+}
+
 bool isSkipped(const uint8_t* bssid) {
     return isSessionSkipped(bssid);
 }

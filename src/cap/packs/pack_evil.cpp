@@ -30,7 +30,7 @@ static const Preset kEvilPreset{
     /* jitterMs      */ 2,      // anti-WIDS spacing on the broadcast path
     /* cooldownSec   */ 6,      // let victims re-associate between strikes
     /* scoreThr      */ 0,      // attack anything that scores
-    /* hsDepth       */ 0,      // press on until +M3 when possible
+    /* hsDepth       */ 1,      // press on until +M3 when possible
     /* dataAct       */ 1,      // real data frames feed the hunger score
     /* strictLock    */ true,   // never drift off the locked BSSID
     /* depthHoldSec  */ 10,     // hold after a pair so M3/M4 still land

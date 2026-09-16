@@ -22,7 +22,7 @@ static const Preset kPorkchopPreset{
     /* jitterMs      */ 3,      // anti-WIDS spacing on broadcast path
     /* cooldownSec   */ 8,      // per-AP cooldown (FOCUS scoring)
     /* scoreThr      */ 0,      // attack anything that scores
-    /* hsDepth       */ 0,      // wait for +M3 when possible
+    /* hsDepth       */ 1,      // wait for +M3 when possible
     /* dataAct       */ 1,      // real data frames feed activity score
     /* strictLock    */ true,   // never drift off locked BSSID
     /* depthHoldSec  */ 8,      // hold after pair to collect M3/M4
