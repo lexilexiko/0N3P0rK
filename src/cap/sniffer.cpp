@@ -1701,8 +1701,8 @@ void stop() {
     closeFile();
     Storage::compactLoot();
     WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(false, false);
+    WiFi.disconnect(true, false);
+    WiFi.mode(WIFI_OFF);
     (void)hopped;
     Serial.printf("[CAP] stopped seen=%u eapol=%u written=%u deauth=%u dropped=%u\n",
                   s_cnt.framesSeen, s_cnt.framesEapol,
