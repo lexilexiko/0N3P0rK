@@ -1,6 +1,6 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.1fix**  
+**Current version: 1.3.2Ffix**  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -533,6 +533,10 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Verified the PlatformIO build for the M5Stack StampS3 target.
 - Kept the same firmware target for the original M5Cardputer and Cardputer
   ADV hardware.
+
+
+### 1.3.2 (current)
+---Soon__
 
 ---
 
