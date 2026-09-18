@@ -183,6 +183,7 @@ static const Item KEYS[] = {
     {"WIFI",     Kind::BIND, 14, 0, 0, 0},
     {"STOP",     Kind::BIND, 15, 0, 0, 0},
     {"TASKS",    Kind::BIND, 16, 0, 0, 0},
+    {"SNAP",     Kind::BIND, 17, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 

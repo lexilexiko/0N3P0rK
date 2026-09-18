@@ -5,6 +5,7 @@
 #include "../ui/keys.h"
 #include "../ui/loot_menu.h"
 #include "../ui/settings_menu.h"
+#include "../ui/screenshot.h"
 #include "../modes/evilpig.h"
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
@@ -283,6 +284,9 @@ void loop() {
     // Any key wakes the dimmed backlight (not only isChange, not only FARM).
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
+
+    if (!SettingsMenu::isTyping() && !FileMgrMode::isTyping())
+        Screenshot::poll();
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 

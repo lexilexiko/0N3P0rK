@@ -20,6 +20,7 @@
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
 #include "task_manager.h"
+#include "screenshot.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -334,6 +335,9 @@ static void doAction(uint8_t id) {
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::PIGPASS);
             break;
+        case 24:
+            Screenshot::take();
+            break;
         case 8: {
             PersonalityConfig& p = Config::personality();
             p.freeLife = !p.freeLife;
@@ -435,7 +439,7 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 bool tryHotkey() {
     static const uint8_t ACT[HOTKEY_COUNT] = {
         2, 1, 10, 9, 13, 15, 16, 4, 11, 20,
-        7, 22, 21, 17, 6, 3, 23
+        7, 22, 21, 17, 6, 3, 23, 24
     };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
