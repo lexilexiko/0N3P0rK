@@ -1451,7 +1451,7 @@ static void startCommon(RunMode mode) {
     if (s_running) stop();
     s_ringSlots = Config::radio().ringSlots;
     if (s_ringSlots != 4 && s_ringSlots != 8 && s_ringSlots != 12 &&
-        s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 32) {
+        s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 28) {
         s_ringSlots = 12;
     }
     if (!allocateCaptureMemory()) {
@@ -1498,7 +1498,7 @@ static void startCommon(RunMode mode) {
     clearSkipList();
     s_skipKeyWas = false;
     s_mode = mode;
-    s_hopEnabled = (mode == RunMode::Aggressive);
+    s_hopEnabled = (mode == RunMode::Light || mode == RunMode::Aggressive);
     s_deauthEnabled = (mode != RunMode::Light) && Config::radio().deauth;
     if (mode != RunMode::Pinned) {
         s_pinOk = false;

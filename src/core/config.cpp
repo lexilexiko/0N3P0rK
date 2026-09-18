@@ -159,7 +159,7 @@ bool Config::init() {
         r.hsFileBytes != 4096 && r.hsFileBytes != 8192)
         r.hsFileBytes = 2048;
     if (r.ringSlots != 4 && r.ringSlots != 8 && r.ringSlots != 12 &&
-        r.ringSlots != 16 && r.ringSlots != 24 && r.ringSlots != 32)
+        r.ringSlots != 16 && r.ringSlots != 24 && r.ringSlots != 28)
         r.ringSlots = 12;
     // pack lives in its own registry (Cap::Packs), separate bound from
     // hsMethod's - CUSTOM is the one value allowed above that bound
