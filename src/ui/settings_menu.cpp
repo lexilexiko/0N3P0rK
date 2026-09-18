@@ -230,7 +230,7 @@ static const char* const H_RADIO[] = {
     "ALL / PRI 1-6-11 FIRST / CORE.",
     "SKIP WEAK APS FOR KICK.",
     "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
-    "CAPTURE RING: 4/8/12/16/24 SLOTS. MORE USES MORE RAM.",
+    "CAPTURE RING: 4/8/12/16/24/32 SLOTS. MORE USES MORE RAM.",
     "RICH RADIOTAP CH/RSSI IN PCAP.",
     "TX POWER OF INJECTED KICK FRAMES (DBM).",
     "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
@@ -624,7 +624,7 @@ static bool setValue(const Item& it, int v) {
     }
 
     if (isRadioPage() && it.id == 29) {
-        static const uint8_t slots[] = {4, 8, 12, 16, 24};
+        static const uint8_t slots[] = {4, 8, 12, 16, 24, 32};
         int current = (int)r.ringSlots;
         uint8_t slot = 2;
         for (uint8_t i = 0; i < 6; i++) {
