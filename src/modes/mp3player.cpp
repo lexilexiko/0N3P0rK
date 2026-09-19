@@ -36,7 +36,8 @@ const uint8_t  MAX_TRACKS     = 32;
 // capture files. Do NOT call this NAME_MAX: newlib's <limits.h> (reached from
 // Arduino.h -> FreeRTOS -> limits.h) already #defines NAME_MAX as 255, which
 // turns the declaration into "const uint8_t 255 = 48;".
-const uint8_t  TRACK_NAME_MAX = Storage::FILE_NAME_MAX;
+const uint8_t  TRACK_NAME_MAX = 64;
+const uint16_t TRACK_PATH_MAX = 192;  // full SD path; do not truncate long filenames
 const size_t   READ_CHUNK     = 4096;  // larger SD reads reduce underruns on long/VBR files
 const uint8_t  PCM_SLOTS      = 3;      // rotating PCM buffers (3 = safe, per M5Unified)
 const uint16_t PCM_MAX        = 1152;   // MPEG-1 layer III frame = 1152 samples/ch
@@ -53,6 +54,7 @@ bool    s_hasResume = false;
 uint8_t s_idx     = 0;
 uint8_t s_n       = 0;
 char    s_names[MAX_TRACKS][TRACK_NAME_MAX];
+char    s_paths[MAX_TRACKS][TRACK_PATH_MAX];
 uint8_t s_vol     = 70;
 char    s_msg[28] = "";
 
@@ -289,8 +291,16 @@ uint32_t firstMp3Frame(uint32_t start) {
 }
 
 bool openTrack(uint8_t idx, uint32_t pos) {
-    char path[96];
-    snprintf(path, sizeof(path), "%s/%s", MUSIC_DIR, s_names[idx]);
+    // Open the exact path captured during rescan.  Do NOT rebuild it from
+    // the display name: Storage::FILE_NAME_MAX is 48 bytes and long UTF-8
+    // filenames (for example Cyrillic names) can exceed that limit.  The old
+    // code truncated the name, so SD.open() returned false even for a healthy
+    // 3-6 MB MP3.
+    const char* path = s_paths[idx];
+    if (!path[0]) {
+        setMsg("OPEN FAIL");
+        return false;
+    }
     s_file = SD.open(path, "r");
     if (!s_file) {
         setMsg("OPEN FAIL");
@@ -479,6 +489,8 @@ void keyAction(uint8_t i) {
 
 void rescan() {
     s_n = 0;
+    memset(s_names, 0, sizeof(s_names));
+    memset(s_paths, 0, sizeof(s_paths));
     s_msg[0] = '\0';
     if (!Storage::available()) {
         setMsg("NO SD");
@@ -497,9 +509,28 @@ void rescan() {
             const char* nm = Storage::baseName(f.name());
             size_t l = nm ? strlen(nm) : 0;
             if (l > 4 && strcasecmp(nm + l - 4, ".mp3") == 0) {
-                strncpy(s_names[s_n], nm, TRACK_NAME_MAX - 1);
-                s_names[s_n][TRACK_NAME_MAX - 1] = '\0';
-                s_n++;
+                // Keep the complete filesystem path separately from the
+                // short UI label.  Opening from the truncated label was the
+                // reason long filenames reported OPEN FAIL.
+                const char* full = f.name();
+                if (full && full[0]) {
+                    strncpy(s_paths[s_n], full, TRACK_PATH_MAX - 1);
+                    s_paths[s_n][TRACK_PATH_MAX - 1] = '\0';
+
+                    // Some FS implementations return only the basename from
+                    // File::name(); make the stored path absolute in that case.
+                    if (s_paths[s_n][0] != '/') {
+                        char tmp[TRACK_PATH_MAX];
+                        snprintf(tmp, sizeof(tmp), "%s/%s", MUSIC_DIR, s_paths[s_n]);
+                        strncpy(s_paths[s_n], tmp, TRACK_PATH_MAX - 1);
+                        s_paths[s_n][TRACK_PATH_MAX - 1] = '\0';
+                    }
+
+                    const char* shown = Storage::baseName(s_paths[s_n]);
+                    strncpy(s_names[s_n], shown ? shown : nm, TRACK_NAME_MAX - 1);
+                    s_names[s_n][TRACK_NAME_MAX - 1] = '\0';
+                    s_n++;
+                }
             }
         }
         f.close();

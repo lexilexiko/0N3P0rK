@@ -632,25 +632,71 @@ static void drawSeasonDecor(M5Canvas& canvas, int16_t cx, int16_t cy) {
 }
 
 static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
-    // Fixed table base: same tabletop + selected barrel V5 in every season.
-    const int16_t by = (int16_t)(cy - 14);
+    // EXACT tabletop layout from the preview: green cloth, pig emblem,
+    // centered barrel support, and the small card that rotates in place.
+    const int16_t top = cy - 24;
+    const int16_t bottom = top + 1;
 
-    // Barrel shadow — centered directly under the support.
+    // Tabletop — same proportions as the preview, not the old wide tabletop.
+    canvas.fillRect(cx - 17, top - 10, 34, 2, 0x4120);
+    canvas.fillRect(cx - 20, top - 8, 40, 7, 0x4120);
+    canvas.fillRect(cx - 17, top - 1, 34, 2, 0x4120);
+
+    canvas.fillRect(cx - 17, top - 9, 34, 2, 0x8B46);
+    canvas.fillRect(cx - 19, top - 7, 38, 5, 0x8B46);
+    canvas.fillRect(cx - 17, top - 2, 34, 2, 0x8B46);
+    canvas.fillRect(cx - 16, top - 9, 32, 1, 0xD18A);
+
+    // Green cloth.
+    canvas.fillRect(cx - 15, top - 7, 30, 5, 0x315A);
+    canvas.fillRect(cx - 13, top - 8, 26, 1, 0x315A);
+    canvas.fillRect(cx - 13, top - 2, 26, 1, 0x284A);
+
+    // Tiny pig emblem in the middle of the cloth.
+    const uint16_t pig = 0x7C36;
+    const int8_t pigPx[][2] = {
+        {-2,-5},{-1,-6},{0,-5},{-4,-4},{2,-4},{-1,-3}
+    };
+    for (size_t i = 0; i < sizeof(pigPx) / sizeof(pigPx[0]); ++i)
+        canvas.drawPixel(cx + pigPx[i][0], top + pigPx[i][1], pig);
+
+    // Little chips/cards on the tabletop.
+    canvas.fillRect(cx - 10, top - 1, 3, 2, 0xD6C9);
+    canvas.drawPixel(cx - 9, top - 2, 0x4D78);
+    canvas.fillRect(cx + 8, top - 1, 3, 2, 0xD6C9);
+    canvas.drawPixel(cx + 9, top - 2, 0xC447);
+
+    // Rotating card — exactly the preview behavior: it turns edge-on and back.
+    const float phase = (float)(millis() % 1800UL) / 1800.0f;
+    const float cs = fabsf(cosf(phase * 6.2831853f));
+    const int16_t cw = (int16_t)max(1, (int)lroundf(8.0f * cs));
+    const int16_t cardX = cx + 7;
+    const int16_t cardY = top - 13;
+    canvas.fillRect(cardX - 4, cardY + 7, 9, 1, 0x3B28);
+    if (cs < 0.10f) {
+        canvas.fillRect(cardX, cardY, 1, 7, 0xEF5D);
+    } else {
+        const int16_t left = cardX - cw / 2;
+        canvas.fillRect(left, cardY, cw, 7, 0xEF5D);
+        canvas.fillRect(left + 1, cardY + 1, max(1, (int)cw - 2), 5, 0xA63B);
+        if (cw >= 5) {
+            canvas.drawPixel(cardX - 1, cardY + 3, 0xE6C6);
+            canvas.drawPixel(cardX,     cardY + 3, 0xE6C6);
+        }
+    }
+
+    // Barrel is anchored immediately under the tabletop, centered exactly.
+    const int16_t by = bottom;
     canvas.fillRect(cx - 9, by + 11, 18, 2, 0x6241);
-
-    // Dark outer silhouette: 12px top -> 16px -> 18px body -> 16px -> 12px bottom.
     canvas.fillRect(cx - 6, by,     12, 1, 0x4120);
     canvas.fillRect(cx - 8, by + 1, 16, 1, 0x4120);
     canvas.fillRect(cx - 9, by + 2, 18, 7, 0x4120);
     canvas.fillRect(cx - 8, by + 9, 16, 1, 0x4120);
     canvas.fillRect(cx - 6, by + 10, 12, 1, 0x4120);
 
-    // Wooden body.
     canvas.fillRect(cx - 5, by + 1, 10, 1, 0x8B46);
     canvas.fillRect(cx - 7, by + 2, 14, 7, 0x8B46);
     canvas.fillRect(cx - 6, by + 9, 12, 1, 0x8B46);
-
-    // Pixel-rounded corners.
     canvas.drawPixel(cx - 8, by + 2, 0x9650);
     canvas.drawPixel(cx + 7, by + 2, 0x9650);
     canvas.drawPixel(cx - 9, by + 3, 0x8B46);
@@ -659,32 +705,14 @@ static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
     canvas.drawPixel(cx + 8, by + 7, 0x8B46);
     canvas.drawPixel(cx - 8, by + 8, 0x8B46);
     canvas.drawPixel(cx + 7, by + 8, 0x8B46);
-
-    // Vertical wooden boards / texture.
     canvas.fillRect(cx - 5, by + 2, 2, 7, 0xA960);
     canvas.fillRect(cx + 4, by + 2, 2, 7, 0x6C35);
     canvas.drawPixel(cx - 2, by + 5, 0xB96B);
     canvas.drawPixel(cx + 2, by + 7, 0x6D35);
-
-    // Metal hoops.
     canvas.fillRect(cx - 8, by + 3, 16, 1, 0xD18A);
     canvas.fillRect(cx - 9, by + 7, 18, 1, 0xD18A);
 
-    // Fixed tabletop.
-    canvas.fillRect(cx - 22, cy - 24, 46, 9, 0x9A40);
-    canvas.drawRect(cx - 22, cy - 24, 46, 9, 0x7200);
-    canvas.fillRect(cx - 21, cy - 23, 44, 2, 0xC408);
-
-    // Fixed cards.
-    canvas.fillRect(cx - 8, cy - 34, 14, 11, 0xF800);
-    canvas.drawRect(cx - 8, cy - 34, 14, 11, 0xC000);
-    canvas.fillRect(cx - 7, cy - 33, 12, 9, 0xFFFF);
-
-    canvas.fillRect(cx - 4, cy - 36, 14, 11, 0x001F);
-    canvas.drawRect(cx - 4, cy - 36, 14, 11, 0x000F);
-    canvas.fillRect(cx - 3, cy - 35, 12, 9, 0xFFFF);
-
-    // Seasonal overlay is intentionally last: it can rest on the tabletop/cards.
+    // Seasonal effects are the final overlay only.
     drawSeasonDecor(canvas, cx, cy);
 }
 
