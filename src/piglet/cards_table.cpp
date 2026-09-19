@@ -14,7 +14,7 @@
 
 namespace CardsTable {
 
-static constexpr int16_t GROUND_Y = 106;
+static constexpr int16_t GROUND_Y = 117;
 static constexpr uint8_t MAX_HP   = 10;
 static constexpr uint8_t HAND_N   = 5;
 static constexpr uint8_t PICK_N   = 2;
