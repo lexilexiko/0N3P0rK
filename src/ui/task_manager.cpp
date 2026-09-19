@@ -1,4 +1,5 @@
 #include "task_manager.h"
+#include "loot_menu.h"
 
 #include "display.h"
 #include "keys.h"
@@ -12,6 +13,7 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/xfer.h"
+#include "../modes/mp3player.h"
 #include "../sync/pwncrack.h"
 #include "../sync/wpasec.h"
 #include <WiFi.h>
@@ -24,7 +26,7 @@ namespace {
 
 enum Row : uint8_t {
     RADIO, WIFI, BLE, IR, EVILPIG, PIGPASS, SPECTRUM, USBSD, FILEMGR, XFER,
-    BADUSB, WPA_SYNC, PWN_SYNC, STOP_ALL, ROW_COUNT
+    BADUSB, WPA_SYNC, PWN_SYNC, LOOT, MP3, STOP_ALL, ROW_COUNT
 };
 
 bool s_running = false;
@@ -34,13 +36,14 @@ bool s_keyWas = false;
 const char* rowName(Row row) {
     static const char* const names[] = {
         "RADIO", "WIFI", "BLE", "IR", "EVILPIG", "PIGPASS", "SPECTRUM",
-        "USB SD", "FILES", "XFER", "BADUSB", "WPA-SEC", "PWNCRACK", "STOP ALL"
+        "USB SD", "FILES", "XFER", "BADUSB", "WPA-SEC", "PWNCRACK", "LOOT", "MP3", "STOP ALL"
     };
     return names[row];
 }
 
 bool rowActive(Row row) {
     switch (row) {
+        case STOP_ALL: return false;
         case RADIO: return Cap::isRunning();
         case WIFI: return WiFi.getMode() != WIFI_OFF;
         case BLE: return BlePigMode::isRunning();
@@ -54,7 +57,8 @@ bool rowActive(Row row) {
         case BADUSB: return BadUsbMode::isRunning();
         case WPA_SYNC: return WPASec::isBusy();
         case PWN_SYNC: return Pwncrack::isBusy();
-        case STOP_ALL: return false;
+        case LOOT: return LootMenu::isActive();
+        case MP3: return Mp3PlayerMode::isRunning();
         default: return false;
     }
 }
@@ -67,6 +71,8 @@ const char* rowCost(Row row) {
         case WIFI: return "dyn";
         case WPA_SYNC:
         case PWN_SYNC: return "TLS";
+        case LOOT: return "UI";
+        case MP3: return "~30K";
         default: return "-";
     }
 }
@@ -87,6 +93,8 @@ void stopRow(Row row) {
         case FILEMGR: if (FileMgrMode::isRunning()) FileMgrMode::stop(); break;
         case XFER: if (XferMode::isRunning()) XferMode::stop(); break;
         case BADUSB: if (BadUsbMode::isRunning()) BadUsbMode::stop(); break;
+        case MP3: if (Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop(); break;
+        case LOOT: if (LootMenu::isActive()) LootMenu::hide(); break;
         case WPA_SYNC:
         case PWN_SYNC:
             // Network sync is deliberately not force-killed: the client owns
@@ -103,6 +111,8 @@ void stopRow(Row row) {
             if (FileMgrMode::isRunning()) FileMgrMode::stop();
             if (XferMode::isRunning()) XferMode::stop();
             if (BadUsbMode::isRunning()) BadUsbMode::stop();
+            if (Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop();
+            if (LootMenu::isActive()) LootMenu::hide();
             WiFi.disconnect(true, false);
             WiFi.mode(WIFI_OFF);
             break;

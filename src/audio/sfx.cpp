@@ -579,12 +579,23 @@ void setScreenOffMuted(bool muted) {
     applyMuteMask(m);
 }
 
+void setMp3Muted(bool muted) {
+    uint8_t m = s_muteMask;
+    if (muted) m |= MUTE_MP3;
+    else       m = (uint8_t)(m & ~MUTE_MP3);
+    applyMuteMask(m);
+}
+
 bool isMuted() {
     return s_muteMask != 0;
 }
 
 uint8_t muteMask() {
     return s_muteMask;
+}
+
+void refreshVolume() {
+    applyVolume();
 }
 
 void play(Event event) {

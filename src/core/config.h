@@ -76,6 +76,8 @@ struct PersonalityConfig {
     // Cardputer RGB LED (WS2812)
     bool ledEnabled = true;
     uint8_t ledBright = 40;   // 0..100
+    // MP3 player (SD /0N3P0rK/music) — playback volume in percent
+    uint8_t mp3Volume = 70;   // 0..100
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

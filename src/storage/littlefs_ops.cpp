@@ -128,6 +128,7 @@ bool begin() {
     SD.mkdir(DIR_IR);
     SD.mkdir(DIR_WOLF);
     SD.mkdir(DIR_TALK);
+    SD.mkdir(DIR_MUSIC);
     migrateLegacy();
     unlockSd();
     return true;

@@ -9,6 +9,7 @@
 #include "core/xp.h"
 #include "core/app.h"
 #include "ui/display.h"
+#include "modes/mp3player.h"
 #include "ui/menu.h"
 #include "piglet/avatar.h"
 #include "piglet/mood.h"
@@ -97,6 +98,7 @@ void loop() {
     SFX::update();
     XP::tick();
     Cap::loop();
+    Mp3PlayerMode::tick();   // keeps SD music running with the window hidden / screen off
     Led::update();
 
     if (millis() - s_lastHeapLog > 30000) {
