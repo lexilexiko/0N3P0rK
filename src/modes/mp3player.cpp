@@ -72,6 +72,7 @@ uint16_t s_bitrate = 0;
 int16_t  s_level = 0;
 uint8_t  s_keyWas = 0;
 bool     s_rWas = false;
+bool     s_escWas = false;
 
 // Lives with the SD scan further down, but togglePlay()/step() call it when the
 // track list is still empty, so it needs a declaration up here.
@@ -154,6 +155,31 @@ void onPcm(MP3FrameInfo& info, short* pcm, size_t len, void*) {
 }
 
 // ------------------------------------------------------------- track open/close
+// Size of the ID3v2 tag in front of the first MP3 frame: 10-byte header +
+// synchsafe size (+ 10-byte footer when the flag is set). 0 = no usable tag.
+//
+// Big files almost always carry a tag (usually with cover art), and feeding it
+// to Helix is a trap: the wrapper only drops junk when it finds a sync word
+// *after* byte 4 (presync: `if (pos > 3)`), while the artwork is full of false
+// 0xFF 0xEx pairs whose bogus frame length makes MP3Decode return
+// ERR_MP3_INDATA_UNDERFLOW. resynch() then bails out on a nearly full frame
+// buffer, so the decoder grinds through the tag instead of draining it and the
+// track looks like it never opens. Little files with a 100-byte tag survive
+// that; 100 KB of artwork does not.
+uint32_t id3v2Size() {
+    if (!s_file) return 0;
+    uint8_t h[10];
+    s_file.seek(0);
+    if (s_file.read(h, sizeof(h)) != sizeof(h)) return 0;
+    if (memcmp(h, "ID3", 3) != 0) return 0;
+    if ((h[6] | h[7] | h[8] | h[9]) & 0x80u) return 0;   // not synchsafe: bogus
+    uint32_t sz = ((uint32_t)(h[6] & 0x7Fu) << 21) |
+                  ((uint32_t)(h[7] & 0x7Fu) << 14) |
+                  ((uint32_t)(h[8] & 0x7Fu) << 7)  |
+                  (uint32_t)(h[9] & 0x7Fu);
+    return sz + 10u + ((h[5] & 0x10u) ? 10u : 0u);
+}
+
 bool openTrack(uint8_t idx, uint32_t pos) {
     char path[96];
     snprintf(path, sizeof(path), "%s/%s", MUSIC_DIR, s_names[idx]);
@@ -163,7 +189,11 @@ bool openTrack(uint8_t idx, uint32_t pos) {
         return false;
     }
     s_bytes = (uint32_t)s_file.size();
-    if (pos > 0 && pos < s_bytes) s_file.seek(pos);
+    // Resume keeps the byte offset it was stopped at (already past the tag).
+    uint32_t start = pos;
+    if (start == 0) start = id3v2Size();
+    if (start >= s_bytes) start = 0;            // broken/oversized tag
+    s_file.seek(start);
     return true;
 }
 
@@ -446,6 +476,7 @@ void Mp3PlayerMode::start() {
     s_keyWas = 0;
     s_rWas = M5Cardputer.Keyboard.isKeyPressed('r') ||
              M5Cardputer.Keyboard.isKeyPressed('R');
+    s_escWas = keyEsc();   // `` ` `` still held from the menu must not exit on entry
     s_vol = Config::personality().mp3Volume;
     if (s_vol > 100) s_vol = 100;
     if (Cap::isRunning()) Cap::stop();   // hand the capture heap to the decoder
@@ -456,6 +487,7 @@ void Mp3PlayerMode::start() {
 void Mp3PlayerMode::stop() {
     if (!running) return;
     running = false;
+    s_escWas = false;
     stopAudio();
     closeFile();
     releaseDecoder();
@@ -474,6 +506,20 @@ void Mp3PlayerMode::tick() {
 void Mp3PlayerMode::update() {
     if (!running) return;
     if (App::windowHidden()) return;
+
+    // Overlay modes own their Esc. App::loop()'s generic `` ` `` handler is
+    // unreachable here: its keyNewPress(s_minLatch) call already consumes
+    // Keyboard.isChange() (isChange() latches _last_key_size), so the later
+    // isChange() check bails out before the Esc branch. FileMgr / XFER / USB SD
+    // exit on their own keyEsc() — the player has to do the same.
+    if (keyEsc()) {
+        if (!s_escWas) {
+            s_escWas = true;
+            App::setMode(AppMode::MENU);   // stops the audio via Mp3PlayerMode::stop()
+        }
+        return;
+    }
+    s_escWas = false;
 
     pollTransportKeys(0);
 
@@ -550,6 +596,10 @@ void Mp3PlayerMode::draw(M5Canvas& canvas) {
     } else {
         canvas.setTextColor(UiStyle::GOLD);
         canvas.drawString("R RESCAN   SD /0N3P0rK/music", 6, 15);
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.setTextDatum(top_right);
+        canvas.drawString("` EXIT", 234, 15);
+        canvas.setTextDatum(top_left);
     }
 
     // ---- cassette (reels spin while playing) ----
@@ -598,6 +648,10 @@ void Mp3PlayerMode::draw(M5Canvas& canvas) {
              (unsigned)(s_rate / 1000), (unsigned)((s_rate % 1000) / 100),
              (unsigned)s_bitrate);
     canvas.drawString(info, 6, 93);
+    // The transport bar is full (1..5 + volume), so the exit key lives here.
+    canvas.setTextColor(UiStyle::GOLD);
+    canvas.drawString("` EXIT", 104, 93);
+    canvas.setTextColor(UiStyle::DIM);
     snprintf(info, sizeof(info), "HEAP%3uK", (unsigned)(ESP.getFreeHeap() / 1024));
     canvas.setTextDatum(top_right);
     canvas.drawString(info, 234, 93);
