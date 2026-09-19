@@ -7,6 +7,7 @@
 #include "../audio/sfx.h"
 #include "../ui/keys.h"
 #include "../ui/display.h"
+#include "weather.h"
 #include <esp_random.h>
 #include <M5Cardputer.h>
 #include <string.h>
@@ -503,17 +504,141 @@ void update() {
     }
 }
 
+static void drawSeasonDecor(M5Canvas& canvas, int16_t cx, int16_t cy) {
+    // Seasonal layer only. The table geometry, barrel V5 and cards stay fixed.
+    const Season season = Weather::getActiveSeason();
+
+    // Small helpers keep the decoration deliberately pixel-art and cheap.
+    auto px = [&](int16_t x, int16_t y, uint16_t c) {
+        canvas.drawPixel(x, y, c);
+    };
+    auto block = [&](int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) {
+        canvas.fillRect(x, y, w, h, c);
+    };
+
+    switch (season) {
+        case Season::SPRING: {
+            // Tiny flowers/grass around the table + a couple of petals on top.
+            block(cx - 31, cy - 8, 1, 5, 0x35A8);
+            px(cx - 32, cy - 9, 0xF6A0);
+            px(cx - 30, cy - 9, 0xF6A0);
+            px(cx - 31, cy - 10, 0xFFE0);
+            block(cx + 29, cy - 7, 1, 5, 0x35A8);
+            px(cx + 28, cy - 8, 0xF6A0);
+            px(cx + 30, cy - 8, 0xF6A0);
+            px(cx + 29, cy - 9, 0xFFE0);
+            px(cx - 14, cy - 21, 0xF6A0);
+            px(cx + 15, cy - 18, 0xFFE0);
+            // A tiny green sprout on the tabletop.
+            px(cx + 10, cy - 25, 0x35A8);
+            px(cx + 11, cy - 26, 0x35A8);
+            break;
+        }
+
+        case Season::SUMMER: {
+            // Dry grass and warm little accents around the fixed table.
+            block(cx - 32, cy - 7, 1, 5, 0x4C83);
+            px(cx - 33, cy - 9, 0x7D94);
+            block(cx + 31, cy - 6, 1, 5, 0x4C83);
+            px(cx + 32, cy - 8, 0x7D94);
+            px(cx - 18, cy - 17, 0xE6A0);
+            px(cx + 18, cy - 20, 0xE6A0);
+            break;
+        }
+
+        case Season::AUTUMN: {
+            // Fallen leaves around the table and two leaves resting on the top.
+            const uint16_t leafA = 0xD4A0;
+            const uint16_t leafB = 0xA940;
+            px(cx - 31, cy - 6, leafA);
+            px(cx + 32, cy - 9, leafB);
+            px(cx - 27, cy - 3, leafB);
+            px(cx + 27, cy - 2, leafA);
+            px(cx - 13, cy - 22, leafA);
+            px(cx + 13, cy - 20, leafB);
+            // Small leaf vein.
+            px(cx - 12, cy - 21, 0x8200);
+            px(cx + 12, cy - 19, 0x8200);
+            break;
+        }
+
+        case Season::WINTER: {
+            // Snow sits on the tabletop, cards and barrel cap without changing geometry.
+            const uint16_t snow = 0xFFFF;
+            const uint16_t snowShade = 0xD6BA;
+            block(cx - 20, cy - 24, 42, 2, snow);
+            px(cx - 18, cy - 22, snowShade);
+            px(cx + 17, cy - 22, snowShade);
+            // Snow caps on both cards.
+            block(cx - 8, cy - 34, 14, 2, snow);
+            block(cx - 4, cy - 36, 14, 2, snow);
+            // Snow on barrel crown.
+            block(cx - 6, cy - 14, 12, 1, snow);
+            // A few flakes nearby.
+            px(cx - 30, cy - 7, snow);
+            px(cx + 31, cy - 4, snow);
+            px(cx + 25, cy - 11, snowShade);
+            break;
+        }
+
+        case Season::RETRO: {
+            // Retro palette: tiny neon/pixel accents, while the wooden table remains unchanged.
+            px(cx - 31, cy - 8, 0xF81F);
+            px(cx + 31, cy - 8, 0x07FF);
+            px(cx - 17, cy - 21, 0xF81F);
+            px(cx + 18, cy - 19, 0x07FF);
+            break;
+        }
+
+        case Season::NOIR: {
+            // Noir: restrained monochrome highlights.
+            px(cx - 31, cy - 7, 0xC618);
+            px(cx + 31, cy - 7, 0x8410);
+            px(cx - 15, cy - 21, 0xC618);
+            px(cx + 15, cy - 19, 0x8410);
+            break;
+        }
+
+        case Season::CITY: {
+            // Urban alley: tiny litter/concrete marks around the table and one tabletop detail.
+            block(cx - 32, cy - 5, 3, 2, 0x8410);
+            block(cx + 29, cy - 9, 3, 2, 0x4208);
+            px(cx - 14, cy - 21, 0x7BEF);
+            px(cx + 14, cy - 19, 0xC618);
+            break;
+        }
+
+        case Season::DESERT: {
+            // Retro desert: sand, pebble, dry grass, cactus hint + sand on the tabletop/cards.
+            const uint16_t sand = 0xD3A0;
+            const uint16_t sandDark = 0x9B4D;
+            const uint16_t cactus = 0x4A84;
+            px(cx - 32, cy - 7, sand);
+            px(cx - 29, cy - 3, sandDark);
+            px(cx + 31, cy - 8, sand);
+            px(cx + 28, cy - 3, sandDark);
+            // Tiny cactus at left of the barrel.
+            block(cx - 31, cy - 12, 2, 7, cactus);
+            block(cx - 33, cy - 9, 2, 2, cactus);
+            block(cx - 29, cy - 11, 2, 2, cactus);
+            // Sand grains on the tabletop and cards.
+            px(cx - 15, cy - 21, sand);
+            px(cx + 17, cy - 20, sandDark);
+            px(cx - 5, cy - 31, sand);
+            px(cx + 4, cy - 33, sand);
+            break;
+        }
+    }
+}
+
 static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
-    // Farm table with the selected V5 barrel support.
-    // Tabletop: cy-24 .. cy-15. Barrel starts immediately underneath
-    // and is always centered on the same cx, so it cannot "fly away".
+    // Fixed table base: same tabletop + selected barrel V5 in every season.
     const int16_t by = (int16_t)(cy - 14);
 
     // Barrel shadow — centered directly under the support.
     canvas.fillRect(cx - 9, by + 11, 18, 2, 0x6241);
 
-    // Dark outer silhouette:
-    // 12px top -> 16px -> 18px body -> 16px -> 12px bottom.
+    // Dark outer silhouette: 12px top -> 16px -> 18px body -> 16px -> 12px bottom.
     canvas.fillRect(cx - 6, by,     12, 1, 0x4120);
     canvas.fillRect(cx - 8, by + 1, 16, 1, 0x4120);
     canvas.fillRect(cx - 9, by + 2, 18, 7, 0x4120);
@@ -541,16 +666,16 @@ static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
     canvas.drawPixel(cx - 2, by + 5, 0xB96B);
     canvas.drawPixel(cx + 2, by + 7, 0x6D35);
 
-    // Metal hoops following the barrel's curved silhouette.
+    // Metal hoops.
     canvas.fillRect(cx - 8, by + 3, 16, 1, 0xD18A);
     canvas.fillRect(cx - 9, by + 7, 18, 1, 0xD18A);
 
-    // Tabletop.
+    // Fixed tabletop.
     canvas.fillRect(cx - 22, cy - 24, 46, 9, 0x9A40);
     canvas.drawRect(cx - 22, cy - 24, 46, 9, 0x7200);
     canvas.fillRect(cx - 21, cy - 23, 44, 2, 0xC408);
 
-    // Cards on the tabletop.
+    // Fixed cards.
     canvas.fillRect(cx - 8, cy - 34, 14, 11, 0xF800);
     canvas.drawRect(cx - 8, cy - 34, 14, 11, 0xC000);
     canvas.fillRect(cx - 7, cy - 33, 12, 9, 0xFFFF);
@@ -559,7 +684,8 @@ static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
     canvas.drawRect(cx - 4, cy - 36, 14, 11, 0x000F);
     canvas.fillRect(cx - 3, cy - 35, 12, 9, 0xFFFF);
 
-    // prompt when pig is near (approx — update sets Mood; visual always if close is hard here)
+    // Seasonal overlay is intentionally last: it can rest on the tabletop/cards.
+    drawSeasonDecor(canvas, cx, cy);
 }
 
 void draw(M5Canvas& canvas, int16_t yOffset) {
