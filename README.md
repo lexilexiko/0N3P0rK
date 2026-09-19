@@ -590,6 +590,9 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   ADV hardware.
 
 
+### 1.3.2 (current)
+---Soon__
+
 ### 1.3.4
 
 - Added the **MP3 player**: SD music scene, cassette + VU meter, five-key
@@ -605,9 +608,6 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   working from the farm.
 - Starting the player stops an active capture session to free heap for the
   decoder.
-
-### 1.3.2 (current)
----Soon__
 
 ---
 
