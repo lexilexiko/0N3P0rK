@@ -37,7 +37,7 @@ const uint8_t  MAX_TRACKS     = 32;
 // Arduino.h -> FreeRTOS -> limits.h) already #defines NAME_MAX as 255, which
 // turns the declaration into "const uint8_t 255 = 48;".
 const uint8_t  TRACK_NAME_MAX = Storage::FILE_NAME_MAX;
-const size_t   READ_CHUNK     = 512;    // MP3 bytes per SD read
+const size_t   READ_CHUNK     = 4096;  // larger SD reads reduce underruns on long/VBR files
 const uint8_t  PCM_SLOTS      = 3;      // rotating PCM buffers (3 = safe, per M5Unified)
 const uint16_t PCM_MAX        = 1152;   // MPEG-1 layer III frame = 1152 samples/ch
 const uint8_t  MUSIC_CH       = 0;      // M5.Speaker virtual channel used for music
@@ -73,6 +73,7 @@ int16_t  s_level = 0;
 uint8_t  s_keyWas = 0;
 bool     s_rWas = false;
 bool     s_escWas = false;
+uint8_t  s_feedStalled = 0;
 
 // Lives with the SD scan further down, but togglePlay()/step() call it when the
 // track list is still empty, so it needs a declaration up here.
@@ -168,16 +169,123 @@ void onPcm(MP3FrameInfo& info, short* pcm, size_t len, void*) {
 // that; 100 KB of artwork does not.
 uint32_t id3v2Size() {
     if (!s_file) return 0;
+
     uint8_t h[10];
-    s_file.seek(0);
+    if (s_file.position() != 0) s_file.seek(0);
     if (s_file.read(h, sizeof(h)) != sizeof(h)) return 0;
-    if (memcmp(h, "ID3", 3) != 0) return 0;
-    if ((h[6] | h[7] | h[8] | h[9]) & 0x80u) return 0;   // not synchsafe: bogus
+    if (memcmp(h, "ID3", 3) != 0) {
+        s_file.seek(0);
+        return 0;
+    }
+
+    // ID3v2.3/v2.4 store the tag length as a 4-byte synchsafe integer.
+    // Reject malformed headers instead of accidentally seeking into the file.
+    if ((h[6] | h[7] | h[8] | h[9]) & 0x80u) {
+        s_file.seek(0);
+        return 0;
+    }
+
     uint32_t sz = ((uint32_t)(h[6] & 0x7Fu) << 21) |
                   ((uint32_t)(h[7] & 0x7Fu) << 14) |
                   ((uint32_t)(h[8] & 0x7Fu) << 7)  |
                   (uint32_t)(h[9] & 0x7Fu);
-    return sz + 10u + ((h[5] & 0x10u) ? 10u : 0u);
+
+    uint32_t total = sz + 10u + ((h[5] & 0x10u) ? 10u : 0u);
+    s_file.seek(0);
+    return total;
+}
+
+// Check the fixed bits of an MPEG audio frame header. This deliberately does
+// not try to calculate the frame length; Helix remains the authority on that.
+bool plausibleMp3Header(const uint8_t* h) {
+    if (!h) return false;
+    if (h[0] != 0xFF || (h[1] & 0xE0u) != 0xE0u) return false;
+
+    uint8_t version = (h[1] >> 3) & 0x03u;
+    uint8_t layer   = (h[1] >> 1) & 0x03u;
+    uint8_t br      = (h[2] >> 4) & 0x0Fu;
+    uint8_t sr      = (h[2] >> 2) & 0x03u;
+
+    if (version == 1 || layer != 1 || br == 15 || br == 0 || sr == 3) return false;
+    return true;
+}
+
+uint32_t mp3FrameLength(const uint8_t* h) {
+    if (!plausibleMp3Header(h)) return 0;
+
+    static const uint16_t brV1[] = {
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320
+    };
+    static const uint16_t brV2[] = {
+        0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160
+    };
+    static const uint32_t srBase[] = { 44100, 48000, 32000 };
+
+    uint8_t version = (h[1] >> 3) & 0x03u;
+    uint8_t brIdx   = (h[2] >> 4) & 0x0Fu;
+    uint8_t srIdx   = (h[2] >> 2) & 0x03u;
+    uint8_t pad     = (h[2] >> 1) & 0x01u;
+
+    uint32_t br = (version == 3) ? brV1[brIdx] : brV2[brIdx];
+    uint32_t sr = srBase[srIdx];
+    if (version == 2) sr /= 2;
+    else if (version == 0) sr /= 4;
+    if (!br || !sr) return 0;
+
+    // Layer III: MPEG-1 uses 144*kbps/samplerate; MPEG-2/2.5 uses 72.
+    uint32_t len = (version == 3)
+        ? (144000u * br) / sr
+        : (72000u * br) / sr;
+    return len + pad;
+}
+
+// Skip ID3 and any small amount of junk before the first real MP3 frame.
+// Candidate headers are confirmed by the following frame, so random FFEx
+// bytes in metadata/artwork are not mistaken for the stream start.
+uint32_t firstMp3Frame(uint32_t start) {
+    if (!s_file || start >= s_bytes) return start;
+
+    const uint32_t MAX_SCAN = 64u * 1024u;
+    const uint32_t end = (start + MAX_SCAN < s_bytes) ? start + MAX_SCAN : s_bytes;
+
+    uint8_t buf[512];
+    uint8_t h2[4];
+    uint32_t pos = start;
+
+    while (pos < end) {
+        s_file.seek(pos);
+        size_t got = s_file.read(buf, sizeof(buf));
+        if (got < 4) break;
+
+        for (size_t i = 0; i + 4 <= got; ++i) {
+            const uint8_t* h = buf + i;
+            if (!plausibleMp3Header(h)) continue;
+
+            uint32_t candidate = pos + (uint32_t)i;
+            uint32_t flen = mp3FrameLength(h);
+            if (flen < 24 || candidate + flen + 4 > s_bytes) continue;
+
+            s_file.seek(candidate + flen);
+            if (s_file.read(h2, 4) != 4 || !plausibleMp3Header(h2)) continue;
+
+            // Confirm one more consecutive frame when possible.
+            uint32_t flen2 = mp3FrameLength(h2);
+            if (flen2 < 24 || candidate + flen + flen2 + 4 > s_bytes) continue;
+
+            s_file.seek(candidate + flen + flen2);
+            uint8_t h3[4];
+            if (s_file.read(h3, 4) != 4 || !plausibleMp3Header(h3)) continue;
+
+            s_file.seek(candidate);
+            return candidate;
+        }
+
+        if (got <= 4) break;
+        pos += (uint32_t)(got - 3);
+    }
+
+    s_file.seek(start);
+    return start;
 }
 
 bool openTrack(uint8_t idx, uint32_t pos) {
@@ -188,11 +296,36 @@ bool openTrack(uint8_t idx, uint32_t pos) {
         setMsg("OPEN FAIL");
         return false;
     }
-    s_bytes = (uint32_t)s_file.size();
-    // Resume keeps the byte offset it was stopped at (already past the tag).
+
+    uint64_t fileSize = s_file.size();
+    if (fileSize == 0 || fileSize > 0xFFFFFFFFULL) {
+        setMsg("BAD FILE");
+        s_file.close();
+        return false;
+    }
+    s_bytes = (uint32_t)fileSize;
+
+    // Resume positions are already frame-aligned. A fresh track skips ID3v2.
     uint32_t start = pos;
-    if (start == 0) start = id3v2Size();
-    if (start >= s_bytes) start = 0;            // broken/oversized tag
+    if (start == 0) {
+        uint32_t tag = id3v2Size();
+        if (tag >= s_bytes) {
+            setMsg("BAD ID3");
+            s_file.close();
+            return false;
+        }
+        start = tag;
+
+        // Don't feed arbitrary post-tag junk/artwork to Helix.
+        start = firstMp3Frame(start);
+    }
+
+    if (start >= s_bytes) {
+        setMsg("NO MP3 DATA");
+        s_file.close();
+        return false;
+    }
+
     s_file.seek(start);
     return true;
 }
@@ -269,6 +402,7 @@ void playTrack(uint8_t idx, uint32_t pos) {
     s_slot = 0;
     s_rdLen = 0;
     s_rdPos = 0;
+    s_feedStalled = 0;
     if (pos == 0) {
         s_played = 0;
         s_bitrate = 0;
@@ -378,30 +512,61 @@ void rescan() {
 }
 
 // ------------------------------------------------------------- decode + feed
-// One MP3 chunk (512 B) in, decoded frames out (via onPcm). Returns false at
+// One MP3 chunk (4 KB) in, decoded frames out (via onPcm). Returns false at
 // end of file so the pump can stop hammering the SD card.
 bool feed() {
-    if (!s_file) return false;
+    if (!s_file || !s_mp3) return false;
+
+    // Keep unconsumed bytes. A decoder may consume only part of a read buffer;
+    // never throw the remainder away. This is especially important around VBR
+    // frame boundaries and for long files where one dropped frame can make the
+    // stream appear to stop.
     if (s_rdPos >= s_rdLen) {
         size_t got = s_file.read(s_rd, READ_CHUNK);
         if (got == 0) {
-            if (!s_eof && s_mp3) s_mp3->flush();   // drain the last frames
-            s_eof = true;
+            if (!s_eof) {
+                s_mp3->flush();   // drain the final complete frame(s)
+                s_eof = true;
+            }
             return false;
         }
         s_rdLen = got;
         s_rdPos = 0;
     }
-    if (!s_mp3) {
-        s_eof = true;
-        return false;
-    }
-    size_t used = s_mp3->write(s_rd + s_rdPos, s_rdLen - s_rdPos);
-    if (used == 0) {
-        s_rdPos = s_rdLen;   // decoder refused it: drop and move on
+
+    size_t avail = s_rdLen - s_rdPos;
+    size_t used = s_mp3->write(s_rd + s_rdPos, avail);
+
+    if (used > avail) used = avail;
+
+    if (used != 0) {
+        s_feedStalled = 0;
+        s_rdPos += used;
         return true;
     }
-    s_rdPos += used;
+
+    // Do NOT discard data when Helix returns 0. Give it a little more input
+    // while retaining the bytes already supplied. If the wrapper has consumed
+    // nothing after several attempts, report a decoder error instead of
+    // silently corrupting the stream.
+    if (++s_feedStalled < 4) {
+        delay(1);
+        return true;
+    }
+    s_feedStalled = 0;
+
+    // Last-resort resync: scan the unconsumed bytes for a plausible MPEG
+    // header and continue there. This recovers from a stray corrupt byte
+    // without throwing away the entire 4 KB SD block.
+    for (size_t i = 1; i + 4 <= avail; ++i) {
+        if (plausibleMp3Header(s_rd + s_rdPos + i)) {
+            s_rdPos += i;
+            return true;
+        }
+    }
+
+    // No sync in this block. Drop only this block and continue reading.
+    s_rdPos = s_rdLen;
     return true;
 }
 

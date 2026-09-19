@@ -504,25 +504,66 @@ void update() {
 }
 
 static void drawTableAt(M5Canvas& canvas, int16_t cx, int16_t cy) {
-    // Larger farm table
-    canvas.fillRect(cx - 16, cy - 16, 5, 16, 0x8200);
-    canvas.fillRect(cx + 12, cy - 16, 5, 16, 0x8200);
-    canvas.fillRect(cx - 17, cy - 2, 7, 3, 0x6100);
-    canvas.fillRect(cx + 11, cy - 2, 7, 3, 0x6100);
+    // Farm table with the selected V5 barrel support.
+    // Tabletop: cy-24 .. cy-15. Barrel starts immediately underneath
+    // and is always centered on the same cx, so it cannot "fly away".
+    const int16_t by = (int16_t)(cy - 14);
+
+    // Barrel shadow — centered directly under the support.
+    canvas.fillRect(cx - 9, by + 11, 18, 2, 0x6241);
+
+    // Dark outer silhouette:
+    // 12px top -> 16px -> 18px body -> 16px -> 12px bottom.
+    canvas.fillRect(cx - 6, by,     12, 1, 0x4120);
+    canvas.fillRect(cx - 8, by + 1, 16, 1, 0x4120);
+    canvas.fillRect(cx - 9, by + 2, 18, 7, 0x4120);
+    canvas.fillRect(cx - 8, by + 9, 16, 1, 0x4120);
+    canvas.fillRect(cx - 6, by + 10, 12, 1, 0x4120);
+
+    // Wooden body.
+    canvas.fillRect(cx - 5, by + 1, 10, 1, 0x8B46);
+    canvas.fillRect(cx - 7, by + 2, 14, 7, 0x8B46);
+    canvas.fillRect(cx - 6, by + 9, 12, 1, 0x8B46);
+
+    // Pixel-rounded corners.
+    canvas.drawPixel(cx - 8, by + 2, 0x9650);
+    canvas.drawPixel(cx + 7, by + 2, 0x9650);
+    canvas.drawPixel(cx - 9, by + 3, 0x8B46);
+    canvas.drawPixel(cx + 8, by + 3, 0x8B46);
+    canvas.drawPixel(cx - 9, by + 7, 0x8B46);
+    canvas.drawPixel(cx + 8, by + 7, 0x8B46);
+    canvas.drawPixel(cx - 8, by + 8, 0x8B46);
+    canvas.drawPixel(cx + 7, by + 8, 0x8B46);
+
+    // Vertical wooden boards / texture.
+    canvas.fillRect(cx - 5, by + 2, 2, 7, 0xA960);
+    canvas.fillRect(cx + 4, by + 2, 2, 7, 0x6C35);
+    canvas.drawPixel(cx - 2, by + 5, 0xB96B);
+    canvas.drawPixel(cx + 2, by + 7, 0x6D35);
+
+    // Metal hoops following the barrel's curved silhouette.
+    canvas.fillRect(cx - 8, by + 3, 16, 1, 0xD18A);
+    canvas.fillRect(cx - 9, by + 7, 18, 1, 0xD18A);
+
+    // Tabletop.
     canvas.fillRect(cx - 22, cy - 24, 46, 9, 0x9A40);
     canvas.drawRect(cx - 22, cy - 24, 46, 9, 0x7200);
     canvas.fillRect(cx - 21, cy - 23, 44, 2, 0xC408);
-    // deck
+
+    // Cards on the tabletop.
     canvas.fillRect(cx - 8, cy - 34, 14, 11, 0xF800);
     canvas.drawRect(cx - 8, cy - 34, 14, 11, 0xC000);
     canvas.fillRect(cx - 7, cy - 33, 12, 9, 0xFFFF);
+
     canvas.fillRect(cx - 4, cy - 36, 14, 11, 0x001F);
     canvas.drawRect(cx - 4, cy - 36, 14, 11, 0x000F);
     canvas.fillRect(cx - 3, cy - 35, 12, 9, 0xFFFF);
+
     // prompt when pig is near (approx — update sets Mood; visual always if close is hard here)
 }
 
 void draw(M5Canvas& canvas, int16_t yOffset) {
+    if (!Config::personality().cardsEnabled) return;
     if (!unlocked() || s_active) return;
     int16_t cx = screenX();
     int16_t cy = (int16_t)(GROUND_Y + yOffset);

@@ -1647,7 +1647,9 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
     // Friend lives behind the player (you are in front of her)
     FriendPig::update();
     FriendPig::draw(canvas, 0);
-    // CardsTable::update already ran at top of drawFrame
+    // CardsTable::update already ran at top of drawFrame.
+    // CardsTable itself also checks the settings flag, so the table cannot
+    // remain visible after SCENE > CARDS is switched OFF.
     CardsTable::draw(canvas, 0);
 
     // Pig BETWEEN grass layers — in front of friend
