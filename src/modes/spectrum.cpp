@@ -463,8 +463,8 @@ static void radioOff() {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(false, false);
+    WiFi.disconnect(true, false);
+    WiFi.mode(WIFI_OFF);
 }
 
 static void hopTick() {

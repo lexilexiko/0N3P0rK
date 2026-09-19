@@ -5,6 +5,7 @@
 #include "../ui/keys.h"
 #include "../ui/loot_menu.h"
 #include "../ui/settings_menu.h"
+#include "../ui/screenshot.h"
 #include "../modes/evilpig.h"
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
@@ -14,6 +15,7 @@
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
 #include "../modes/filemgr.h"
+#include "../modes/mp3player.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -45,6 +47,7 @@ bool overlayMode() {
            s_mode == AppMode::IR || s_mode == AppMode::SPECTRUM ||
            s_mode == AppMode::USBSD || s_mode == AppMode::FILEMGR || s_mode == AppMode::XFER ||
            s_mode == AppMode::BADUSB ||
+           s_mode == AppMode::MP3 ||
            s_mode == AppMode::TASKS ||
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
@@ -84,6 +87,7 @@ const char* modeName() {
         case AppMode::FILEMGR:  return "FILES";
         case AppMode::XFER:     return "XFER";
         case AppMode::BADUSB:   return "BADUSB";
+        case AppMode::MP3:      return "MP3";
         case AppMode::TASKS:    return "TASKS";
         default:                return "?";
     }
@@ -103,6 +107,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::FILEMGR && FileMgrMode::isRunning()) FileMgrMode::stop();
     if (s_mode == AppMode::XFER && XferMode::isRunning()) XferMode::stop();
     if (s_mode == AppMode::BADUSB && BadUsbMode::isRunning()) BadUsbMode::stop();
+    if (s_mode == AppMode::MP3 && Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     s_winHid = false;
     s_mode = m;
@@ -117,6 +122,7 @@ void setMode(AppMode m) {
     if (m == AppMode::FILEMGR) FileMgrMode::start();
     if (m == AppMode::XFER) XferMode::start();
     if (m == AppMode::BADUSB) BadUsbMode::start();
+    if (m == AppMode::MP3) Mp3PlayerMode::start();
     if (m == AppMode::TASKS) TaskManager::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
@@ -284,6 +290,9 @@ void loop() {
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
 
+    if (!SettingsMenu::isTyping() && !FileMgrMode::isTyping())
+        Screenshot::poll();
+
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
     // Backspace = minimize overlay — NOT in BADUSB (needs DEL for ducky/live)
@@ -296,6 +305,8 @@ void loop() {
                 Display::showToast(s_winHid ? "MIN" : "WIN", 500);
             } else if (s_winHid && keyEsc()) {
                 setMode(AppMode::MENU);
+            } else if (s_winHid && Mp3PlayerMode::minimizedKey()) {
+                // MP3 minimized over the farm: 1..5 still steer the song
             } else if (s_winHid && Menu::tryHotkey()) {
             }
         }
@@ -334,6 +345,9 @@ void loop() {
     } else if (s_mode == AppMode::TASKS) {
         TaskManager::update();
         if (!TaskManager::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::MP3) {
+        Mp3PlayerMode::update();
+        if (!Mp3PlayerMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();

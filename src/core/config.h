@@ -76,6 +76,8 @@ struct PersonalityConfig {
     // Cardputer RGB LED (WS2812)
     bool ledEnabled = true;
     uint8_t ledBright = 40;   // 0..100
+    // MP3 player (SD /0N3P0rK/music) — playback volume in percent
+    uint8_t mp3Volume = 70;   // 0..100
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };
@@ -187,12 +189,12 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-static const uint8_t HOTKEY_COUNT = 17;
-// 0-9 old binds; 10-16 empty (user assigns)
+static const uint8_t HOTKEY_COUNT = 18;
+// 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP (unbound)
 struct HotkeyConfig {
     char key[HOTKEY_COUNT] = {
         'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f',
-        0, 0, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 0, 0, 0, 0
     };
 };
 static const uint8_t HOTKEY_RADIO = 8;

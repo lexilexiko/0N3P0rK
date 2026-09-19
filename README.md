@@ -1,6 +1,6 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.1fix**  
+**Current version: 1.3.4**  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -24,11 +24,12 @@ Secret menu codes are **not** listed here (keep them private).
 8. [BadUSB and BadBLE](#badusb-and-badble)
 9. [LED indicator](#led-indicator)
 10. [XFER file transfer](#xfer-file-transfer)
-11. [PigPass](#pigpass)
-12. [SD layout](#sd-layout)
-13. [Web site](#web-site)
-14. [Version history](#version-history)
-15. [Legal & credits](#legal--credits)
+11. [Music (MP3 player)](#music-mp3-player)
+12. [PigPass](#pigpass)
+13. [SD layout](#sd-layout)
+14. [Web site](#web-site)
+15. [Version history](#version-history)
+16. [Legal & credits](#legal--credits)
 
 ---
 
@@ -401,6 +402,59 @@ free radio and memory resources. Stop XFER before starting another Wi-Fi mode.
 
 ---
 
+## Music (MP3 player)
+
+**MP3** turns the Cardputer into an SD music player. Open it from the root
+menu (**MP3**) and the farm is replaced by the cassette scene: track name,
+position, spinning reels and a VU meter. The bottom bar becomes the transport.
+
+### Keys
+
+| Key | Action |
+| --- | --- |
+| `1` | Volume down 5% |
+| `2` | Previous track |
+| `3` | Play / Stop (Stop remembers the position) |
+| `4` | Next track |
+| `5` | Volume up 5% |
+| `R` | Rescan the music folder |
+| `` ` `` | Exit MP3 |
+
+When a track ends the player starts the next one and wraps around at the end
+of the list. The volume is stored in the device configuration.
+
+### Minimized over the farm
+
+Backspace hides the scene and gives the farm back to you — the song keeps
+playing (it also survives the G0 screen-off). The bottom bar then shows the
+transport state (`MIN PLAY 03/12 01:23`), and `1`..`5` still steer volume and
+tracks while you watch the pig. Backspace again brings the player back,
+`` ` `` stops the music and returns to the menu. Digits that you bound as farm
+hotkeys in **SET → KEYS** keep their hotkey role instead.
+
+### Files
+
+```text
+/0N3P0rK/music/*.mp3
+```
+
+FAT32 SD, top level of that folder only, up to 32 files, case-insensitive
+`.mp3` / `.MP3` extension.
+
+### How the sound is made
+
+M5Unified already owns the I2S bus and the ES8311 codec on both Cardputer
+boards, so the player does **not** open its own I2S. The Helix MP3 decoder
+(`libhelix` / PlatformIO dependency `codec-helix`) decodes each frame to PCM,
+the player downmixes to mono and streams it into `M5.Speaker.playRaw()` using
+three rotating buffers. Beeps are muted while a song plays, and the capture
+engine is stopped on entry so the decoder has room in the internal heap.
+
+If memory is too tight the scene shows `LOW MEM` instead of playing — stop
+other services (capture, XFER, portal) and press `3` again.
+
+---
+
 ## PigPass
 
 - Tabs: **PCAP** and **22000**  
@@ -418,6 +472,7 @@ free radio and memory resources. Stop XFER before starting another Wi-Fi mode.
   pigpass/        crack state / results
   Passworld/      wordlists
   talk/           optional monologue lines
+  music/          MP3 player tracks (SD music)
   evilpig/        portal-related files
   wolf/           wolf loot stash (if used)
   …
@@ -533,6 +588,26 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Verified the PlatformIO build for the M5Stack StampS3 target.
 - Kept the same firmware target for the original M5Cardputer and Cardputer
   ADV hardware.
+
+
+### 1.3.4
+
+- Added the **MP3 player**: SD music scene, cassette + VU meter, five-key
+  transport in the bottom bar (`1-` `2<<` `3 PLAY/STOP` `4>>` `5+`), position
+  and resume, auto-advance through the playlist.
+- New root menu entry **MP3** and the SD folder `/0N3P0rK/music/`.
+- Uses the Helix MP3 decoder (`codec-helix`) and streams PCM into the existing
+  M5Unified speaker path — no second I2S driver and no codec re-initialization.
+- SFX beeps are muted while music plays; playback volume is stored in the
+  device configuration (`mp3vol`).
+- Backspace minimizes the player over the live farm scene: the song keeps
+  playing, the bottom bar shows `MIN PLAY 03/12 01:23`, and `1`..`5` keep
+  working from the farm.
+- Starting the player stops an active capture session to free heap for the
+  decoder.
+
+### 1.3.2 (current)
+---Soon__
 
 ---
 

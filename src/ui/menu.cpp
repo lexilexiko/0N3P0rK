@@ -17,9 +17,11 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
+#include "../modes/mp3player.h"
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
 #include "task_manager.h"
+#include "screenshot.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -163,15 +165,20 @@ static const char* const H_TWEAK[] = {
     ",/ CYCLE  ENT NAME."
 };
 
+static const char* const H_MP3[] = {
+    "SD MUSIC  /0N3P0rK/music",
+    "1- 5+ VOL  2<< 4>> TRACK  3 PLAY"
+};
 static const RootItem ROOT[] = {
     {"/>", "ATTACK",  H_ATTACK,      2, RootType::GROUP,  GroupId::ATTACK,  0},
     {"[$", "LOOT",    H_LOOT,        2, RootType::DIRECT, GroupId::NONE,    4},
     {"^.", "PIG",     H_PIG,         2, RootType::DIRECT, GroupId::NONE,    7},
+    {"|>", "MP3",     H_MP3,         2, RootType::DIRECT, GroupId::NONE,    25},
     {"()", "CONNECT", H_CONNECT_GRP, 2, RootType::GROUP,  GroupId::CONNECT, 0},
     {"::", "SET",     H_SET,         2, RootType::GROUP,  GroupId::SET,     0},
     {"[]", "TASKS",   H_TASKS,       2, RootType::DIRECT, GroupId::NONE,    23}
 };
-static const uint8_t ROOT_COUNT = 6;
+static const uint8_t ROOT_COUNT = 7;
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
@@ -326,6 +333,10 @@ static void doAction(uint8_t id) {
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::FILEMGR);
             break;
+        case 25:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::MP3);
+            break;
         case 9:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::EVILPIG);
@@ -333,6 +344,9 @@ static void doAction(uint8_t id) {
         case 10:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::PIGPASS);
+            break;
+        case 24:
+            Screenshot::take();
             break;
         case 8: {
             PersonalityConfig& p = Config::personality();
@@ -435,7 +449,7 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 bool tryHotkey() {
     static const uint8_t ACT[HOTKEY_COUNT] = {
         2, 1, 10, 9, 13, 15, 16, 4, 11, 20,
-        7, 22, 21, 17, 6, 3, 23
+        7, 22, 21, 17, 6, 3, 23, 24
     };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {

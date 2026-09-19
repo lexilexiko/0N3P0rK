@@ -28,6 +28,7 @@
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
 #include "../modes/filemgr.h"
+#include "../modes/mp3player.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -585,6 +586,12 @@ void Display::drawBottomBar() {
     bottomBar.setTextSize(1);
     bottomBar.setTextDatum(top_left);
 
+    // MP3 player: the bar IS the transport (1 vol- 2 prev 3 play/stop 4 next 5 vol+)
+    if (App::mode() == AppMode::MP3 && !App::windowHidden()) {
+        Mp3PlayerMode::drawBar(bottomBar);
+        return;
+    }
+
     char left[48];
     left[0] = '\0';
     char rightName[32];
@@ -724,6 +731,9 @@ void Display::drawBottomBar() {
             case AppMode::BADUSB:
                 BadUsbMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::MP3:
+                Mp3PlayerMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::TASKS:
                 strncpy(left, ";/. select  ENT stop  ` back", sizeof(left) - 1);
                 break;
@@ -861,6 +871,7 @@ void Display::update() {
     const bool hid = App::windowHidden();
     const bool coverFarm = !hid &&
         (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD ||
+         App::mode() == AppMode::MP3 ||
          App::mode() == AppMode::PIGPASS);
     if (!coverFarm) drawFarm();
 
@@ -875,6 +886,7 @@ void Display::update() {
         else if (App::mode() == AppMode::FILEMGR) FileMgrMode::draw(mainCanvas);
         else if (App::mode() == AppMode::XFER) XferMode::draw(mainCanvas);
         else if (App::mode() == AppMode::BADUSB) BadUsbMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::MP3) Mp3PlayerMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

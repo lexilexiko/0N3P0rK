@@ -14,7 +14,6 @@
 #include "../ui/display.h"
 #include <M5Cardputer.h>
 #include <esp_wifi.h>
-#include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <freertos/portmacro.h>  // portENTER_CRITICAL for s_pendingLearn race
 #include <WiFi.h>
@@ -54,12 +53,6 @@ struct Slot {
 
 static Slot* s_ring = nullptr;
 static uint8_t s_ringSlots = 12;
-// How many slots s_ring was really allocated with. s_ringSlots is re-read from
-// RadioConfig on every start (RADIO -> RING), while s_ring can still be alive
-// from the previous session. Every ring index is computed as % s_ringSlots, so
-// a ring that is smaller than s_ringSlots means writes past the end of the
-// array (heap corruption) instead of a resize.
-static uint8_t s_ringAllocSlots = 0;
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
 static const uint8_t PENDING_SLOTS = 4;
@@ -200,30 +193,18 @@ static uint8_t s_skipList[SKIP_MAX][6];
 static uint8_t s_skipN = 0;
 static bool    s_skipKeyWas = false;
 
-static void releaseCaptureMemory() {
-    delete[] s_ring;
-    delete[] s_pending;
-    delete[] s_beacons;
-    s_ring = nullptr;
-    s_pending = nullptr;
-    s_beacons = nullptr;
-    s_ringAllocSlots = 0;
-}
-
 static bool allocateCaptureMemory() {
-    // Reuse the live buffers only when the ring still matches the requested
-    // slot count. RING can be changed between sessions, so "already allocated"
-    // is not the same as "allocated with the right size".
-    if (s_ring && s_ringAllocSlots != s_ringSlots) releaseCaptureMemory();
     if (s_ring && s_pending && s_beacons) return true;
-    if (!s_ring) {
-        s_ring = new (std::nothrow) Slot[s_ringSlots];
-        if (s_ring) s_ringAllocSlots = s_ringSlots;
-    }
+    if (!s_ring) s_ring = new (std::nothrow) Slot[s_ringSlots];
     if (!s_pending) s_pending = new (std::nothrow) PendingCapture[PENDING_SLOTS];
     if (!s_beacons) s_beacons = new (std::nothrow) BeaconSlot[BEACON_SLOTS];
     if (!s_ring || !s_pending || !s_beacons) {
-        releaseCaptureMemory();
+        delete[] s_ring;
+        delete[] s_pending;
+        delete[] s_beacons;
+        s_ring = nullptr;
+        s_pending = nullptr;
+        s_beacons = nullptr;
         return false;
     }
     return true;
@@ -1463,34 +1444,31 @@ void begin() {
     Hc22000::reset();
 }
 
-// Returns false when the session could not be started (no heap for the capture
-// buffers, or the radio refused promiscuous mode). The public start* wrappers
-// below keep the old void API on purpose, so no caller has to change - the
-// reason is logged here with the heap / largest-block numbers.
-static bool startCommon(RunMode mode) {
+static void startCommon(RunMode mode) {
     bool sdOk = Storage::begin();
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
-    // Whatever the previous session left behind (flags, buffers) is torn down
-    // first; stop() itself is a no-op when nothing was ever allocated.
-    if (s_running || s_ring || s_pending || s_beacons) stop();
+    if (s_running) stop();
     s_ringSlots = Config::radio().ringSlots;
     if (s_ringSlots != 4 && s_ringSlots != 8 && s_ringSlots != 12 &&
-        s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 32) {
+        s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 28) {
         s_ringSlots = 12;
     }
     if (!allocateCaptureMemory()) {
-        Serial.printf("[CAP] capture buffers allocation failed (ring=%u heap=%u largest=%u)\n",
-                      (unsigned)s_ringSlots, (unsigned)ESP.getFreeHeap(),
-                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        Serial.println("[CAP] capture buffers allocation failed");
         s_mode = RunMode::Off;
-        return false;
+        return;
     }
     if (!Hc22000::allocateMemory()) {
         Serial.println("[CAP] 22000 table allocation failed");
-        releaseCaptureMemory();
+        delete[] s_ring;
+        delete[] s_pending;
+        delete[] s_beacons;
+        s_ring = nullptr;
+        s_pending = nullptr;
+        s_beacons = nullptr;
         s_mode = RunMode::Off;
-        return false;
+        return;
     }
     Hc22000::reset();
 
@@ -1520,7 +1498,7 @@ static bool startCommon(RunMode mode) {
     clearSkipList();
     s_skipKeyWas = false;
     s_mode = mode;
-    s_hopEnabled = (mode == RunMode::Aggressive);
+    s_hopEnabled = (mode == RunMode::Light || mode == RunMode::Aggressive);
     s_deauthEnabled = (mode != RunMode::Light) && Config::radio().deauth;
     if (mode != RunMode::Pinned) {
         s_pinOk = false;
@@ -1611,21 +1589,8 @@ static bool startCommon(RunMode mode) {
     filt.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
     esp_wifi_set_promiscuous_filter(&filt);
     esp_wifi_set_promiscuous_rx_cb(&promiscuousRxCb);
-    // s_running must only reflect a radio that is really sniffing: the callback
-    // drops every frame while it is false, so claiming "running" after a failed
-    // esp_wifi_set_promiscuous() looks alive in the UI but never captures.
-    esp_err_t rc = esp_wifi_set_promiscuous(true);
-    if (rc != ESP_OK) {
-        Serial.printf("[CAP] promiscuous enable failed: %d\n", (int)rc);
-        stop();
-        return false;
-    }
-    rc = esp_wifi_set_channel(startCh, WIFI_SECOND_CHAN_NONE);
-    if (rc != ESP_OK) {
-        Serial.printf("[CAP] set_channel(%u) failed: %d\n", (unsigned)startCh, (int)rc);
-        stop();
-        return false;
-    }
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(startCh, WIFI_SECOND_CHAN_NONE);
     s_cnt.currentChannel = startCh;
     s_running = true;
 
@@ -1644,7 +1609,6 @@ static bool startCommon(RunMode mode) {
                   : (mode == RunMode::Pinned ? "PINNED" : "light"),
                   (unsigned)s_hopEnabled, (unsigned)s_deauthEnabled,
                   (unsigned)s_cnt.currentChannel, s_cnt.methodTag, (unsigned)sdOk);
-    return true;
 }
 
 void startLight() {
@@ -1665,36 +1629,18 @@ void startPinned(uint8_t ch, const uint8_t* bssid, const char* ssid) {
         strncpy(s_pinSsid, ssid, 32);
         s_pinSsid[32] = 0;
     }
-    // A failed start must not leave a pinned target armed for the next session
-    // (the caller has nothing to check - the failure is logged from startCommon).
-    if (!startCommon(RunMode::Pinned)) {
-        s_pinOk = false;
-        memset(s_pinBssid, 0, sizeof(s_pinBssid));
-        s_pinSsid[0] = 0;
-    }
+    startCommon(RunMode::Pinned);
 }
 
 void stop() {
-    // Guard on the buffers, not only on the flags. A start that aborted after
-    // allocating (or any path that cleared the flags) can leave the capture
-    // arrays alive while s_mode is already Off: the old flag-only guard then
-    // returned early, leaked them, and the NEXT start reused a ring sized for
-    // the previous RING setting (out-of-bounds writes past s_ring).
-    bool hasBuffers = (s_ring != nullptr) || (s_pending != nullptr) || (s_beacons != nullptr);
-    if (!s_running && s_mode == RunMode::Off && !hasBuffers) return;
+    if (!s_running && s_mode == RunMode::Off) return;
     bool hopped = s_hopEnabled;
     s_running = false;
     s_deauthEnabled = false;
     s_hopEnabled = false;
     s_mode = RunMode::Off;
-    // Unregister the RX callback BEFORE disabling promiscuous and before the
-    // buffers are freed. promiscuousRxCb() only tests s_running when it is
-    // entered - a callback already past that check would keep memcpy()-ing
-    // into s_ring after delete[]. Clearing the callback first closes that
-    // window; the short settle delay lets one in-flight callback finish.
-    esp_wifi_set_promiscuous_rx_cb(nullptr);
     esp_wifi_set_promiscuous(false);
-    delay(20);
+    esp_wifi_set_promiscuous_rx_cb(nullptr);
     drainRing();
     Hc22000::flushPending();
     commitPendingCaptures();
@@ -1710,14 +1656,17 @@ void stop() {
                   s_cnt.framesDropped);
 
     Hc22000::releaseMemory();
-    releaseCaptureMemory();
+    delete[] s_ring;
+    delete[] s_pending;
+    delete[] s_beacons;
+    s_ring = nullptr;
+    s_pending = nullptr;
+    s_beacons = nullptr;
     s_write = 0;
     s_read = 0;
     s_beaconCount = 0;
-    s_beaconClock = 0;
-    Serial.printf("[CAP] capture memory released heap=%u largest=%u\n",
-                  (unsigned)ESP.getFreeHeap(),
-                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    Serial.printf("[CAP] capture memory released heap=%u\n",
+                  (unsigned)ESP.getFreeHeap());
 }
 
 void releaseForSync() {

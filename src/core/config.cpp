@@ -63,6 +63,7 @@ bool Config::init() {
     p.wolfEatLoot = s_prefs.getBool("weat", p.wolfEatLoot);
     p.ledEnabled = s_prefs.getBool("leden", p.ledEnabled);
     p.ledBright = s_prefs.getUChar("ledbr", p.ledBright);
+    p.mp3Volume = s_prefs.getUChar("mp3vol", p.mp3Volume);
 
     RadioConfig& r = radioConfig;
     r.hopMs = s_prefs.getUShort("hop", r.hopMs);
@@ -140,6 +141,7 @@ bool Config::init() {
         p.pigSkinAlive = 0;
     if (p.seasonMode >= SEASON_MODE_COUNT) p.seasonMode = 0;
     if (p.skyMode >= SKY_MODE_COUNT) p.skyMode = 0;
+    if (p.mp3Volume > 100) p.mp3Volume = 100;
     if (r.hopMs < 50) r.hopMs = 50;
     if (r.hopMs > 2000) r.hopMs = 2000;
     if (r.lockMs > 15000) r.lockMs = 15000;
@@ -159,7 +161,7 @@ bool Config::init() {
         r.hsFileBytes != 4096 && r.hsFileBytes != 8192)
         r.hsFileBytes = 2048;
     if (r.ringSlots != 4 && r.ringSlots != 8 && r.ringSlots != 12 &&
-        r.ringSlots != 16 && r.ringSlots != 24 && r.ringSlots != 32)
+        r.ringSlots != 16 && r.ringSlots != 24 && r.ringSlots != 28)
         r.ringSlots = 12;
     // pack lives in its own registry (Cap::Packs), separate bound from
     // hsMethod's - CUSTOM is the one value allowed above that bound
@@ -207,6 +209,7 @@ bool Config::save() {
     s_prefs.putBool("weat", p.wolfEatLoot);
     s_prefs.putBool("leden", p.ledEnabled);
     s_prefs.putUChar("ledbr", p.ledBright);
+    s_prefs.putUChar("mp3vol", p.mp3Volume);
 
     const RadioConfig& r = radioConfig;
     s_prefs.putUShort("hop", r.hopMs);

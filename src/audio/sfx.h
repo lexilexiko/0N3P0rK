@@ -107,11 +107,14 @@ void stop();
 // IR bitbang and G0 screen-off stack without clobbering each other.
 static constexpr uint8_t MUTE_IR         = 1u << 0;
 static constexpr uint8_t MUTE_SCREEN_OFF = 1u << 1;
+static constexpr uint8_t MUTE_MP3        = 1u << 2;
 
 // setMuted(true/false) toggles MUTE_IR (legacy IR paths)
 void setMuted(bool muted);
 // G0 brightness-0: silence everything until screen wakes
 void setScreenOffMuted(bool muted);
+// MP3 player is streaming music: no beeps over the song
+void setMp3Muted(bool muted);
 // Any reason active?
 bool isMuted();
 // Current mute bit mask (debug / diagnostics)
@@ -119,6 +122,10 @@ uint8_t muteMask();
 
 // Direct tone access (for special cases)
 void tone(uint16_t freq, uint16_t duration);
+
+// Re-apply the personality volume curve after another subsystem changed the
+// M5.Speaker master volume (the MP3 player drives it for playback).
+void refreshVolume();
 
 }  // namespace SFX
 

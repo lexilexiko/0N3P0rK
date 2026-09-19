@@ -15,6 +15,7 @@ inline const char* pigpassCheckpointPath() { return "/0N3P0rK/pigpass/checkpoint
 inline const char* pigpassLastWordlistPath() { return "/0N3P0rK/pigpass/last_wl.txt"; }
 inline const char* evilpigDir() { return "/0N3P0rK/evilpig"; }
 inline const char* evilpigCredsPath() { return "/0N3P0rK/evilpig/creds.csv"; }
+inline const char* screenshotsDir() { return "/0N3P0rK/screenshots"; }
 
 inline void ensureDirs() {
     SD.mkdir("/0N3P0rK");
@@ -27,5 +28,7 @@ inline void ensureDirs() {
     SD.mkdir("/0N3P0rK/ir");
     SD.mkdir("/0N3P0rK/wolf");
     SD.mkdir("/0N3P0rK/talk");
+    SD.mkdir("/0N3P0rK/music");
+    SD.mkdir("/0N3P0rK/screenshots");
 }
 }
