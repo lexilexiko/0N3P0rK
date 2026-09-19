@@ -53,17 +53,17 @@ bool    s_eof     = false;
 bool    s_hasResume = false;
 uint8_t s_idx     = 0;
 uint8_t s_n       = 0;
-char    s_names[MAX_TRACKS][TRACK_NAME_MAX];
-char    s_paths[MAX_TRACKS][TRACK_PATH_MAX];
+char*   s_names = nullptr;
+char*   s_paths = nullptr;
 uint8_t s_vol     = 70;
 char    s_msg[28] = "";
 
 File   s_file;
 MP3DecoderHelix* s_mp3 = nullptr;
-uint8_t s_rd[READ_CHUNK];
+uint8_t* s_rd = nullptr;
 size_t  s_rdLen = 0;
 size_t  s_rdPos = 0;
-int16_t s_pcm[PCM_SLOTS][PCM_MAX];
+int16_t* s_pcm = nullptr;
 uint8_t s_slot = 0;
 uint32_t s_rate = 44100;
 uint32_t s_played = 0;
@@ -80,6 +80,49 @@ uint8_t  s_feedStalled = 0;
 // Lives with the SD scan further down, but togglePlay()/step() call it when the
 // track list is still empty, so it needs a declaration up here.
 void rescan();
+
+void setMsg(const char* m);
+
+// ---------------------------------------------------------- lazy MP3 memory
+// Keep the music buffers completely out of RAM while the MP3 mode is not used.
+// The track list is allocated when the mode opens; the audio buffers are only
+// allocated when playback actually starts. Everything is released on stop.
+bool allocListMemory() {
+    if (s_names && s_paths) return true;
+    s_names = (char*)calloc((size_t)MAX_TRACKS, TRACK_NAME_MAX);
+    s_paths = (char*)calloc((size_t)MAX_TRACKS, TRACK_PATH_MAX);
+    if (!s_names || !s_paths) {
+        free(s_names); s_names = nullptr;
+        free(s_paths); s_paths = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void freeAudioMemory() {
+    free(s_rd);  s_rd = nullptr;
+    free(s_pcm); s_pcm = nullptr;
+    s_rdLen = 0;
+    s_rdPos = 0;
+}
+
+bool allocAudioMemory() {
+    if (s_rd && s_pcm) return true;
+    s_rd = (uint8_t*)malloc(READ_CHUNK);
+    s_pcm = (int16_t*)malloc((size_t)PCM_SLOTS * PCM_MAX * sizeof(int16_t));
+    if (!s_rd || !s_pcm) {
+        freeAudioMemory();
+        setMsg("NO MEM");
+        return false;
+    }
+    return true;
+}
+
+void freeListMemory() {
+    free(s_names); s_names = nullptr;
+    free(s_paths); s_paths = nullptr;
+    s_n = 0;
+}
 
 // -------------------------------------------------------------- small helpers
 void setMsg(const char* m) {
@@ -125,7 +168,7 @@ void onPcm(MP3FrameInfo& info, short* pcm, size_t len, void*) {
     if (!s_playing) return;
     if (millis() - t0 > 1500) return;
 
-    int16_t* out = s_pcm[s_slot];
+    int16_t* out = s_pcm + ((size_t)s_slot * PCM_MAX);
     if (nch >= 2) {
         // Cardputer has one small speaker — downmix to mono.
         for (size_t i = 0; i < frames; i++) {
@@ -296,7 +339,7 @@ bool openTrack(uint8_t idx, uint32_t pos) {
     // filenames (for example Cyrillic names) can exceed that limit.  The old
     // code truncated the name, so SD.open() returned false even for a healthy
     // 3-6 MB MP3.
-    const char* path = s_paths[idx];
+    const char* path = s_paths + ((size_t)idx * TRACK_PATH_MAX);
     if (!path[0]) {
         setMsg("OPEN FAIL");
         return false;
@@ -403,9 +446,11 @@ void playTrack(uint8_t idx, uint32_t pos) {
     }
     s_idx = idx;
     closeFile();
-    if (!openTrack(s_idx, pos)) return;
+    if (!allocAudioMemory()) return;
+    if (!openTrack(s_idx, pos)) { freeAudioMemory(); return; }
     if (!ensureDecoder()) {
         closeFile();
+        freeAudioMemory();
         return;
     }
     s_eof = false;
@@ -433,6 +478,8 @@ void userStop() {
     stopAudio();
     s_eof = false;
     closeFile();
+    releaseDecoder();
+    freeAudioMemory();
     setMsg("STOP");
 }
 
@@ -489,8 +536,9 @@ void keyAction(uint8_t i) {
 
 void rescan() {
     s_n = 0;
-    memset(s_names, 0, sizeof(s_names));
-    memset(s_paths, 0, sizeof(s_paths));
+    if (!allocListMemory()) { setMsg("NO MEM"); return; }
+    memset(s_names, 0, (size_t)MAX_TRACKS * TRACK_NAME_MAX);
+    memset(s_paths, 0, (size_t)MAX_TRACKS * TRACK_PATH_MAX);
     s_msg[0] = '\0';
     if (!Storage::available()) {
         setMsg("NO SD");
@@ -514,21 +562,21 @@ void rescan() {
                 // reason long filenames reported OPEN FAIL.
                 const char* full = f.name();
                 if (full && full[0]) {
-                    strncpy(s_paths[s_n], full, TRACK_PATH_MAX - 1);
-                    s_paths[s_n][TRACK_PATH_MAX - 1] = '\0';
+                    strncpy((s_paths + ((size_t)s_n * TRACK_PATH_MAX)), full, TRACK_PATH_MAX - 1);
+                    (s_paths + ((size_t)s_n * TRACK_PATH_MAX))[TRACK_PATH_MAX - 1] = '\0';
 
                     // Some FS implementations return only the basename from
                     // File::name(); make the stored path absolute in that case.
-                    if (s_paths[s_n][0] != '/') {
+                    if ((s_paths + ((size_t)s_n * TRACK_PATH_MAX))[0] != '/') {
                         char tmp[TRACK_PATH_MAX];
-                        snprintf(tmp, sizeof(tmp), "%s/%s", MUSIC_DIR, s_paths[s_n]);
-                        strncpy(s_paths[s_n], tmp, TRACK_PATH_MAX - 1);
-                        s_paths[s_n][TRACK_PATH_MAX - 1] = '\0';
+                        snprintf(tmp, sizeof(tmp), "%s/%s", MUSIC_DIR, (s_paths + ((size_t)s_n * TRACK_PATH_MAX)));
+                        strncpy((s_paths + ((size_t)s_n * TRACK_PATH_MAX)), tmp, TRACK_PATH_MAX - 1);
+                        (s_paths + ((size_t)s_n * TRACK_PATH_MAX))[TRACK_PATH_MAX - 1] = '\0';
                     }
 
-                    const char* shown = Storage::baseName(s_paths[s_n]);
-                    strncpy(s_names[s_n], shown ? shown : nm, TRACK_NAME_MAX - 1);
-                    s_names[s_n][TRACK_NAME_MAX - 1] = '\0';
+                    const char* shown = Storage::baseName((s_paths + ((size_t)s_n * TRACK_PATH_MAX)));
+                    strncpy((s_names + ((size_t)s_n * TRACK_NAME_MAX)), shown ? shown : nm, TRACK_NAME_MAX - 1);
+                    (s_names + ((size_t)s_n * TRACK_NAME_MAX))[TRACK_NAME_MAX - 1] = '\0';
                     s_n++;
                 }
             }
@@ -687,6 +735,8 @@ void Mp3PlayerMode::stop() {
     stopAudio();
     closeFile();
     releaseDecoder();
+    freeAudioMemory();
+    freeListMemory();
     if (Config::personality().mp3Volume != s_vol) {
         Config::personality().mp3Volume = s_vol;
         Config::save();
@@ -756,7 +806,7 @@ void Mp3PlayerMode::draw(M5Canvas& canvas) {
 
     // ---- track name ticker ----
     if (s_n) {
-        uiDrawMarquee(canvas, s_names[s_idx], 6, 3, 226, 6);
+        uiDrawMarquee(canvas, (s_names + ((size_t)s_idx * TRACK_NAME_MAX)), 6, 3, 226, 6);
     } else {
         canvas.setTextColor(UiStyle::GOLD);
         canvas.drawString(s_msg[0] ? s_msg : "NO MUSIC", 6, 3);
