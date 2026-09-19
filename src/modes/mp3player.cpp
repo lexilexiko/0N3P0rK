@@ -53,13 +53,17 @@ bool    s_eof     = false;
 bool    s_hasResume = false;
 uint8_t s_idx     = 0;
 uint8_t s_n       = 0;
-char*   s_names = nullptr;
-char*   s_paths = nullptr;
+// Only one track label/path lives in RAM. The old implementation kept
+// 32 names + 32 full paths permanently, even when the player was not playing.
+char    s_name[TRACK_NAME_MAX] = "";
+char    s_path[TRACK_PATH_MAX] = "";
 uint8_t s_vol     = 70;
 char    s_msg[28] = "";
 
 File   s_file;
 MP3DecoderHelix* s_mp3 = nullptr;
+
+// Audio buffers are allocated only while PLAY is active.
 uint8_t* s_rd = nullptr;
 size_t  s_rdLen = 0;
 size_t  s_rdPos = 0;
@@ -80,49 +84,7 @@ uint8_t  s_feedStalled = 0;
 // Lives with the SD scan further down, but togglePlay()/step() call it when the
 // track list is still empty, so it needs a declaration up here.
 void rescan();
-
-void setMsg(const char* m);
-
-// ---------------------------------------------------------- lazy MP3 memory
-// Keep the music buffers completely out of RAM while the MP3 mode is not used.
-// The track list is allocated when the mode opens; the audio buffers are only
-// allocated when playback actually starts. Everything is released on stop.
-bool allocListMemory() {
-    if (s_names && s_paths) return true;
-    s_names = (char*)calloc((size_t)MAX_TRACKS, TRACK_NAME_MAX);
-    s_paths = (char*)calloc((size_t)MAX_TRACKS, TRACK_PATH_MAX);
-    if (!s_names || !s_paths) {
-        free(s_names); s_names = nullptr;
-        free(s_paths); s_paths = nullptr;
-        return false;
-    }
-    return true;
-}
-
-void freeAudioMemory() {
-    free(s_rd);  s_rd = nullptr;
-    free(s_pcm); s_pcm = nullptr;
-    s_rdLen = 0;
-    s_rdPos = 0;
-}
-
-bool allocAudioMemory() {
-    if (s_rd && s_pcm) return true;
-    s_rd = (uint8_t*)malloc(READ_CHUNK);
-    s_pcm = (int16_t*)malloc((size_t)PCM_SLOTS * PCM_MAX * sizeof(int16_t));
-    if (!s_rd || !s_pcm) {
-        freeAudioMemory();
-        setMsg("NO MEM");
-        return false;
-    }
-    return true;
-}
-
-void freeListMemory() {
-    free(s_names); s_names = nullptr;
-    free(s_paths); s_paths = nullptr;
-    s_n = 0;
-}
+bool loadCurrentTrackInfo();
 
 // -------------------------------------------------------------- small helpers
 void setMsg(const char* m) {
@@ -339,7 +301,7 @@ bool openTrack(uint8_t idx, uint32_t pos) {
     // filenames (for example Cyrillic names) can exceed that limit.  The old
     // code truncated the name, so SD.open() returned false even for a healthy
     // 3-6 MB MP3.
-    const char* path = s_paths + ((size_t)idx * TRACK_PATH_MAX);
+    const char* path = s_path;
     if (!path[0]) {
         setMsg("OPEN FAIL");
         return false;
@@ -383,6 +345,38 @@ bool openTrack(uint8_t idx, uint32_t pos) {
     return true;
 }
 
+void releaseAudioBuffers() {
+    if (s_rd) {
+        delete[] s_rd;
+        s_rd = nullptr;
+    }
+    if (s_pcm) {
+        delete[] s_pcm;
+        s_pcm = nullptr;
+    }
+    s_rdLen = 0;
+    s_rdPos = 0;
+}
+
+bool ensureAudioBuffers() {
+    if (!s_rd) {
+        s_rd = new uint8_t[READ_CHUNK];
+        if (!s_rd) {
+            setMsg("NO MEM");
+            return false;
+        }
+    }
+    if (!s_pcm) {
+        s_pcm = new int16_t[(size_t)PCM_SLOTS * PCM_MAX];
+        if (!s_pcm) {
+            releaseAudioBuffers();
+            setMsg("NO MEM");
+            return false;
+        }
+    }
+    return true;
+}
+
 void releaseDecoder() {
     if (!s_mp3) return;
     s_mp3->end();
@@ -391,6 +385,7 @@ void releaseDecoder() {
 }
 
 bool ensureDecoder() {
+    if (!ensureAudioBuffers()) return false;
     if (s_mp3) {
         if (s_mp3->begin()) return true;   // resets buffers for the new track
         releaseDecoder();
@@ -427,6 +422,10 @@ void stopAudio() {
     M5.Speaker.stop();
     SFX::setMp3Muted(false);
     SFX::refreshVolume();
+
+    // Nothing audio-related stays allocated while MP3 is stopped/minimized.
+    releaseDecoder();
+    releaseAudioBuffers();
 }
 
 // Byte offset of the next un-decoded MP3 frame (used by STOP -> PLAY resume).
@@ -446,11 +445,9 @@ void playTrack(uint8_t idx, uint32_t pos) {
     }
     s_idx = idx;
     closeFile();
-    if (!allocAudioMemory()) return;
-    if (!openTrack(s_idx, pos)) { freeAudioMemory(); return; }
+    if (!openTrack(s_idx, pos)) return;
     if (!ensureDecoder()) {
         closeFile();
-        freeAudioMemory();
         return;
     }
     s_eof = false;
@@ -478,8 +475,6 @@ void userStop() {
     stopAudio();
     s_eof = false;
     closeFile();
-    releaseDecoder();
-    freeAudioMemory();
     setMsg("STOP");
 }
 
@@ -507,7 +502,12 @@ void step(int8_t dir) {
     while (i < 0) i = (int16_t)(i + n);
     while (i >= n) i = (int16_t)(i - n);
     s_hasResume = false;
-    playTrack((uint8_t)i, 0);
+    s_idx = (uint8_t)i;
+    if (!loadCurrentTrackInfo()) {
+        setMsg("OPEN FAIL");
+        return;
+    }
+    playTrack(s_idx, 0);
 }
 
 void bumpVolume(int8_t dir) {
@@ -534,16 +534,113 @@ void keyAction(uint8_t i) {
     }
 }
 
+bool isMp3Name(const char* nm) {
+    if (!nm) return false;
+    size_t l = strlen(nm);
+    return l > 4 && strcasecmp(nm + l - 4, ".mp3") == 0;
+}
+
+// Find one track by ordinal without keeping the whole directory in RAM.
+// If out buffers are supplied, also copy its exact path and display name.
+bool findTrack(uint8_t wanted, char* pathOut, size_t pathCap,
+               char* nameOut, size_t nameCap) {
+    if (!Storage::available()) return false;
+
+    File dir = SD.open(MUSIC_DIR);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return false;
+    }
+
+    uint8_t n = 0;
+    File f = dir.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            const char* nm = Storage::baseName(f.name());
+            if (isMp3Name(nm)) {
+                if (n == wanted) {
+                    const char* full = f.name();
+                    if (!full || !full[0]) {
+                        f.close();
+                        dir.close();
+                        return false;
+                    }
+
+                    if (pathOut && pathCap) {
+                        if (full[0] == '/') {
+                            strncpy(pathOut, full, pathCap - 1);
+                        } else {
+                            snprintf(pathOut, pathCap, "%s/%s", MUSIC_DIR, full);
+                        }
+                        pathOut[pathCap - 1] = '\0';
+                    }
+
+                    if (nameOut && nameCap) {
+                        const char* shown = Storage::baseName(pathOut);
+                        strncpy(nameOut, shown ? shown : nm, nameCap - 1);
+                        nameOut[nameCap - 1] = '\0';
+                    }
+
+                    f.close();
+                    dir.close();
+                    return true;
+                }
+                if (n < 255) ++n;
+            }
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+
+    if (f) f.close();
+    dir.close();
+    return false;
+}
+
+uint8_t countTracks() {
+    if (!Storage::available()) return 0;
+
+    File dir = SD.open(MUSIC_DIR);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return 0;
+    }
+
+    uint8_t n = 0;
+    File f = dir.openNextFile();
+    while (f && n < MAX_TRACKS) {
+        if (!f.isDirectory() && isMp3Name(Storage::baseName(f.name()))) {
+            ++n;
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+    if (f) f.close();
+    dir.close();
+    return n;
+}
+
+bool loadCurrentTrackInfo() {
+    if (s_n == 0) {
+        s_name[0] = '\0';
+        s_path[0] = '\0';
+        return false;
+    }
+    return findTrack(s_idx, s_path, sizeof(s_path),
+                     s_name, sizeof(s_name));
+}
+
 void rescan() {
     s_n = 0;
-    if (!allocListMemory()) { setMsg("NO MEM"); return; }
-    memset(s_names, 0, (size_t)MAX_TRACKS * TRACK_NAME_MAX);
-    memset(s_paths, 0, (size_t)MAX_TRACKS * TRACK_PATH_MAX);
+    s_name[0] = '\0';
+    s_path[0] = '\0';
     s_msg[0] = '\0';
+
     if (!Storage::available()) {
         setMsg("NO SD");
         return;
     }
+
     SD.mkdir(MUSIC_DIR);
     File dir = SD.open(MUSIC_DIR);
     if (!dir || !dir.isDirectory()) {
@@ -551,43 +648,19 @@ void rescan() {
         setMsg("NO DIRECTORY");
         return;
     }
-    File f = dir.openNextFile();
-    while (f && s_n < MAX_TRACKS) {
-        if (!f.isDirectory()) {
-            const char* nm = Storage::baseName(f.name());
-            size_t l = nm ? strlen(nm) : 0;
-            if (l > 4 && strcasecmp(nm + l - 4, ".mp3") == 0) {
-                // Keep the complete filesystem path separately from the
-                // short UI label.  Opening from the truncated label was the
-                // reason long filenames reported OPEN FAIL.
-                const char* full = f.name();
-                if (full && full[0]) {
-                    strncpy((s_paths + ((size_t)s_n * TRACK_PATH_MAX)), full, TRACK_PATH_MAX - 1);
-                    (s_paths + ((size_t)s_n * TRACK_PATH_MAX))[TRACK_PATH_MAX - 1] = '\0';
-
-                    // Some FS implementations return only the basename from
-                    // File::name(); make the stored path absolute in that case.
-                    if ((s_paths + ((size_t)s_n * TRACK_PATH_MAX))[0] != '/') {
-                        char tmp[TRACK_PATH_MAX];
-                        snprintf(tmp, sizeof(tmp), "%s/%s", MUSIC_DIR, (s_paths + ((size_t)s_n * TRACK_PATH_MAX)));
-                        strncpy((s_paths + ((size_t)s_n * TRACK_PATH_MAX)), tmp, TRACK_PATH_MAX - 1);
-                        (s_paths + ((size_t)s_n * TRACK_PATH_MAX))[TRACK_PATH_MAX - 1] = '\0';
-                    }
-
-                    const char* shown = Storage::baseName((s_paths + ((size_t)s_n * TRACK_PATH_MAX)));
-                    strncpy((s_names + ((size_t)s_n * TRACK_NAME_MAX)), shown ? shown : nm, TRACK_NAME_MAX - 1);
-                    (s_names + ((size_t)s_n * TRACK_NAME_MAX))[TRACK_NAME_MAX - 1] = '\0';
-                    s_n++;
-                }
-            }
-        }
-        f.close();
-        f = dir.openNextFile();
-    }
-    if (f) f.close();
     dir.close();
-    s_idx = 0;
-    if (s_n == 0) setMsg("NO MP3");
+
+    s_n = countTracks();
+    if (s_n == 0) {
+        setMsg("NO MP3");
+        return;
+    }
+
+    if (s_idx >= s_n) s_idx = 0;
+    if (!loadCurrentTrackInfo()) {
+        s_n = 0;
+        setMsg("NO MP3");
+    }
 }
 
 // ------------------------------------------------------------- decode + feed
@@ -735,8 +808,6 @@ void Mp3PlayerMode::stop() {
     stopAudio();
     closeFile();
     releaseDecoder();
-    freeAudioMemory();
-    freeListMemory();
     if (Config::personality().mp3Volume != s_vol) {
         Config::personality().mp3Volume = s_vol;
         Config::save();
@@ -806,7 +877,7 @@ void Mp3PlayerMode::draw(M5Canvas& canvas) {
 
     // ---- track name ticker ----
     if (s_n) {
-        uiDrawMarquee(canvas, (s_names + ((size_t)s_idx * TRACK_NAME_MAX)), 6, 3, 226, 6);
+        uiDrawMarquee(canvas, s_name, 6, 3, 226, 6);
     } else {
         canvas.setTextColor(UiStyle::GOLD);
         canvas.drawString(s_msg[0] ? s_msg : "NO MUSIC", 6, 3);
