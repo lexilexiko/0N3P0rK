@@ -157,10 +157,7 @@ void onPcm(MP3FrameInfo& info, short* pcm, size_t len, void*) {
                                 ((uint64_t)s_bitrate * 1000ULL));
     }
 
-    // copy=true: Speaker copies the frame into its own DMA buffer.
-    // This lets us free s_pcm safely in releaseAudioBuffers() without
-    // racing the Speaker task that may still be reading the old pointer.
-    M5.Speaker.playRaw(out, frames, s_rate, false, 1, MUSIC_CH, true);
+    M5.Speaker.playRaw(out, frames, s_rate, false, 1, MUSIC_CH, false);
     s_played += (uint32_t)frames;
     s_slot = (uint8_t)((s_slot + 1) % PCM_SLOTS);
 }
@@ -349,17 +346,6 @@ bool openTrack(uint8_t idx, uint32_t pos) {
 }
 
 void releaseAudioBuffers() {
-    // Belt-and-suspenders: make absolutely sure the Speaker is not reading
-    // our PCM buffer before we free it. stopAudio() already waits, but
-    // releaseAudioBuffers() can also be called standalone (ensureDecoder fail
-    // path), so guard here too.
-    if (s_pcm && M5.Speaker.isPlaying(MUSIC_CH)) {
-        M5.Speaker.stop(MUSIC_CH);
-        uint32_t t0 = millis();
-        while (M5.Speaker.isPlaying(MUSIC_CH) && millis() - t0 < 300) {
-            delay(1); yield();
-        }
-    }
     if (s_rd) {
         delete[] s_rd;
         s_rd = nullptr;
@@ -433,32 +419,13 @@ bool ensureDecoder() {
 
 void stopAudio() {
     s_playing = false;
-
-    // 1. Stop MUSIC_CH specifically and wait for it to finish.
-    //    playRaw() was called with copy=false, so the Speaker holds a raw
-    //    pointer into s_pcm. We MUST NOT free s_pcm until the Speaker task
-    //    has confirmed it is done reading — otherwise the task reads freed RAM.
-    M5.Speaker.stop(MUSIC_CH);
-    uint32_t t0 = millis();
-    while (M5.Speaker.isPlaying(MUSIC_CH) && millis() - t0 < 500) {
-        delay(2);
-        yield();
-    }
-
-    // 2. Now it is safe to release the decoder and PCM buffers.
-    releaseDecoder();
-    releaseAudioBuffers();
-
-    // 3. M5.Speaker allocates ~8-10KB of internal DMA buffers on the first
-    //    playRaw() call and never releases them via stop() — there is no API
-    //    for that. The only way to return that memory is end()+begin().
-    //    We do this unconditionally so the heap after exit matches the heap
-    //    before the player was ever opened.
-    M5.Speaker.end();
-    M5.Speaker.begin();   // re-arm the speaker for SFX / next session
-
+    M5.Speaker.stop();
     SFX::setMp3Muted(false);
     SFX::refreshVolume();
+
+    // Nothing audio-related stays allocated while MP3 is stopped/minimized.
+    releaseDecoder();
+    releaseAudioBuffers();
 }
 
 // Byte offset of the next un-decoded MP3 frame (used by STOP -> PLAY resume).

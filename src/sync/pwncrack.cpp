@@ -100,9 +100,9 @@ bool Pwncrack::canSync() {
 }
 
 void Pwncrack::freeCacheMemory() {
-    // Never shrink_to_fit — failed realloc on ESP32 is a hard reboot.
-    crackedCache.clear();
-    uploadedCache.clear();
+    // MEMFIX: swap-with-empty отдаёт capacity без shrink_to_fit/realloc.
+    std::vector<CrackedEntry>().swap(crackedCache);
+    std::vector<UploadedEntry>().swap(uploadedCache);
     cacheLoaded = false;
 }
 

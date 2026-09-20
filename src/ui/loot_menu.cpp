@@ -393,6 +393,10 @@ void LootMenu::hide() {
         Avatar::resumeScene();
         s_syncGo = SyncGo::Off;
     }
+    // MEMFIX: отдать кэш-память ПРИ ВЫХОДЕ, а не только при входе.
+    WPASec::freeCacheMemory();
+    Pwncrack::freeCacheMemory();
+    Storage::brewHeap();
 }
 
 const char* LootMenu::getBottomHint() {
