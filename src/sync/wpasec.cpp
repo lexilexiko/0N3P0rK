@@ -95,9 +95,9 @@ bool WPASec::canSync() {
 }
 
 void WPASec::freeCacheMemory() {
-    // Never shrink_to_fit — ESP32 has no C++ exceptions; a failed realloc aborts.
-    crackedCache.clear();
-    uploadedCache.clear();
+    // MEMFIX: swap-with-empty отдаёт capacity без shrink_to_fit/realloc.
+    std::vector<CrackedEntry>().swap(crackedCache);
+    std::vector<UploadedEntry>().swap(uploadedCache);
     cacheLoaded = false;
 }
 
