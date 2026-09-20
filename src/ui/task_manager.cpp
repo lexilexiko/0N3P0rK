@@ -43,6 +43,7 @@ const char* rowName(Row row) {
 
 bool rowActive(Row row) {
     switch (row) {
+        case STOP_ALL: return false;
         case RADIO: return Cap::isRunning();
         case WIFI: return WiFi.getMode() != WIFI_OFF;
         case BLE: return BlePigMode::isRunning();
@@ -58,7 +59,6 @@ bool rowActive(Row row) {
         case PWN_SYNC: return Pwncrack::isBusy();
         case LOOT: return LootMenu::isActive();
         case MP3: return Mp3PlayerMode::isRunning();
-        case STOP_ALL: return false;
         default: return false;
     }
 }
