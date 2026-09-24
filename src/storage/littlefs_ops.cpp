@@ -426,6 +426,7 @@ void migrateLegacy() {
     ensureDir(DIR_HS);
     ensureDir(DIR_WPASEC);
     ensureDir(DIR_PWNCRACK);
+    ensureDir(DIR_OHC);
     migrateAll("/0N3P0rK/hs", DIR_HS);
     migrateAll("/loot/wpa-sec", DIR_WPASEC);
     migrateAll("/loot/pwncrack", DIR_PWNCRACK);
@@ -512,6 +513,13 @@ void loadKeysIntoNet() {
     if (loadKeyFile(FILE_PWNCRACK_KEY, buf, sizeof(buf))) {
         Net::setPwncrackKey(buf);
         Serial.println("[SD] pwncrack key loaded");
+    }
+    // OnlineHashCrack takes the account email instead of an API key. The file
+    // is optional: with no email the OHC tab simply reports NO OHC EMAIL.
+    char mail[80];
+    if (loadKeyFile(FILE_OHC_EMAIL, mail, sizeof(mail))) {
+        if (Net::setOhcEmail(mail)) Serial.println("[SD] ohc email loaded");
+        else Serial.println("[SD] ohc email invalid, ignored");
     }
 }
 

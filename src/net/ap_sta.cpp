@@ -26,6 +26,7 @@ static const char* KEY_STA_SSID = "stssid";
 static const char* KEY_STA_PASS = "stpass";
 static const char* KEY_WPASEC   = "wpakey";
 static const char* KEY_PWN      = "pwnkey";
+static const char* KEY_OHC      = "ohcmail";
 
 static void nvsGetStr(nvs_handle_t h, const char* key, char* dst, size_t dstLen, const char* defv) {
     size_t len = dstLen;
@@ -101,6 +102,7 @@ static void loadFromNvs() {
     nvsGetStr(h, KEY_STA_PASS, s_cfg.staPass, sizeof(s_cfg.staPass), "");
     nvsGetStr(h, KEY_WPASEC, s_cfg.wpaSecKey, sizeof(s_cfg.wpaSecKey), "");
     nvsGetStr(h, KEY_PWN, s_cfg.pwncrackKey, sizeof(s_cfg.pwncrackKey), "");
+    nvsGetStr(h, KEY_OHC, s_cfg.ohcEmail, sizeof(s_cfg.ohcEmail), "");
     nvs_close(h);
     bool migrated = false;
     if (s_cfg.apSsid[0] == '\0' ||
@@ -134,6 +136,7 @@ void save() {
     nvs_set_str(h, KEY_STA_PASS, s_cfg.staPass);
     nvs_set_str(h, KEY_WPASEC, s_cfg.wpaSecKey);
     nvs_set_str(h, KEY_PWN, s_cfg.pwncrackKey);
+    nvs_set_str(h, KEY_OHC, s_cfg.ohcEmail);
     nvs_commit(h);
     nvs_close(h);
     Serial.println("[NET] saved");
@@ -308,6 +311,35 @@ bool setPwncrackKey(const char* key) {
     return true;
 }
 
+// OnlineHashCrack credential. The public WPA API has no key: the email of an
+// existing account is what identifies the submission. Accept anything shaped
+// like a single-@ address with a dotted host; the server answers HTTP 401 for
+// addresses it does not know, which is reported per upload.
+bool setOhcEmail(const char* email) {
+    if (!email || !email[0]) {
+        s_cfg.ohcEmail[0] = '\0';
+        save();
+        return true;
+    }
+    size_t n = strlen(email);
+    if (n < 6 || n > 64) return false;
+    uint8_t atCount = 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)email[i];
+        if (c <= 0x20 || c >= 0x7F) return false;
+        if (c == '@') atCount++;
+    }
+    if (atCount != 1) return false;
+    const char* at = strchr(email, '@');
+    if (!at || at == email) return false;
+    const char* dot = strrchr(at + 1, '.');
+    if (!dot || dot == at + 1 || dot[1] == '\0') return false;
+    strncpy(s_cfg.ohcEmail, email, sizeof(s_cfg.ohcEmail) - 1);
+    s_cfg.ohcEmail[sizeof(s_cfg.ohcEmail) - 1] = '\0';
+    save();
+    return true;
+}
+
 bool setApSsidTemporary(const char* ssid) {
     if (!ssid || !*ssid || strlen(ssid) > 32) return false;
     if (s_cfg.mode != Mode::AP && s_cfg.mode != Mode::APSTA) return false;
@@ -362,6 +394,7 @@ bool joinHome(uint32_t timeoutMs) {
             IPAddress ip;
             resolveHost("wpa-sec.stanev.org", ip, 2);
             resolveHost("pwncrack.org", ip, 2);
+            resolveHost("api.onlinehashcrack.com", ip, 2);
             Serial.printf("[NET] home ip %s rssi %d\n",
                           WiFi.localIP().toString().c_str(), WiFi.RSSI());
             return true;

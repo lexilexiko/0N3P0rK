@@ -39,6 +39,9 @@ struct Cfg {
     char staPass[65];
     char wpaSecKey[33];
     char pwncrackKey[65];
+    // OnlineHashCrack public WPA API credential: the address of an existing
+    // account. No API key — unknown addresses answer HTTP 401 per upload.
+    char ohcEmail[65];
 };
 
 static const char* const AP_SSID_IDLE = "OneLPig";
@@ -63,6 +66,9 @@ bool resolveHost(const char* host, IPAddress& ip, uint8_t tries = 3);
 
 bool setWpaSecKey(const char* key);
 bool setPwncrackKey(const char* key);
+// OnlineHashCrack credential. Empty string clears it. Returns false when the
+// address does not look usable, so a typo is caught before the upload runs.
+bool setOhcEmail(const char* email);
 
 void save();
 void loadDefaults();

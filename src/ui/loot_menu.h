@@ -8,6 +8,7 @@ public:
     static void show();
     static void openWpaSec();
     static void openPwncrack();
+    static void openOhc();
     static void hide();
     static void update();
     static void draw(M5Canvas& canvas);
@@ -15,7 +16,11 @@ public:
     static const char* getBottomHint();
 
 private:
-    enum class Tab : uint8_t { WPASEC = 0, PWNCRACK = 1 };
+    // Three destinations for the same capture pool:
+    //   WPASEC   — .pcap upload + potfile download (wpa-sec.stanev.org)
+    //   PWNCRACK — .22000 upload + potfile download (pwncrack.org)
+    //   OHC      — .pcap upload only (api.onlinehashcrack.com, no potfile)
+    enum class Tab : uint8_t { WPASEC = 0, PWNCRACK = 1, OHC = 2 };
 
     static const uint8_t PAGE_SIZE = 48; // same footprint that already worked fine
 

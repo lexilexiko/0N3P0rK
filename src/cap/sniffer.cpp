@@ -1435,6 +1435,7 @@ void begin() {
     Storage::ensureDir(Storage::DIR_HS);
     Storage::ensureDir(Storage::DIR_WPASEC);
     Storage::ensureDir(Storage::DIR_PWNCRACK);
+    Storage::ensureDir(Storage::DIR_OHC);
     s_cnt = {};
     s_write = 0;
     s_read  = 0;
