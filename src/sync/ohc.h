@@ -23,6 +23,16 @@ struct OhcUploadResult {
     bool     accepted;       // accepted.count > 0
     bool     alreadySent;    // 200 + skipped.reason == "already_sent"
     bool     noHashFound;    // 200 + rejected.reason == "no_hash_found"
+    // Rejected locally, before any TLS session: the file is not a PCAP/PCAPNG
+    // container, or it is a header-only capture with zero packets. OnlineHashCrack
+    // would answer "unsupported file type" for both; catching it here keeps the
+    // reason readable and costs nothing.
+    bool     badFormat;
+    // Container facts, filled before any network use so a run can be logged to
+    // SD without a serial console: bytes on the card and the first four bytes
+    // of the file (the PCAP/PCAPNG magic).
+    uint32_t bytes;
+    uint32_t magic;
     uint16_t acceptedCount;
     uint16_t skippedCount;
     uint16_t rejectedCount;

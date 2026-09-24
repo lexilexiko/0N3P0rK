@@ -1013,11 +1013,16 @@ void LootMenu::update() {
             // OHC: upload every unsent capture. There is no results step —
             // OnlineHashCrack publishes them in the web dashboard.
             OhcSyncResult r = OHC::syncCaptures(Net::cfg().ohcEmail, onProg);
-            if (r.success)
+            if (r.error[0]) {
+                // A stopped or partly failing batch must not look like a clean
+                // run: show how many of how many went and why it stopped.
+                uint16_t total = (uint16_t)(r.uploaded + r.already + r.empty + r.failed);
+                snprintf(s_syncText, sizeof(s_syncText), "up%u/%u !%s",
+                         (unsigned)r.uploaded, (unsigned)total, r.error);
+            } else {
                 snprintf(s_syncText, sizeof(s_syncText), "OK up%u alr%u no%u",
                          r.uploaded, r.already, r.empty);
-            else
-                snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
+            }
         }
         Tls::arenaEnd();
         ioXfer().paint = nullptr;

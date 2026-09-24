@@ -22,6 +22,10 @@ static const char*    OHC_UPLOAD_PATH = "/";
 static const uint8_t  OHC_ID_MAX = 48;
 static const size_t   OHC_MAX_CACHE = 256;
 static const char*    OHC_PENDING = "/0N3P0rK/ohc/_pending.txt";
+// Per-run report. The device has no console in the field, so every candidate
+// and its outcome is written here and can be opened from FILEMGR or pulled over
+// XFER.
+static const char*    OHC_LASTLOG = "/0N3P0rK/ohc/last.log";
 // Multipart delimiter. A PCAP file never contains the literal "----0N3P0rK",
 // so the token cannot collide with capture bytes.
 static const char*    OHC_BOUNDARY = "----0N3P0rKOHC7d91a2f4";
@@ -319,6 +323,58 @@ static bool uploadCapture(const char* filepath, const char* email,
         return false;
     }
 
+    // OnlineHashCrack answers "unsupported file type" for anything it cannot
+    // recognise as PCAP or PCAPNG. Verify the container ourselves first, so the
+    // reason is readable and a doomed file never costs a TLS session.
+    uint8_t magic[4] = {0, 0, 0, 0};
+    size_t gotMagic = capFile.read(magic, 4);
+    capFile.seek(0);
+    if (gotMagic != 4) {
+        capFile.close();
+        snprintf(s_lastError, sizeof(s_lastError), "unreadable");
+        if (out) {
+            snprintf(out->error, sizeof(out->error), "%s", s_lastError);
+            out->badFormat = true;
+        }
+        return false;
+    }
+    uint32_t m = ((uint32_t)magic[0] << 24) | ((uint32_t)magic[1] << 16) |
+                 ((uint32_t)magic[2] << 8) | (uint32_t)magic[3];
+    // 0xD4C3B2A1 = classic pcap little endian (what the sniffer writes),
+    // 0xA1B2C3D4 = classic pcap big endian, 0x0A0D0D0A = pcapng.
+    const bool isPcap   = (m == 0xD4C3B2A1u) || (m == 0xA1B2C3D4u);
+    const bool isPcapng = (m == 0x0A0D0D0Au);
+    // A container with no packet record cannot hold a handshake. The capture
+    // pipeline writes the 24-byte global header as soon as EAPOL shows up, and
+    // a tight hsFileBytes budget can leave the file exactly like that.
+    const size_t minEmpty = isPcapng ? 28u : 24u;
+
+    if (out) {
+        out->bytes = (uint32_t)fileSize;
+        out->magic = m;
+    }
+
+    if (!isPcap && !isPcapng) {
+        capFile.close();
+        snprintf(s_lastError, sizeof(s_lastError), "not a capture (%08X)",
+                 (unsigned)m);
+        if (out) {
+            snprintf(out->error, sizeof(out->error), "%s", s_lastError);
+            out->badFormat = true;
+        }
+        return false;
+    }
+    if (fileSize <= minEmpty) {
+        capFile.close();
+        snprintf(s_lastError, sizeof(s_lastError), "no packets (%ub)",
+                 (unsigned)fileSize);
+        if (out) {
+            snprintf(out->error, sizeof(out->error), "%s", s_lastError);
+            out->badFormat = true;
+        }
+        return false;
+    }
+
     const char* filename = Storage::baseName(filepath);
     if (!filename || !filename[0]) filename = "capture.pcap";
 
@@ -564,9 +620,21 @@ OhcSyncResult syncCaptures(const char* email, OhcProgressCallback cb) {
         return result;
     }
 
+    // Per-run report on SD. The device is normally used with no console
+    // attached, so this file is how a partial or failing run can actually be
+    // inspected: open it from FILEMGR or pull it over XFER.
+    File log = SD.open(OHC_LASTLOG, "w");
+    if (log) {
+        log.printf("# 0N3P0rK OHC build=%s\n", ON3PORK_VERSION);
+        log.printf("# queued=%u email=%s\n", (unsigned)queued, email);
+        log.println("# name|bytes|magic|status|acc|skip|rej|detail");
+    }
+
     File in = SD.open(OHC_PENDING, "r");
     uint16_t i = 0;
+    uint8_t heapStrikes = 0;
     char line[80];
+    char firstErr[48] = "";
     while (in && in.available()) {
         size_t n = in.readBytesUntil('\n', line, sizeof(line) - 1);
         line[n] = '\0';
@@ -575,13 +643,57 @@ OhcSyncResult syncCaptures(const char* email, OhcProgressCallback cb) {
         i++;
         if (cb) cb("OHC up", i, queued);
         ioXferPhase("OHC UP", i, queued);
-        if (!canSync()) break;
+
+        // TLS needs one large contiguous block and the previous session leaves
+        // the heap shredded. Compact, wait, and then skip only THIS file — the
+        // rest of the batch keeps going. Aborting here is what cut runs down to
+        // a couple of uploads. Three strikes in a row mean the heap will not
+        // come back in this pass, and the remainder is left for the next run.
+        if (!canSync()) {
+            Storage::brewHeap();
+            delay(300);
+            yield();
+            if (!canSync()) {
+                heapStrikes++;
+                result.failed++;
+                ioXfer().fail++;
+                if (firstErr[0] == '\0')
+                    snprintf(firstErr, sizeof(firstErr), "%s", s_lastError);
+                if (log) log.printf("%s|?|?|heap|0|0|0|%s\n", line, s_lastError);
+                if (heapStrikes >= 3) {
+                    uint16_t left = (uint16_t)(queued - i);
+                    result.failed += left;
+                    ioXfer().fail += left;
+                    Serial.printf("[OHC] heap stop, %u files left\n", (unsigned)left);
+                    if (log) log.printf("# stopped: %u files left\n", (unsigned)left);
+                    break;
+                }
+                continue;
+            }
+            heapStrikes = 0;
+        }
 
         char path[96];
         snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HANDSHAKES, line);
 
         OhcUploadResult ur{};
         bool ok = uploadCapture(path, email, &ur);
+        if (!ok && !ur.badFormat && !ur.noHashFound) {
+            // One immediate retry. Nearly every failure at this point is a
+            // torn-down TLS session rather than a bad capture, and a fresh
+            // connect right after usually goes through. This is the cheapest
+            // way to raise the number of captures that make it per run.
+            Storage::brewHeap();
+            delay(250);
+            yield();
+            OhcUploadResult ur2{};
+            if (uploadCapture(path, email, &ur2)) {
+                ur = ur2;
+                ok = true;
+            } else if (!ur2.badFormat && !ur2.noHashFound) {
+                ur = ur2;   // keep the newer reason for the log
+            }
+        }
         if (ok) {
             if (ur.alreadySent) result.already++;
             else result.uploaded++;
@@ -591,10 +703,41 @@ OhcSyncResult syncCaptures(const char* email, OhcProgressCallback cb) {
             // Valid capture, but no usable PMKID/EAPOL inside. There is
             // nothing to retry and nothing to mark, so it stays LOCAL.
             result.empty++;
+        } else if (ur.badFormat) {
+            // Not something the service would accept: wrong container, or a
+            // header-only capture with no packets. Skipped locally, so it never
+            // reaches the API and never burns a TLS session. Still reported, so
+            // a card full of broken captures cannot look like a clean run.
+            result.empty++;
+            if (firstErr[0] == '\0')
+                snprintf(firstErr, sizeof(firstErr), "%s",
+                         ur.error[0] ? ur.error : "bad capture");
         } else {
             result.failed++;
             ioXfer().fail++;
+            if (firstErr[0] == '\0')
+                snprintf(firstErr, sizeof(firstErr), "%s",
+                         ur.error[0] ? ur.error : s_lastError);
         }
+        // One line per capture, on SD and on the serial console, carrying the
+        // container facts and the server's own counters and message.
+        const char* st = ok ? (ur.alreadySent ? "already" : "ok")
+                            : (ur.badFormat ? "bad"
+                                            : (ur.noHashFound ? "nohash" : "fail"));
+        Serial.printf("[OHC] %-34s b=%u m=%08X %s acc=%u skip=%u rej=%u %s\n",
+                      line, (unsigned)ur.bytes, (unsigned)ur.magic, st,
+                      (unsigned)ur.acceptedCount, (unsigned)ur.skippedCount,
+                      (unsigned)ur.rejectedCount,
+                      ur.error[0] ? ur.error : "");
+        if (log) {
+            log.printf("%s|%u|%08X|%s|%u|%u|%u|%s\n",
+                       line, (unsigned)ur.bytes, (unsigned)ur.magic, st,
+                       (unsigned)ur.acceptedCount, (unsigned)ur.skippedCount,
+                       (unsigned)ur.rejectedCount,
+                       ur.error[0] ? ur.error : "-");
+        }
+        // Compact between files so the next TLS handshake gets a clean block.
+        Storage::brewHeap();
         ioXferPaint(true);
         delay(60);
         yield();
@@ -611,10 +754,20 @@ OhcSyncResult syncCaptures(const char* email, OhcProgressCallback cb) {
         result.success = true;
     } else if (result.uploaded || result.already) {
         result.success = true;
-        strncpy(result.error, "some failed", sizeof(result.error) - 1);
+        snprintf(result.error, sizeof(result.error), "%s",
+                 firstErr[0] ? firstErr : "some failed");
     } else {
         snprintf(result.error, sizeof(result.error), "%s",
-                 s_lastError[0] ? s_lastError : "upload failed");
+                 firstErr[0] ? firstErr
+                             : (s_lastError[0] ? s_lastError : "upload failed"));
+    }
+
+    if (log) {
+        log.printf("# done up=%u already=%u no=%u fail=%u reason=%s\n",
+                   (unsigned)result.uploaded, (unsigned)result.already,
+                   (unsigned)result.empty, (unsigned)result.failed,
+                   result.error[0] ? result.error : "-");
+        log.close();
     }
 
     s_busy = false;

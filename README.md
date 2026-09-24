@@ -282,6 +282,58 @@ outcomes: accepted, `already_sent` (kept from re-sending), and `no_hash_found`
 
 Set the address once. An empty file disables the tab.
 
+#### If only some captures arrive
+
+- `S` sends **every** unsent capture. `U` sends **only the highlighted row** — a
+  single upload is the normal outcome of pressing `U`.
+- When a batch stops early or part of it is rejected, the sync screen shows
+  `up<n>/<total> !<reason>` instead of a plain `OK`. The serial console prints
+  one line per capture with the server's own `acc` / `skip` / `rej` counters and
+  the rejection message.
+- Captures answered with `no_hash_found` contain no usable PMKID/EAPOL. They
+  stay listed as local and are retried on the next run, because a re-capture of
+  the same BSSID overwrites the file with a better handshake.
+- The upload loop compacts the heap between captures. TLS needs one large
+  contiguous block, and the heap left behind by the previous session is what
+  used to cut a batch short after the first file.
+- Only `.cap` / `.pcap` / `.pcapng` are accepted. `.22000` files are deliberately
+  **not** sent: the public endpoint answers HTTP 400 for them, and the capture
+  already carries the same handshake for the server to extract. Use a capture,
+  not a hash line.
+- Before contacting the service, each file's container is verified locally. A
+  file that is not PCAP/PCAPNG is refused as `not a capture (xxxxxxxx)`, and one
+  that holds only the 24-byte global header with no packet as
+  `no packets (Nub)`. OnlineHashCrack reports both as *unsupported file type*,
+  so this check turns the remote error into a readable local reason and saves the
+  TLS session.
+- A failed or partial transport is retried once immediately, and a file that
+  still cannot be sent is skipped **without** ending the batch. Only three
+  consecutive heap failures stop a run, and the remaining captures stay unmarked
+  so the next run picks them up.
+- Every run writes a report to **`/0N3P0rK/ohc/last.log`** — open it from
+  **FILEMGR** on the device or pull it over **XFER**. One line per capture:
+
+  ```text
+  # 0N3P0rK OHC build=1.3.5
+  # queued=12 email=you@example.com
+  # name|bytes|magic|status|acc|skip|rej|detail
+  488F5A623215.pcap|1240|D4C3B2A1|ok|1|0|0|-
+  80E3704C21A7.pcap|24|D4C3B2A1|bad|0|0|0|no packets (24b)
+  4C1F3D0A9B77.pcap|?|?|heap|0|0|0|low heap 11/19K
+  # done up=1 already=0 no=1 fail=1 reason=-
+  ```
+
+  `status` is `ok`, `already`, `nohash`, `bad`, `heap` or `fail`; `bytes` and
+  `magic` prove whether the file on the card is a real capture. This file is the
+  fastest way to diagnose a run without a serial console.
+
+Sending raw `.22000` hash lines is only possible through the authenticated
+OnlineHashCrack API v2 (`POST https://api.onlinehashcrack.com/v2` with an
+`sk_`-prefixed key, `action: add_tasks`, `algo_mode: 22000`), which needs a
+verified account. Note that v2 caps each hash string at 512 characters, so full
+EAPOL pair lines do not fit — only PMKID lines do. This firmware therefore keeps
+to the keyless capture endpoint.
+
 ### Radio configuration
 
 The **SET → RADIO** page contains the stable radio controls:
