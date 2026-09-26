@@ -20,7 +20,8 @@ enum class AppMode : uint8_t {
     XFER,
     BADUSB,
     MP3,
-    TASKS
+    TASKS,
+    INSPECTOR
 };
 
 namespace App {

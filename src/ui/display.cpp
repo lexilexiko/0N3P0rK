@@ -28,6 +28,7 @@
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
 #include "../modes/filemgr.h"
+#include "../modes/inspectorpig.h"
 #include "../modes/mp3player.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
@@ -887,6 +888,7 @@ void Display::update() {
         else if (App::mode() == AppMode::XFER) XferMode::draw(mainCanvas);
         else if (App::mode() == AppMode::BADUSB) BadUsbMode::draw(mainCanvas);
         else if (App::mode() == AppMode::MP3) Mp3PlayerMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::INSPECTOR) InspectorPig::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

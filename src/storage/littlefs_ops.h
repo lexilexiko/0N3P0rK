@@ -46,6 +46,9 @@ const char* const DIR_HS         = "/0N3P0rK/handshakes";
 const char* const DIR_HANDSHAKES = "/0N3P0rK/handshakes";
 const char* const DIR_WPASEC     = "/0N3P0rK/wpa-sec";
 const char* const DIR_PWNCRACK   = "/0N3P0rK/pwncrack";
+const char* const DIR_OHC        = "/0N3P0rK/ohc";
+// Reports written by the handshake inspector (InspectorPig).
+const char* const DIR_INSPECTOR  = "/0N3P0rK/inspector";
 const char* const DIR_RESULTS    = "/0N3P0rK/wpa-sec";
 const char* const DIR_EVILPIG    = "/0N3P0rK/evilpig";
 const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
@@ -61,6 +64,11 @@ const char* const FILE_WPASEC_UPLOADED   = "/0N3P0rK/wpa-sec/uploaded.txt";
 const char* const FILE_PWNCRACK_KEY      = "/0N3P0rK/pwncrack/key.txt";
 const char* const FILE_PWNCRACK_RESULTS  = "/0N3P0rK/pwncrack/results.txt";
 const char* const FILE_PWNCRACK_UPLOADED = "/0N3P0rK/pwncrack/uploaded.txt";
+// OnlineHashCrack public WPA API: the account email is the only credential,
+// so this file holds one address instead of a key. results.txt is unused —
+// the service has no potfile endpoint, results live in the web dashboard.
+const char* const FILE_OHC_EMAIL         = "/0N3P0rK/ohc/email.txt";
+const char* const FILE_OHC_UPLOADED      = "/0N3P0rK/ohc/uploaded.txt";
 
 bool ensureDir(const char* path);
 bool removeFile(const char* path);

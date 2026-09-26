@@ -16,12 +16,15 @@ inline const char* pigpassLastWordlistPath() { return "/0N3P0rK/pigpass/last_wl.
 inline const char* evilpigDir() { return "/0N3P0rK/evilpig"; }
 inline const char* evilpigCredsPath() { return "/0N3P0rK/evilpig/creds.csv"; }
 inline const char* screenshotsDir() { return "/0N3P0rK/screenshots"; }
+inline const char* inspectorDir() { return "/0N3P0rK/inspector"; }
 
 inline void ensureDirs() {
     SD.mkdir("/0N3P0rK");
     SD.mkdir("/0N3P0rK/handshakes");
     SD.mkdir("/0N3P0rK/wpa-sec");
     SD.mkdir("/0N3P0rK/pwncrack");
+    SD.mkdir("/0N3P0rK/ohc");
+    SD.mkdir("/0N3P0rK/inspector");
     SD.mkdir("/0N3P0rK/pigpass");
     SD.mkdir("/0N3P0rK/Passworld");
     SD.mkdir("/0N3P0rK/evilpig");

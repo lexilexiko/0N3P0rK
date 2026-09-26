@@ -5,6 +5,7 @@
 #include "../storage/littlefs_ops.h"
 #include "../sync/wpasec.h"
 #include "../sync/pwncrack.h"
+#include "../sync/ohc.h"
 #include "../net/ap_sta.h"
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
@@ -167,12 +168,28 @@ static void dropWifi() {
     Net::leaveHome();
 }
 
-// True if this filename belongs to the current tab's file type.
-static bool matchesTab(bool wpa, const char* name) {
+// True if this filename belongs to the given tab's file type. WPASEC and OHC
+// both push raw captures, so they share the .pcap/.pcapng/.cap filter;
+// PWNCRACK works on the .22000 hashes.
+static bool matchesTab(bool capture, const char* name) {
     bool pcap = endsWith(name, ".pcap") || endsWith(name, ".pcapng") ||
                 endsWith(name, ".cap");
     bool h220 = endsWith(name, ".22000") || endsWith(name, ".hc22000");
-    return wpa ? pcap : h220;
+    return capture ? pcap : h220;
+}
+
+// Tab metadata for the free helpers below. LootMenu::Tab is a private nested
+// enum, so these take the raw value and index 0/1/2 = WPASEC/PWNCRACK/OHC.
+static const char* tabShortName(uint8_t t) {
+    if (t == 0) return "WPA-SEC";
+    if (t == 1) return "PWNCRACK";
+    return "OHC";
+}
+
+static const char* tabHttpHost(uint8_t t) {
+    if (t == 0) return "wpa-sec.stanev.org";
+    if (t == 1) return "pwncrack.org";
+    return "api.onlinehashcrack.com";
 }
 
 void LootMenu::scan() {
@@ -182,9 +199,10 @@ void LootMenu::scan() {
     hasMore = false;
     if (!Storage::available()) return;
 
-    const bool wpa = (tab == Tab::WPASEC);
-    if (wpa) WPASec::loadCache();
-    else Pwncrack::loadCache();
+    const bool capture = (tab != Tab::PWNCRACK);
+    if (tab == Tab::WPASEC) WPASec::loadCache();
+    else if (tab == Tab::PWNCRACK) Pwncrack::loadCache();
+    else OHC::loadCache();
 
     File root = SD.open(Storage::DIR_HS);
     if (!root || !root.isDirectory()) {
@@ -200,7 +218,7 @@ void LootMenu::scan() {
     while (f && toSkip > 0) {
         if (!f.isDirectory()) {
             const char* name = Storage::baseName(f.name());
-            if (matchesTab(wpa, name)) toSkip--;
+            if (matchesTab(capture, name)) toSkip--;
         }
         f.close();
         f = root.openNextFile();
@@ -213,7 +231,7 @@ void LootMenu::scan() {
     while (f && count < PAGE_SIZE) {
         if (!f.isDirectory()) {
             const char* name = Storage::baseName(f.name());
-            if (matchesTab(wpa, name)) {
+            if (matchesTab(capture, name)) {
                 bool h220 = endsWith(name, ".22000") || endsWith(name, ".hc22000");
                 {
                     bool dup = false;
@@ -251,7 +269,7 @@ void LootMenu::scan() {
                         }
                         Row& r = (same >= 0) ? s_rows[same] : s_rows[count];
                         if (same < 0) r = tmp;
-                        if (wpa) {
+                        if (tab == Tab::WPASEC) {
                             const char* potSs = r.hex[0] ? WPASec::getSSID(r.hex) : nullptr;
                             if (potSs && potSs[0]) strncpy(r.ssid, potSs, sizeof(r.ssid) - 1);
                             if (!r.ssid[0]) strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
@@ -270,7 +288,7 @@ void LootMenu::scan() {
                             } else if (r.status != St::CRACKED && r.status != St::UPLOADED) {
                                 r.status = St::LOCAL;
                             }
-                        } else {
+                        } else if (tab == Tab::PWNCRACK) {
                             char stem[48];
                             strncpy(stem, name, sizeof(stem) - 1);
                             stem[sizeof(stem) - 1] = '\0';
@@ -294,6 +312,21 @@ void LootMenu::scan() {
                                 r.status = St::LOCAL;
                             }
                             if (!r.ssid[0]) strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
+                        } else {
+                            // OHC. Same capture pool as WPASEC, different
+                            // destination. OnlineHashCrack publishes results
+                            // only in its web dashboard, so a row here is
+                            // either still local or already sent — never
+                            // cracked. WPASec's potfile is still consulted for
+                            // the SSID label, and only for that: it is the
+                            // same BSSID space and makes the list readable.
+                            const char* potSs = r.hex[0] ? WPASec::getSSID(r.hex) : nullptr;
+                            if (potSs && potSs[0]) strncpy(r.ssid, potSs, sizeof(r.ssid) - 1);
+                            if (!r.ssid[0]) strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
+                            bool sent = OHC::isUploaded(name) ||
+                                        (r.hex[0] && OHC::isUploaded(r.hex)) ||
+                                        (r.id[0] && OHC::isUploaded(r.id));
+                            r.status = sent ? St::UPLOADED : St::LOCAL;
                         }
                         if (same < 0) count++;
                     }
@@ -308,7 +341,7 @@ void LootMenu::scan() {
     while (f) {
         if (!f.isDirectory()) {
             const char* name = Storage::baseName(f.name());
-            if (matchesTab(wpa, name)) {
+            if (matchesTab(capture, name)) {
                 hasMore = true;
                 f.close();
                 break;
@@ -327,7 +360,7 @@ void LootMenu::scan() {
 void LootMenu::countTotal() {
     totalItems = 0;
     if (!Storage::available()) return;
-    const bool wpa = (tab == Tab::WPASEC);
+    const bool capture = (tab != Tab::PWNCRACK);
     File root = SD.open(Storage::DIR_HS);
     if (!root || !root.isDirectory()) {
         if (root) root.close();
@@ -337,7 +370,7 @@ void LootMenu::countTotal() {
     while (f) {
         if (!f.isDirectory()) {
             const char* name = Storage::baseName(f.name());
-            if (matchesTab(wpa, name)) totalItems++;
+            if (matchesTab(capture, name)) totalItems++;
         }
         f.close();
         f = root.openNextFile();
@@ -362,6 +395,7 @@ void LootMenu::show() {
     Cap::releaseForSync();
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
+    OHC::freeCacheMemory();
     Storage::brewHeap();
 
     active = true;
@@ -383,6 +417,11 @@ void LootMenu::openPwncrack() {
     show();
 }
 
+void LootMenu::openOhc() {
+    tab = Tab::OHC;
+    show();
+}
+
 void LootMenu::hide() {
     active = false;
     detailView = false;
@@ -396,6 +435,7 @@ void LootMenu::hide() {
     // MEMFIX: отдать кэш-память ПРИ ВЫХОДЕ, а не только при входе.
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
+    OHC::freeCacheMemory();
     Storage::brewHeap();
 }
 
@@ -417,7 +457,7 @@ const char* LootMenu::getBottomHint() {
         if (hintCycle == 0) return "Q  pull results";
         if (hintCycle == 1) return "R  reload list";
         if (hintCycle == 2) return "T  test wifi / api";
-        if (hintCycle == 3) return ",/  wpasec / pwncrack";
+        if (hintCycle == 3) return ",/  wp/pwn/ohc";
         return "`  back";
     }
     switch (hintCycle) {
@@ -428,7 +468,7 @@ const char* LootMenu::getBottomHint() {
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
         case 6: return "[ / ]  prev / next page";
-        default: return ",/  wpasec / pwncrack";
+        default: return ",/  wp/pwn/ohc";
     }
 }
 
@@ -470,7 +510,12 @@ void LootMenu::runDiag() {
     s_diagScroll = 0;
     diagModal = true;
     const bool wpa = (tab == Tab::WPASEC);
-    addDiag(wpa ? "WPA-SEC LIVE TEST" : "PWNCRACK LIVE TEST");
+    const bool ohc = (tab == Tab::OHC);
+    // OHC reaches the same host the uploader uses, over the same TLS port.
+    const bool directTls = wpa || ohc;
+    char diagTitle[32];
+    snprintf(diagTitle, sizeof(diagTitle), "%s LIVE TEST", tabShortName((uint8_t)tab));
+    addDiag(diagTitle);
 
     if (Cap::isRunning()) Cap::stop();
     Avatar::suspendScene();
@@ -479,7 +524,9 @@ void LootMenu::runDiag() {
     Storage::brewHeap();
 
     char line[42];
-    if (wpa) {
+    if (ohc) {
+        addDiag(OHC::hasAccount() ? "OHC email set" : "OHC email missing");
+    } else if (wpa) {
         addDiag(WPASec::hasApiKey() ? "KEY ok 32 hex" : "KEY missing key.txt");
     } else {
         addDiag(Pwncrack::hasApiKey() ? "KEY ok" : "KEY missing key.txt");
@@ -517,8 +564,8 @@ void LootMenu::runDiag() {
              (int)WiFi.RSSI(), (unsigned)WiFi.channel());
     addDiag(line);
 
-    const char* host = wpa ? "wpa-sec.stanev.org" : "pwncrack.org";
-    addDiag(wpa ? "DNS wpa-sec..." : "DNS pwncrack...");
+    const char* host = tabHttpHost((uint8_t)tab);
+    addDiag("DNS lookup...");
     IPAddress ip;
     if (!Net::resolveHost(host, ip, 3)) {
         addDiag("DNS FAIL");
@@ -530,7 +577,7 @@ void LootMenu::runDiag() {
     addDiag(line);
 
     char status[48] = "";
-    if (wpa) {
+    if (directTls) {
         addDiag("TLS 443...");
         WiFiClientSecure c;
         if (!ioTlsOpen(c, host, 443)) {
@@ -615,12 +662,17 @@ void LootMenu::startSync(bool oneFile) {
         Display::showToast("NO PWN KEY", 1500);
         return;
     }
+    if (tab == Tab::OHC && !OHC::hasAccount()) {
+        // The public WPA API takes no key: the account email is the credential.
+        Display::showToast("NO OHC EMAIL", 1500);
+        return;
+    }
     if (!Net::hasStaCreds()) {
         Display::showToast("SET HOME WIFI", 1500);
         return;
     }
     syncModal = true;
-    strncpy(s_syncHost, tab == Tab::WPASEC ? "WPA-SEC" : "PWNCRACK", sizeof(s_syncHost) - 1);
+    strncpy(s_syncHost, tabShortName((uint8_t)tab), sizeof(s_syncHost) - 1);
     s_syncHost[sizeof(s_syncHost) - 1] = '\0';
     strncpy(s_syncText, oneFile ? "ONE FILE..." : "CONNECTING...", sizeof(s_syncText) - 1);
     ioXferClear();
@@ -628,6 +680,7 @@ void LootMenu::startSync(bool oneFile) {
     SFX::stop();
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
+    OHC::freeCacheMemory();
     s_syncGo = SyncGo::Wifi;
 }
 
@@ -646,13 +699,21 @@ void LootMenu::startPullResults() {
         Display::showToast("NO PWN KEY", 1500);
         return;
     }
+    if (tab == Tab::OHC) {
+        // OnlineHashCrack has no potfile endpoint: the uploaded capture is
+        // deleted server-side right after hash extraction and the result is
+        // published in the web dashboard plus by email. There is nothing to
+        // pull, so say so instead of opening a sync window that cannot work.
+        Display::showToast("OHC: SEE WEB RESULTS", 1800);
+        return;
+    }
     if (!Net::hasStaCreds()) {
         Display::showToast("SET HOME WIFI", 1500);
         return;
     }
     s_oneIdx = 0xFE;
     syncModal = true;
-    strncpy(s_syncHost, tab == Tab::WPASEC ? "WPA-SEC" : "PWNCRACK", sizeof(s_syncHost) - 1);
+    strncpy(s_syncHost, tabShortName((uint8_t)tab), sizeof(s_syncHost) - 1);
     s_syncHost[sizeof(s_syncHost) - 1] = '\0';
     strncpy(s_syncText, "RESULTS...", sizeof(s_syncText) - 1);
     ioXferClear();
@@ -660,6 +721,7 @@ void LootMenu::startPullResults() {
     SFX::stop();
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
+    OHC::freeCacheMemory();
     s_syncGo = SyncGo::Wifi;
 }
 
@@ -696,6 +758,7 @@ void LootMenu::reloadList() {
     bool wasDetail = detailView;
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
+    OHC::freeCacheMemory();
     scan();
     if (count == 0 && page > 0) {
         // The card changed since the last scan and this page ran dry -
@@ -768,8 +831,14 @@ void LootMenu::handleInput() {
         return;
     }
 
-    if (M5Cardputer.Keyboard.isKeyPressed(',') || M5Cardputer.Keyboard.isKeyPressed('/')) {
-        tab = (tab == Tab::WPASEC) ? Tab::PWNCRACK : Tab::WPASEC;
+    // `,` steps back through the tabs, `/` steps forward. Both wrap, so a held
+    // key cycles WPASEC -> PWNCRACK -> OHC -> WPASEC.
+    bool tabBack = M5Cardputer.Keyboard.isKeyPressed(',');
+    bool tabFwd = M5Cardputer.Keyboard.isKeyPressed('/');
+    if (tabBack || tabFwd) {
+        uint8_t t = (tab == Tab::WPASEC) ? 0 : (tab == Tab::PWNCRACK) ? 1 : 2;
+        t = (uint8_t)((t + (tabBack ? 2u : 1u)) % 3u);
+        tab = (t == 0) ? Tab::WPASEC : (t == 1) ? Tab::PWNCRACK : Tab::OHC;
         page = 0;
         SFX::play(SFX::MENU_CLICK);
         scan();
@@ -893,7 +962,7 @@ void LootMenu::update() {
                     snprintf(s_syncText, sizeof(s_syncText), "FAIL %s",
                              WPASec::getLastError()[0] ? WPASec::getLastError() : "?");
                 }
-            } else {
+            } else if (tab == Tab::PWNCRACK) {
                 ok = Pwncrack::uploadOneFile(path, Net::cfg().pwncrackKey);
                 if (ok) {
                     ioXfer().ok = 1;
@@ -904,6 +973,24 @@ void LootMenu::update() {
                     snprintf(s_syncText, sizeof(s_syncText), "FAIL %s",
                              Pwncrack::getLastError()[0] ? Pwncrack::getLastError() : "?");
                 }
+            } else {
+                // OHC: upload only, no results to fetch. The batch summary
+                // tells us whether the hash was taken, already known, or the
+                // capture simply held no usable PMKID/EAPOL.
+                OhcUploadResult ur{};
+                bool sent = OHC::uploadOneCapture(path, Net::cfg().ohcEmail, &ur);
+                if (sent) {
+                    ok = true;
+                    ioXfer().ok = 1;
+                    snprintf(s_syncText, sizeof(s_syncText), "%s",
+                             ur.accepted ? "OK 1 sent" : "OK already");
+                } else {
+                    ioXfer().fail = 1;
+                    snprintf(s_syncText, sizeof(s_syncText), "FAIL %s",
+                             ur.noHashFound ? "no hash in pcap"
+                                            : (ur.error[0] ? ur.error
+                                                           : OHC::getLastError()));
+                }
             }
             ioXferPaint(true);
         } else if (tab == Tab::WPASEC) {
@@ -913,13 +1000,27 @@ void LootMenu::update() {
                          r.uploaded, r.skipped, r.cracked);
             else
                 snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
-        } else {
+        } else if (tab == Tab::PWNCRACK) {
             PwncrackSyncResult r = Pwncrack::syncCaptures(Net::cfg().pwncrackKey, onProg);
             if (r.success)
                 snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
                          r.uploaded, r.skipped, r.cracked);
             else
                 snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
+        } else {
+            // OHC: upload every unsent capture. There is no results step —
+            // OnlineHashCrack publishes them in the web dashboard.
+            OhcSyncResult r = OHC::syncCaptures(Net::cfg().ohcEmail, onProg);
+            if (r.error[0]) {
+                // A stopped or partly failing batch must not look like a clean
+                // run: show how many of how many went and why it stopped.
+                uint16_t total = (uint16_t)(r.uploaded + r.already + r.empty + r.failed);
+                snprintf(s_syncText, sizeof(s_syncText), "up%u/%u !%s",
+                         (unsigned)r.uploaded, (unsigned)total, r.error);
+            } else {
+                snprintf(s_syncText, sizeof(s_syncText), "OK up%u alr%u no%u",
+                         r.uploaded, r.already, r.empty);
+            }
         }
         Tls::arenaEnd();
         ioXfer().paint = nullptr;
@@ -940,14 +1041,24 @@ void LootMenu::draw(M5Canvas& canvas) {
     canvas.setTextWrap(false);
     canvas.setTextDatum(top_left);
 
-    canvas.fillRect(4, 2, 112, 13, tab == Tab::WPASEC ? UiStyle::PINK : UiStyle::PANEL);
-    canvas.fillRect(124, 2, 112, 13, tab == Tab::PWNCRACK ? UiStyle::PINK : UiStyle::PANEL);
-    canvas.setTextDatum(top_center);
-    canvas.setTextColor(tab == Tab::WPASEC ? UiStyle::BG : UiStyle::TEXT);
-    canvas.drawString("WPASEC", 60, 5);
-    canvas.setTextColor(tab == Tab::PWNCRACK ? UiStyle::BG : UiStyle::TEXT);
-    canvas.drawString("PWNCRACK", 180, 5);
-    canvas.setTextDatum(top_left);
+    // Three tabs on a 240 px line: 4 px outer margins, 2 px gutters, 76 px each.
+    {
+        const int kTabW = 76;
+        const int kTabXs[3] = {4, 82, 160};
+        const int kTabCx[3] = {42, 120, 198};
+        static const char* const kTabLabels[3] = {"WPASEC", "PWNCRACK", "OHC"};
+        const uint8_t tIdx = (tab == Tab::WPASEC) ? 0 : (tab == Tab::PWNCRACK) ? 1 : 2;
+
+        for (uint8_t i = 0; i < 3; i++)
+            canvas.fillRect(kTabXs[i], 2, kTabW, 13,
+                            (i == tIdx) ? UiStyle::PINK : UiStyle::PANEL);
+        canvas.setTextDatum(top_center);
+        for (uint8_t i = 0; i < 3; i++) {
+            canvas.setTextColor((i == tIdx) ? UiStyle::BG : UiStyle::TEXT);
+            canvas.drawString(kTabLabels[i], kTabCx[i], 5);
+        }
+        canvas.setTextDatum(top_left);
+    }
 
     if (!Storage::available()) {
         canvas.setTextColor(UiStyle::RED);
@@ -960,7 +1071,7 @@ void LootMenu::draw(M5Canvas& canvas) {
         canvas.setTextWrap(false);
         canvas.setTextColor(UiStyle::GOLD);
         canvas.setCursor(8, 8);
-        canvas.print(tab == Tab::WPASEC ? "WPA-SEC" : "PWNCRACK");
+        canvas.print(tabShortName((uint8_t)tab));
         canvas.setTextColor(UiStyle::TEXT);
         canvas.setCursor(8, 22);
         canvas.print(s_syncText);
@@ -1022,7 +1133,9 @@ void LootMenu::draw(M5Canvas& canvas) {
             canvas.drawString(c.password, 6, 68);
         } else if (c.status == St::UPLOADED) {
             canvas.setTextColor(UiStyle::GOLD);
-            canvas.drawString("uploaded, waiting", 6, 56);
+            // OHC never downloads results, so "waiting" would be a lie there —
+            // the answer shows up in the web dashboard instead.
+            canvas.drawString(tab == Tab::OHC ? "sent, see web" : "uploaded, waiting", 6, 56);
         } else {
             canvas.setTextColor(UiStyle::DIM);
             canvas.drawString("local only", 6, 56);
@@ -1035,7 +1148,7 @@ void LootMenu::draw(M5Canvas& canvas) {
     if (count == 0) {
         canvas.setTextColor(UiStyle::GOLD);
         canvas.setCursor(4, 36);
-        canvas.print(tab == Tab::WPASEC ? "NO PCAP IN LOOT" : "NO 22000 IN LOOT");
+        canvas.print(tab == Tab::PWNCRACK ? "NO 22000 IN LOOT" : "NO PCAP IN LOOT");
         canvas.setTextColor(UiStyle::TEXT);
         canvas.setCursor(4, 52);
         canvas.print("/0N3P0rK/handshakes/");

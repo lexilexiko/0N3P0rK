@@ -264,7 +264,7 @@ static const char* const H_KEYS[] = {
     "B = BLE FRAMES.",
     "I = IR BLAST.",
     "S = 2.4 SWEEP.",
-    "H = WPASEC / PWN.",
+    "H = WPASEC / PWN / OHC.",
     "R = RADIO SETTINGS.",
     "TASK MANAGER."
 };
@@ -1367,16 +1367,17 @@ static void drawStatus(M5Canvas& canvas) {
     }
     snprintf(ver, sizeof(ver), "v%s", ON3PORK_VERSION);
 
-    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "WIFI", "WPA", "PWN", "VER" };
+    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "WIFI", "WPA", "PWN", "OHC", "VER" };
     const char* v[] = {
         lvl, xp, Board::modelLabel(), batt,
         Config::isSDAvailable() ? "YES" : "NO",
         wifi,
         Net::cfg().wpaSecKey[0] ? "YES" : "NO",
         Net::cfg().pwncrackKey[0] ? "YES" : "NO",
+        Net::cfg().ohcEmail[0] ? "YES" : "NO",
         ver
     };
-    const uint8_t statN = 9;
+    const uint8_t statN = 10;
     if (s_statScroll > statN - STAT_VIS) {
         s_statScroll = (statN > STAT_VIS) ? (uint8_t)(statN - STAT_VIS) : 0;
     }
@@ -1388,7 +1389,7 @@ static void drawStatus(M5Canvas& canvas) {
         if (idx >= statN) break;
         canvas.setTextColor(UI_DIM);
         canvas.drawString(k[idx], 8, y);
-        canvas.setTextColor(idx == 8 ? UI_GOLD : UI_TEXT);
+        canvas.setTextColor(idx == 9 ? UI_GOLD : UI_TEXT);
         canvas.drawString(v[idx], 78, y);
         if (idx == 1) {
             int barW = 80;

@@ -1,6 +1,6 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.4**  
+**Current version: 1.3.5**  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -25,11 +25,12 @@ Secret menu codes are **not** listed here (keep them private).
 9. [LED indicator](#led-indicator)
 10. [XFER file transfer](#xfer-file-transfer)
 11. [Music (MP3 player)](#music-mp3-player)
-12. [PigPass](#pigpass)
-13. [SD layout](#sd-layout)
-14. [Web site](#web-site)
-15. [Version history](#version-history)
-16. [Legal & credits](#legal--credits)
+12. [InspectorPig](#inspectorpig-inspect)
+13. [PigPass](#pigpass)
+14. [SD layout](#sd-layout)
+15. [Web site](#web-site)
+16. [Version history](#version-history)
+17. [Legal & credits](#legal--credits)
 
 ---
 
@@ -87,7 +88,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.0`.
+   `1.3.5`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -124,8 +125,8 @@ The exact key labels are shown in the bottom hint bar and may be changed under
    authorized networks, or **STOP** to stop the radio.
 3. Use **SET → RADIO** to configure hopping, locking, deauthentication,
    handshake method, capture format, and targeting behavior.
-4. Use **LOOT** to inspect files and synchronize captures with WPASec or
-   Pwncrack.
+4. Use **LOOT** to inspect files and synchronize captures with WPASec,
+   Pwncrack, or OnlineHashCrack.
 5. Use **SET → STATUS** to check board, SD, Wi-Fi, heap, and firmware state.
 
 Only test networks and devices that you own or are explicitly authorized to
@@ -237,13 +238,102 @@ Capture workflow:
    exchanges.
 4. Press **STOP** before opening **LOOT**. The capture buffers are flushed and
    released before file synchronization.
-5. Open **LOOT** and select the WPASec or Pwncrack tab.
+5. Open **LOOT** and select the WPASec, Pwncrack, or OHC tab.
 6. Use the upload action for captured files. Use the result/download action
-   only after the remote service is reachable.
+   only after the remote service is reachable (WPASec / Pwncrack only — see
+   the OnlineHashCrack note below).
 
 The capture path writes classic PCAP files and prepares Hashcat 22000 material
 when enough valid handshake data is available. Incomplete, oversized, or
 invalid files are rejected instead of being presented as successful captures.
+
+### OnlineHashCrack (OHC tab)
+
+The third **LOOT** tab uploads captures to the public OnlineHashCrack WPA API.
+
+| | |
+| --- | --- |
+| Endpoint | `POST https://api.onlinehashcrack.com` (multipart) |
+| Credential | the email of an existing OnlineHashCrack account — **no API key** |
+| Fields | `email`, then `file` (`.cap` / `.pcap` / `.pcapng`, up to 200 MB) |
+| Setup | drop the address in `/0N3P0rK/ohc/email.txt` |
+
+`GET` / `POST` notes:
+
+- The tab lists the same `.pcap` captures as **WPASEC**, but points at a
+  different service, so a capture can be sent to both.
+- Switch tabs with `,` (back) and `/` (forward); the order is
+  WPASEC → PWNCRACK → OHC.
+- `S` uploads every capture that was not sent yet, `U` uploads the selected
+  one. `D`, `R`, `T` and the paging keys work exactly as in the other tabs.
+- Rows show `[--]` for local and `[..]` for already sent. This tab never shows
+  `[OK]`: see the limitation below.
+- WPA captures (hashcat mode 22000) do **not** count against the account's
+  monthly task quota.
+
+**Results cannot be downloaded.** OnlineHashCrack deletes the uploaded capture
+immediately after extracting the PMKID/EAPOL hash and publishes the outcome in
+the web dashboard (`https://onlinehashcrack.com/tasks`) and by email. There is
+no potfile endpoint, unlike WPASec and Pwncrack — so `Q` / *pull results* only
+raises a notice on this tab. Check the dashboard for cracked passwords.
+
+Uploads are acknowledged from the JSON batch summary, which distinguishes three
+outcomes: accepted, `already_sent` (kept from re-sending), and `no_hash_found`
+(the capture held no usable handshake — it stays listed as local).
+
+Set the address once. An empty file disables the tab.
+
+#### If only some captures arrive
+
+- `S` sends **every** unsent capture. `U` sends **only the highlighted row** — a
+  single upload is the normal outcome of pressing `U`.
+- When a batch stops early or part of it is rejected, the sync screen shows
+  `up<n>/<total> !<reason>` instead of a plain `OK`. The serial console prints
+  one line per capture with the server's own `acc` / `skip` / `rej` counters and
+  the rejection message.
+- Captures answered with `no_hash_found` contain no usable PMKID/EAPOL. They
+  stay listed as local and are retried on the next run, because a re-capture of
+  the same BSSID overwrites the file with a better handshake.
+- The upload loop compacts the heap between captures. TLS needs one large
+  contiguous block, and the heap left behind by the previous session is what
+  used to cut a batch short after the first file.
+- Only `.cap` / `.pcap` / `.pcapng` are accepted. `.22000` files are deliberately
+  **not** sent: the public endpoint answers HTTP 400 for them, and the capture
+  already carries the same handshake for the server to extract. Use a capture,
+  not a hash line.
+- Before contacting the service, each file's container is verified locally. A
+  file that is not PCAP/PCAPNG is refused as `not a capture (xxxxxxxx)`, and one
+  that holds only the 24-byte global header with no packet as
+  `no packets (Nub)`. OnlineHashCrack reports both as *unsupported file type*,
+  so this check turns the remote error into a readable local reason and saves the
+  TLS session.
+- A failed or partial transport is retried once immediately, and a file that
+  still cannot be sent is skipped **without** ending the batch. Only three
+  consecutive heap failures stop a run, and the remaining captures stay unmarked
+  so the next run picks them up.
+- Every run writes a report to **`/0N3P0rK/ohc/last.log`** — open it from
+  **FILEMGR** on the device or pull it over **XFER**. One line per capture:
+
+  ```text
+  # 0N3P0rK OHC build=1.3.5
+  # queued=12 email=you@example.com
+  # name|bytes|magic|status|acc|skip|rej|detail
+  488F5A623215.pcap|1240|D4C3B2A1|ok|1|0|0|-
+  80E3704C21A7.pcap|24|D4C3B2A1|bad|0|0|0|no packets (24b)
+  4C1F3D0A9B77.pcap|?|?|heap|0|0|0|low heap 11/19K
+  # done up=1 already=0 no=1 fail=1 reason=-
+  ```
+
+  `status` is `ok`, `already`, `nohash`, `bad`, `heap` or `fail`; `bytes` and
+  `magic` prove whether the file on the card is a real capture. This file is the
+  fastest way to diagnose a run without a serial console.
+
+Sending raw `.22000` hash lines is only possible through the authenticated
+OnlineHashCrack API v2 (`POST https://api.onlinehashcrack.com/v2` with an
+`sk_`-prefixed key, `action: add_tasks`, `algo_mode: 22000`), which needs a
+verified account. Note that v2 caps each hash string at 512 characters, so full
+EAPOL pair lines do not fit — only PMKID lines do. This firmware therefore keeps
+to the keyless capture endpoint.
 
 ### Radio configuration
 
@@ -455,6 +545,50 @@ other services (capture, XFER, portal) and press `3` again.
 
 ---
 
+## InspectorPig (INSPECT)
+
+Offline capture and handshake inspector. Reads the files in
+`/0N3P0rK/handshakes/` and dissects them the way Wireshark would: container,
+radiotap headers, 802.11 frame classes, EAPOL message numbers (M1..M4),
+replay counter alignment, and RSN parameters (WPA/WPA2, CCMP/TKIP, PSK/SAE).
+
+Use it before syncing to WPASec, Pwncrack, or OnlineHashCrack to verify that a
+capture really holds a complete, crackable handshake instead of an empty
+container or an unmatched frame pair.
+
+### Controls
+
+| Key | Action |
+| --- | --- |
+| `;` / `,` | Move selection up |
+| `.` / `/` | Move selection down |
+| `ENT` | Inspect the selected capture (opens the detailed report) |
+| `A` | Inspect **all** captures in `/0N3P0rK/handshakes/` |
+| `R` | Rescan the handshakes folder |
+| `` ` `` | Return to list (from report) or exit to main menu |
+
+### Reports on SD
+
+Every inspection is saved to `/0N3P0rK/inspector/`:
+
+- Single-file run: `/0N3P0rK/inspector/<capture_name>.txt` (full field dissection)
+- All-captures run: `/0N3P0rK/inspector/report.txt` (summary table plus per-file details)
+
+Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
+
+### Verdicts
+
+- **GOOD** (score 85–100): complete PMKID or full EAPOL pair with matching
+  replay counters and valid RSN data.
+- **USABLE** (score 60–84): valid material, but missing secondary fields
+  (e.g. no beacon seen so ESSID is unknown, or slight header anomaly).
+- **PARTIAL** (score 30–59): incomplete exchange (e.g. M1 without M2, or M2
+  without M1). Not crackable yet.
+- **BROKEN** (score 0–29): empty container, truncated packets, or non-capture
+  data.
+
+---
+
 ## PigPass
 
 - Tabs: **PCAP** and **22000**  
@@ -469,6 +603,9 @@ other services (capture, XFER, portal) and press `3` again.
 ```text
 /0N3P0rK/
   handshakes/     captures
+  wpa-sec/        key.txt, results.txt, uploaded.txt
+  pwncrack/       key.txt, results.txt, uploaded.txt
+  ohc/            email.txt, uploaded.txt (OnlineHashCrack)
   pigpass/        crack state / results
   Passworld/      wordlists
   talk/           optional monologue lines
@@ -608,6 +745,38 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   working from the farm.
 - Starting the player stops an active capture session to free heap for the
   decoder.
+
+### 1.3.5 (current)
+
+#### OnlineHashCrack
+
+- New **OHC** tab in **LOOT**, next to WPASec and Pwncrack. It uploads the same
+  `.pcap` captures to the public OnlineHashCrack WPA API
+  (`POST https://api.onlinehashcrack.com`).
+- No API key: the credential is the email of an existing OnlineHashCrack
+  account, read from `/0N3P0rK/ohc/email.txt`. Requests are sent as
+  `email` + `file`, and the JSON batch summary is parsed for
+  `accepted` / `skipped` / `rejected`.
+- Tabs are switched with `,` and `/` and now cycle through three services.
+  `S`, `U`, `D`, `R`, `T` and paging behave as before.
+- `no_hash_found` captures stay listed as local; `already_sent` ones are marked
+  and never re-uploaded, so repeated runs stay cheap.
+- WPA captures (hashcat mode 22000) are exempt from the account's monthly task
+  quota.
+- Added `Net::setOhcEmail()`, the `ohcmail` NVS key, and the `/0N3P0rK/ohc/`
+  directory with `email.txt` and `uploaded.txt`.
+
+#### Memory recovery
+
+- `WPASec::freeCacheMemory()` and `Pwncrack::freeCacheMemory()` now release the
+  cache capacity instead of only clearing it, without `shrink_to_fit` (a failed
+  realloc aborts the firmware).
+- **LOOT** releases both caches, the WPASec/Pwncrack uploaded lists, the new OHC
+  cache, and compacts the heap when the view is closed.
+- **BLE** drains the advertiser, waits for Bluedroid to release its buffers, and
+  compacts the heap on exit.
+- **Capture** compacts the heap after the capture buffers are deleted, and the
+  release log now reports the largest free block instead of only the total.
 
 ---
 
