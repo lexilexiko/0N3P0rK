@@ -46,4 +46,5 @@ private:
     static void runDiag();
     static void deleteSelected();
     static void reloadList();
+    static void runInspector(bool allFiles);
 };

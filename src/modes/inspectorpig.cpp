@@ -27,13 +27,13 @@ static bool s_streamOnly = false;
 
 bool InspectorPig::running = false;
 InspectorPig::Phase InspectorPig::phase = InspectorPig::Phase::LIST;
-InspectorPig::Entry InspectorPig::entries[InspectorPig::MAX_ENTRIES];
+InspectorPig::Entry* InspectorPig::entries = nullptr;
 uint8_t InspectorPig::entryCount = 0;
 uint8_t InspectorPig::sel = 0;
 uint8_t InspectorPig::scroll = 0;
 bool InspectorPig::keyLatch = false;
 char InspectorPig::statusMsg[40] = "";
-char InspectorPig::lines[InspectorPig::MAX_LINES][InspectorPig::LINE_LEN];
+char (*InspectorPig::lines)[InspectorPig::LINE_LEN] = nullptr;
 uint8_t InspectorPig::lineCount = 0;
 uint8_t InspectorPig::lineScroll = 0;
 
@@ -107,6 +107,28 @@ static size_t hexToBytes(const char* hex, uint8_t* out, size_t maxOut) {
 
 static bool allZero(const uint8_t* p, size_t n) {
     for (size_t i = 0; i < n; i++) if (p[i]) return false;
+    return true;
+}
+
+static bool replayIncremented(const uint8_t* base, const uint8_t* candidate) {
+    if (!base || !candidate) return false;
+    uint8_t expected[8];
+    memcpy(expected, base, sizeof(expected));
+    for (int i = 7; i >= 0; i--) {
+        if (++expected[i] != 0) break;
+    }
+    return memcmp(expected, candidate, sizeof(expected)) == 0;
+}
+
+static bool skipBytes(File& f, uint32_t n) {
+    if (n == 0) return true;
+    uint8_t dump[64];
+    while (n) {
+        size_t chunk = n < sizeof(dump) ? n : sizeof(dump);
+        size_t got = f.read(dump, chunk);
+        if (got != chunk) return false;
+        n -= (uint32_t)got;
+    }
     return true;
 }
 
@@ -320,10 +342,15 @@ static void parseIes(const uint8_t* f, uint16_t flen, uint16_t off,
         uint8_t id = f[off];
         uint8_t ln = f[off + 1];
         if ((uint32_t)off + 2 + ln > (uint32_t)flen) break;
-        if (id == 0 && ssid && ssidLen > 1 && ssid[0] == '\0' && ln > 0) {
-            size_t k = (ln < ssidLen - 1) ? ln : ssidLen - 1;
-            memcpy(ssid, f + off + 2, k);
-            ssid[k] = '\0';
+        if (id == 0 && ssid && ssidLen > 1 && ssid[0] == '\0') {
+            if (ln == 0) {
+                strncpy(ssid, "(hidden)", ssidLen - 1);
+                ssid[ssidLen - 1] = '\0';
+            } else {
+                size_t k = (ln < ssidLen - 1) ? ln : ssidLen - 1;
+                memcpy(ssid, f + off + 2, k);
+                ssid[k] = '\0';
+            }
         } else if (id == 3 && chan && ln == 1 && *chan == 0) {
             *chan = f[off + 2];
         }
@@ -334,8 +361,10 @@ static void parseIes(const uint8_t* f, uint16_t flen, uint16_t off,
 // ---------------------------------------------------------------------------
 // Classic PCAP. Walks the record stream the way Wireshark does: container
 // header, then {packet header, radiotap, 802.11 frame} for every packet.
+// Packets are read from SD one at a time so a large capture never needs a
+// 128 KB heap buffer (that was marking good files BROKEN).
 // ---------------------------------------------------------------------------
-uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
+uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
     emit("source     : pcap capture");
 
     if (len < 24) {
@@ -343,8 +372,13 @@ uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
         emit("result     : broken container");
         return 0;
     }
-    uint32_t magic = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
-                     ((uint32_t)data[2] << 8) | (uint32_t)data[3];
+    uint8_t gh[24];
+    if (f.read(gh, 24) != 24) {
+        emit("error      : short global header");
+        return 0;
+    }
+    uint32_t magic = ((uint32_t)gh[0] << 24) | ((uint32_t)gh[1] << 16) |
+                     ((uint32_t)gh[2] << 8) | (uint32_t)gh[3];
     if (magic == PCAPNG_MAGIC) {
         emit("magic      : 0A0D0D0A  pcapng");
         emit("note       : pcapng blocks are not decoded by this inspector");
@@ -370,15 +404,14 @@ uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
     };
 
     emit("magic      : %s  pcap v%u.%u", le ? "D4C3B2A1 (LE)" : "A1B2C3D4 (BE)",
-         (unsigned)rd16(data + 4), (unsigned)rd16(data + 6));
-    emit("snaplen    : %u", (unsigned)rd32(data + 16));
-    uint32_t linktype = rd32(data + 20);
+         (unsigned)rd16(gh + 4), (unsigned)rd16(gh + 6));
+    emit("snaplen    : %u", (unsigned)rd32(gh + 16));
+    uint32_t linktype = rd32(gh + 20);
     emit("linktype   : %u %s", (unsigned)linktype,
          linktype == LINK_RADIOTAP ? "(radiotap+802.11)"
                                    : (linktype == LINK_80211 ? "(raw 802.11)"
                                                              : "(unexpected!)"));
 
-    uint32_t off = 24;
     uint16_t frames = 0, badRecords = 0, beacons = 0, proberesp = 0;
     uint16_t eapolSeen = 0, shownEapol = 0;
     uint8_t  chan = 0;
@@ -386,32 +419,58 @@ uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
     bool     hasRadiotap = false;
     char     ssid[33] = "";
     bool     mSeen[5] = {false, false, false, false, false};
-    uint8_t  replayM1[8] = {0}, replayM2[8] = {0};
-    bool     haveM1 = false, haveM2 = false;
+    // Keep a few replay counters so a retry M1 does not poison the first M2.
+    uint8_t  replayM1[4][8] = {{0}};
+    uint8_t  replayM2[4][8] = {{0}};
+    uint8_t  replayM3[4][8] = {{0}};
+    uint8_t  nM1 = 0, nM2 = 0, nM3 = 0;
 
     emit("-- packet records --");
-    while ((uint32_t)off + 16 <= (uint32_t)len) {
-        uint32_t incl = rd32(data + off + 8);
-        if (incl == 0 || (uint32_t)off + 16 + incl > (uint32_t)len) {
+    uint8_t pkt[InspectorPig::PKT_CAP];
+    while (true) {
+        uint8_t ph[16];
+        int gotHdr = f.read(ph, 16);
+        if (gotHdr == 0) break;
+        if (gotHdr != 16) {
+            emit("  record %u truncated header", (unsigned)frames);
+            badRecords++;
+            break;
+        }
+        uint32_t incl = rd32(ph + 8);
+        if (incl == 0) {
+            emit("  record %u zero length", (unsigned)frames);
+            badRecords++;
+            break;
+        }
+        uint32_t take = incl < InspectorPig::PKT_CAP ? incl : InspectorPig::PKT_CAP;
+        size_t got = f.read(pkt, take);
+        if (got != take) {
             emit("  record %u truncated (%u bytes claimed)",
                  (unsigned)frames, (unsigned)incl);
             badRecords++;
             break;
         }
-        uint16_t flen = (uint16_t)incl;
-        const uint8_t* pkt = data + off + 16;
-        off += 16 + incl;
+        if (incl > take && !skipBytes(f, incl - take)) {
+            badRecords++;
+            break;
+        }
+        uint16_t flen = (uint16_t)take;
         frames++;
+        if ((frames & 31u) == 0) yield();
 
-        const uint8_t* f = pkt;
+        const uint8_t* fr = pkt;
         if (linktype == LINK_RADIOTAP) {
             if (flen < 8) continue;
-            uint8_t itLen = pkt[2];
+            uint16_t itLen = (uint16_t)(pkt[2] | (pkt[3] << 8));
             if (itLen < 8 || itLen > 80 || itLen > flen) continue;
             hasRadiotap = true;
             uint32_t present = (uint32_t)pkt[4] | ((uint32_t)pkt[5] << 8) |
                                ((uint32_t)pkt[6] << 16) | ((uint32_t)pkt[7] << 24);
             uint16_t rp = 8;
+            if (present & (1u << 31)) {
+                // another present word; skip so channel/rssi parse stays honest
+                rp = (uint16_t)(rp + 4);
+            }
             if (present & (1u << 0)) { rp = (uint16_t)((rp + 7) & ~7u); rp += 8; }
             if (present & (1u << 1)) rp += 1;
             if (present & (1u << 2)) rp += 1;
@@ -429,37 +488,37 @@ uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
                 if ((uint32_t)rp < (uint32_t)itLen) rssi = (int8_t)pkt[rp];
                 rp += 1;
             }
-            f = pkt + itLen;
+            fr = pkt + itLen;
             flen = (uint16_t)(flen - itLen);
         }
         if (flen < 24) continue;
 
-        uint8_t type = (f[0] >> 2) & 0x03;
-        uint8_t sub  = (f[0] >> 4) & 0x0F;
+        uint8_t type = (fr[0] >> 2) & 0x03;
+        uint8_t sub  = (fr[0] >> 4) & 0x0F;
 
         if (type == 0) {
-            if (sub == 8) {                       // beacon
+            if (sub == 8) {
                 beacons++;
                 if (ssid[0] == '\0')
-                    parseIes(f, flen, 36, ssid, sizeof(ssid), &chan);
-            } else if (sub == 5) {                // probe response
+                    parseIes(fr, flen, 36, ssid, sizeof(ssid), &chan);
+            } else if (sub == 5) {
                 proberesp++;
                 if (ssid[0] == '\0')
-                    parseIes(f, flen, 36, ssid, sizeof(ssid), &chan);
+                    parseIes(fr, flen, 36, ssid, sizeof(ssid), &chan);
             }
             continue;
         }
-        if (type != 2) continue;                  // only data can carry EAPOL
+        if (type != 2) continue;
 
         uint16_t ho = 24;
-        if (f[0] & 0x80) ho += 2;                 // QoS data
-        if (f[1] & 0x80) ho += 4;                 // HT control
-        if ((f[1] & 0x03) == 0x03) ho += 6;       // four-address
+        if (fr[0] & 0x80) ho += 2;
+        if (fr[1] & 0x80) ho += 4;
+        if ((fr[1] & 0x03) == 0x03) ho += 6;
         if ((uint32_t)ho + 8 > (uint32_t)flen) continue;
-        if (f[ho] != 0xAA || f[ho + 1] != 0xAA || f[ho + 2] != 0x03) continue;
-        if (f[ho + 6] != 0x88 || f[ho + 7] != 0x8E) continue;
+        if (fr[ho] != 0xAA || fr[ho + 1] != 0xAA || fr[ho + 2] != 0x03) continue;
+        if (fr[ho + 6] != 0x88 || fr[ho + 7] != 0x8E) continue;
 
-        const uint8_t* e = f + ho + 8;
+        const uint8_t* e = fr + ho + 8;
         uint16_t elen = (uint16_t)(flen - ho - 8);
         if (elen < 99 || e[1] != 0x03) continue;
         uint8_t msg = eapolMsgOf(e, elen);
@@ -468,16 +527,17 @@ uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
         eapolSeen++;
         mSeen[msg] = true;
         char sa[18], da[18];
-        macToStr(f + 10, sa);
-        macToStr(f + 4, da);
+        macToStr(fr + 10, sa);
+        macToStr(fr + 4, da);
         if (shownEapol < 6) {
             shownEapol++;
             emit("  M%u %s -> %s", (unsigned)msg, sa, da);
             emit("     replay %02x%02x%02x%02x%02x%02x%02x%02x",
                  e[9], e[10], e[11], e[12], e[13], e[14], e[15], e[16]);
         }
-        if (msg == 1 && !haveM1) { memcpy(replayM1, e + 9, 8); haveM1 = true; }
-        if (msg == 2 && !haveM2) { memcpy(replayM2, e + 9, 8); haveM2 = true; }
+        if (msg == 1 && nM1 < 4) { memcpy(replayM1[nM1], e + 9, 8); nM1++; }
+        if (msg == 2 && nM2 < 4) { memcpy(replayM2[nM2], e + 9, 8); nM2++; }
+        if (msg == 3 && nM3 < 4) { memcpy(replayM3[nM3], e + 9, 8); nM3++; }
     }
 
     emit("-- summary --");
@@ -504,15 +564,26 @@ uint8_t InspectorPig::analyzePcap(const uint8_t* data, size_t len) {
     else emit("probe      : no beacon seen -> essid unknown");
     if (eapolSeen) score += 15;
 
-    bool pairOk = haveM1 && haveM2 && memcmp(replayM1, replayM2, 8) == 0;
-    if (pairOk) {
+    bool pair12 = false;
+    for (uint8_t i = 0; i < nM1 && !pair12; i++)
+        for (uint8_t j = 0; j < nM2; j++)
+            if (memcmp(replayM1[i], replayM2[j], 8) == 0) { pair12 = true; break; }
+    bool pair23 = false;
+    for (uint8_t i = 0; i < nM2 && !pair23; i++)
+        for (uint8_t j = 0; j < nM3; j++)
+            if (replayIncremented(replayM2[i], replayM3[j])) { pair23 = true; break; }
+
+    if (pair12) {
         score += 45;
         emit("pair       : M1+M2 with matching replay");
-    } else if (haveM2 && !haveM1) {
-        emit("probe      : M2 without M1 -> not crackable");
-    } else if (haveM1 && !haveM2) {
+    } else if (pair23) {
+        score += 45;
+        emit("pair       : M2+M3 (M3 replay = M2+1)");
+    } else if (nM2 && !nM1 && !nM3) {
+        emit("probe      : M2 without M1/M3 -> not crackable");
+    } else if (nM1 && !nM2) {
         emit("probe      : M1 without M2 -> not crackable");
-    } else if (haveM1 && haveM2) {
+    } else if (nM1 && nM2) {
         emit("probe      : M1+M2 but replay counters differ");
     } else if (eapolSeen == 0) {
         emit("probe      : no EAPOL in this capture");
@@ -528,6 +599,10 @@ void InspectorPig::refreshList() {
     entryCount = 0;
     sel = 0;
     scroll = 0;
+    if (!entries) {
+        snprintf(statusMsg, sizeof(statusMsg), "NO MEM");
+        return;
+    }
     if (!Storage::available()) {
         snprintf(statusMsg, sizeof(statusMsg), "NO SD");
         return;
@@ -559,8 +634,6 @@ void InspectorPig::refreshList() {
     snprintf(statusMsg, sizeof(statusMsg), "%u CAPTURES", (unsigned)entryCount);
 }
 
-// Read the file into the heap only for the duration of the analysis, then let
-// it go. Nothing stays in RAM between inspections.
 uint8_t InspectorPig::analyzePath(const char* path, Kind kind) {
     if (!Storage::available() || !path) return 0;
     File f = SD.open(path, "r");
@@ -574,37 +647,40 @@ uint8_t InspectorPig::analyzePath(const char* path, Kind kind) {
         emit("error      : file is empty");
         return 0;
     }
-    if (n > READ_MAX) {
+    uint8_t score = 0;
+    if (kind == Kind::HC22000) {
+        size_t want = n < READ_MAX_22000 ? n : READ_MAX_22000;
+        uint8_t* buf = (uint8_t*)malloc(want);
+        if (!buf) {
+            f.close();
+            emit("error      : out of memory for %u bytes", (unsigned)want);
+            return 0;
+        }
+        size_t got = f.read(buf, want);
         f.close();
-        emit("error      : file larger than %u bytes", (unsigned)READ_MAX);
-        return 0;
-    }
-    uint8_t* buf = (uint8_t*)malloc(n);
-    if (!buf) {
-        f.close();
-        emit("error      : out of memory for %u bytes", (unsigned)n);
-        return 0;
-    }
-    size_t got = f.read(buf, n);
-    f.close();
-    if (got != n) {
+        if (got == 0) {
+            free(buf);
+            emit("error      : short read");
+            return 0;
+        }
+        score = analyze22000(buf, got);
         free(buf);
-        emit("error      : short read (%u of %u)", (unsigned)got, (unsigned)n);
-        return 0;
+        return score;
     }
-    uint8_t score = (kind == Kind::HC22000) ? analyze22000(buf, n)
-                                           : analyzePcap(buf, n);
-    free(buf);
+    score = analyzePcapFile(f, n);
+    f.close();
     return score;
 }
 
 static void stemOf(const char* name, char* out, size_t outLen) {
-    size_t i = 0;
-    for (; name && name[i] && i + 1 < outLen; i++) {
-        if (name[i] == '.') break;
-        out[i] = name[i];
-    }
-    out[i] = '\0';
+    if (!out || outLen == 0) return;
+    out[0] = '\0';
+    if (!name) return;
+    const char* dot = strrchr(name, '.');
+    size_t n = dot ? (size_t)(dot - name) : strlen(name);
+    if (n + 1 > outLen) n = outLen - 1;
+    memcpy(out, name, n);
+    out[n] = '\0';
 }
 
 // One capture: full report on screen, full copy on the card.
@@ -652,7 +728,9 @@ void InspectorPig::inspectAll() {
     reportBegin();
     Storage::ensureDir(Storage::DIR_INSPECTOR);
     if (s_reportOut) s_reportOut.close();
-    s_reportOut = SD.open("/0N3P0rK/inspector/report.txt", "w");
+    char reportPath[64];
+    snprintf(reportPath, sizeof(reportPath), "%s/report.txt", Storage::DIR_INSPECTOR);
+    s_reportOut = SD.open(reportPath, "w");
 
     s_streamOnly = true;
     emit("scope      : ALL captures in /0N3P0rK/handshakes");
@@ -706,11 +784,28 @@ void InspectorPig::inspectAll() {
 
 // ---- lifecycle -------------------------------------------------------------
 void InspectorPig::start() {
-    running = true;
     phase = Phase::LIST;
     // The Enter that opened the menu is still held: latch it so it cannot be
     // read as "inspect this file".
     keyLatch = true;
+
+    // The list is MAX_ENTRIES * sizeof(Entry) and the report screen is
+    // MAX_LINES * LINE_LEN. Both are only useful while the view is open, so
+    // they are taken from the heap for the visit instead of sitting in .bss
+    // for the whole run of the firmware.
+    if (!entries) entries = (Entry*)malloc(sizeof(Entry) * MAX_ENTRIES);
+    if (!lines)   lines   = (char (*)[LINE_LEN])malloc((size_t)MAX_LINES * LINE_LEN);
+    if (!entries || !lines) {
+        free(entries);
+        entries = nullptr;
+        free(lines);
+        lines = nullptr;
+        running = false;
+        Display::showToast("LOW MEM", 1500);
+        return;
+    }
+
+    running = true;
     reportBegin();
     snprintf(statusMsg, sizeof(statusMsg), "SCAN...");
     refreshList();
@@ -724,6 +819,15 @@ void InspectorPig::stop() {
     }
     running = false;
     phase = Phase::LIST;
+
+    // Hand the view buffers back: nothing stays resident between visits.
+    free(entries);
+    entries = nullptr;
+    free(lines);
+    lines = nullptr;
+    entryCount = 0;
+    lineCount = 0;
+    lineScroll = 0;
 }
 
 void InspectorPig::update() {
@@ -873,7 +977,7 @@ void InspectorPig::drawDetail(M5Canvas& canvas) {
     canvas.drawString(hdr, 232, 5);
     canvas.setTextDatum(top_left);
 
-    if (lineCount == 0) {
+    if (!lines || lineCount == 0) {
         canvas.setTextColor(UiStyle::TEXT);
         canvas.drawString("EMPTY REPORT", 8, 40);
         return;
@@ -900,6 +1004,7 @@ void InspectorPig::draw(M5Canvas& canvas) {
 void InspectorPig::reportBegin() {
     lineCount = 0;
     lineScroll = 0;
+    if (!lines) return;                 // headless run: nothing to clear
     for (uint8_t i = 0; i < MAX_LINES; i++) lines[i][0] = '\0';
 }
 
@@ -918,7 +1023,7 @@ void InspectorPig::emit(const char* fmt, ...) {
         s_reportOut.println(tmp);
         yield();
     }
-    if (!s_streamOnly && lineCount < MAX_LINES) {
+    if (!s_streamOnly && lines && lineCount < MAX_LINES) {
         strncpy(lines[lineCount], tmp, LINE_LEN - 1);
         lines[lineCount][LINE_LEN - 1] = '\0';
         lineCount++;
@@ -926,10 +1031,129 @@ void InspectorPig::emit(const char* fmt, ...) {
 }
 
 void InspectorPig::reportFlush(const char* path) {
+    if (!lines) return;                 // nothing buffered outside a visit
     Storage::ensureDir(Storage::DIR_INSPECTOR);
     File f = SD.open(path, "w");
     if (!f) return;
     f.printf("# 0N3P0rK InspectorPig report\n");
     for (uint8_t i = 0; i < lineCount; i++) f.println(lines[i]);
     f.close();
+}
+
+// ---------------------------------------------------------------------------
+// LOOT hooks: same dissection as a normal visit, but the report on SD is the
+// only output - no list, no report screen, no mode switch. LOOT calls these
+// straight from its file list, so the capture already in front of the user can
+// be vetted before it goes anywhere. Both work fine while the INSPECT view is
+// closed, which is the normal case: the view buffers are null and emit() only
+// writes to the report file.
+// ---------------------------------------------------------------------------
+uint8_t InspectorPig::checkOne(const char* filename, char* msg, size_t msgLen) {
+    if (msg && msgLen) msg[0] = '\0';
+    if (!filename || !filename[0]) {
+        if (msg && msgLen) snprintf(msg, msgLen, "NO FILE");
+        return 0;
+    }
+    if (!Storage::available()) {
+        if (msg && msgLen) snprintf(msg, msgLen, "NO SD");
+        return 0;
+    }
+
+    char path[96];
+    snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, filename);
+    char stem[40];
+    stemOf(filename, stem, sizeof(stem));
+    char report[96];
+    snprintf(report, sizeof(report), "%s/%s.txt", Storage::DIR_INSPECTOR, stem);
+
+    reportBegin();
+    Storage::ensureDir(Storage::DIR_INSPECTOR);
+    if (s_reportOut) s_reportOut.close();
+    s_streamOnly = true;                 // file only: no screen lines exist here
+    s_reportOut = SD.open(report, "w");
+
+    emit("file       : %s", filename);
+    emit("size       : %u bytes", (unsigned)Storage::fileSize(path));
+    emit("saved to   : %s", report);
+    uint8_t score = analyzePath(path, isHc22000Name(filename) ? Kind::HC22000
+                                                             : Kind::PCAP);
+    emit("verdict    : %u/100 %s", (unsigned)score, verdictFor(score));
+    if (s_reportOut) {
+        s_reportOut.flush();
+        s_reportOut.close();
+    }
+    s_streamOnly = false;
+
+    if (msg && msgLen)
+        snprintf(msg, msgLen, "%s %u/100 SAVED", verdictFor(score), (unsigned)score);
+    return score;
+}
+
+uint16_t InspectorPig::checkAll(char* msg, size_t msgLen) {
+    if (msg && msgLen) msg[0] = '\0';
+    if (!Storage::available()) {
+        if (msg && msgLen) snprintf(msg, msgLen, "NO SD");
+        return 0;
+    }
+
+    // Names first, analysis second: the SD directory handle is closed before
+    // any capture is opened, and the name list is a short-lived heap buffer
+    // that does not outlive the call.
+    const uint16_t kMaxList = 96;
+    char (*names)[Storage::FILE_NAME_MAX] =
+        (char (*)[Storage::FILE_NAME_MAX])malloc((size_t)kMaxList * Storage::FILE_NAME_MAX);
+    if (!names) {
+        if (msg && msgLen) snprintf(msg, msgLen, "LOW MEM");
+        return 0;
+    }
+    const uint16_t listed = Storage::listHandshakes(names, kMaxList);
+
+    reportBegin();
+    Storage::ensureDir(Storage::DIR_INSPECTOR);
+    if (s_reportOut) s_reportOut.close();
+    char reportPath[64];
+    snprintf(reportPath, sizeof(reportPath), "%s/report.txt", Storage::DIR_INSPECTOR);
+    s_streamOnly = true;
+    s_reportOut = SD.open(reportPath, "w");
+
+    emit("scope      : ALL captures in /0N3P0rK/handshakes");
+    emit("run by     : LOOT checker");
+
+    uint16_t files = 0;
+    uint8_t good = 0, usable = 0, partial = 0, broken = 0;
+    for (uint16_t i = 0; i < listed; i++) {
+        const char* name = names[i];
+        if (!name[0]) continue;
+        if (!isPcapName(name) && !isHc22000Name(name)) continue;
+
+        char path[96];
+        snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
+        emit("");
+        emit("--- %s (%u bytes) ---", name, (unsigned)Storage::fileSize(path));
+        uint8_t score = analyzePath(path, isHc22000Name(name) ? Kind::HC22000
+                                                             : Kind::PCAP);
+        emit("verdict    : %u/100 %s", (unsigned)score, verdictFor(score));
+        files++;
+        if (score >= 85) good++;
+        else if (score >= 60) usable++;
+        else if (score >= 30) partial++;
+        else broken++;
+        yield();
+    }
+
+    char tot[48];
+    snprintf(tot, sizeof(tot), "TOT ok=%u use=%u part=%u bad=%u",
+             (unsigned)good, (unsigned)usable, (unsigned)partial, (unsigned)broken);
+    emit("%s", tot);
+    if (s_reportOut) {
+        s_reportOut.println(tot);
+        s_reportOut.flush();
+        s_reportOut.close();
+    }
+    s_streamOnly = false;
+    free(names);
+
+    if (msg && msgLen)
+        snprintf(msg, msgLen, "%u FILES  OK %u", (unsigned)files, (unsigned)good);
+    return files;
 }

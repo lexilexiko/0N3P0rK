@@ -11,6 +11,7 @@
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
 #include "../cap/capture_name.h"
+#include "../modes/inspectorpig.h"
 #include "../sync/net_io.h"
 #include "../sync/tls.h"
 #include <M5Cardputer.h>
@@ -440,7 +441,7 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    uint8_t hintCycle = (uint8_t)((millis() / 2500u) % 8u);
+    uint8_t hintCycle = (uint8_t)((millis() / 2500u) % 10u);
     if (syncModal) return "ENT close";
     if (diagModal) {
         if (hintCycle & 1) return ";/.  scroll log";
@@ -451,6 +452,7 @@ const char* LootMenu::getBottomHint() {
         if (hintCycle == 1) return "Q  pull results";
         if (hintCycle == 2) return "D  delete this file";
         if (hintCycle == 3) return "R  reload list";
+        if (hintCycle == 4) return "i  check this file";
         return "ENT  close card";
     }
     if (!count) {
@@ -458,6 +460,7 @@ const char* LootMenu::getBottomHint() {
         if (hintCycle == 1) return "R  reload list";
         if (hintCycle == 2) return "T  test wifi / api";
         if (hintCycle == 3) return ",/  wp/pwn/ohc";
+        if (hintCycle == 4) return "I  check all files";
         return "`  back";
     }
     switch (hintCycle) {
@@ -468,6 +471,8 @@ const char* LootMenu::getBottomHint() {
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
         case 6: return "[ / ]  prev / next page";
+        case 7: return "i  check this file";
+        case 8: return "I  check all files";
         default: return ",/  wp/pwn/ohc";
     }
 }
@@ -778,11 +783,56 @@ void LootMenu::reloadList() {
     SFX::play(SFX::MENU_CLICK);
 }
 
+// Inspector hook: LOOT is the natural place to ask "is this capture really a
+// handshake?" - the file is right there in the list. `i` vets the selected
+// capture, `I` walks the whole folder. Both write a report to
+// /0N3P0rK/inspector/ and answer with a toast, so the INSPECT mode never has
+// to be opened for the answer - and its view buffers are never allocated.
+void LootMenu::runInspector(bool allFiles) {
+    if (!Storage::available()) {
+        Display::showToast("NO SD", 1200);
+        return;
+    }
+
+    char msg[40];
+    msg[0] = '\0';
+
+    if (allFiles) {
+        // The folder walk reads and parses every capture, so say what is going
+        // on and repaint once before the scan starts blocking the loop.
+        Display::showToast("CHECKING ALL...", 30000);
+        paintLoot();
+        SFX::play(SFX::MENU_CLICK);
+        InspectorPig::checkAll(msg, sizeof(msg));
+    } else {
+        if (!count || selected >= count || !s_rows[selected].filename[0]) {
+            Display::showToast("NO FILE", 900);
+            return;
+        }
+        Display::showToast("CHECKING...", 15000);
+        paintLoot();
+        InspectorPig::checkOne(s_rows[selected].filename, msg, sizeof(msg));
+    }
+
+    Display::showToast(msg[0] ? msg : "CHECK FAIL", 1800);
+    SFX::play(SFX::CONFIRM);
+}
+
 void LootMenu::handleInput() {
     if (!keyNewPress(keyWasPressed)) return;
 
     auto keys = M5Cardputer.Keyboard.keysState();
     bool esc = keyEsc();
+
+    // Inspector hook: `i` vets the selected capture, `I` the whole folder.
+    // keys.word keeps the case while isKeyPressed() does not, so shift is read
+    // from the typed characters.
+    bool inspectAll = false;
+    for (char c : keys.word) {
+        if (c == 'I') { inspectAll = true; break; }
+    }
+    const bool inspectKey = M5Cardputer.Keyboard.isKeyPressed('i') ||
+                            M5Cardputer.Keyboard.isKeyPressed('I');
     if (esc) {
         if (detailView) { detailView = false; return; }
         if (syncModal) { syncModal = false; return; }
@@ -825,6 +875,11 @@ void LootMenu::handleInput() {
         if (M5Cardputer.Keyboard.isKeyPressed('r') ||
             M5Cardputer.Keyboard.isKeyPressed('R')) {
             reloadList();
+            return;
+        }
+        // The hook works from the open card too: vet this capture, report to SD.
+        if (inspectKey) {
+            runInspector(inspectAll);
             return;
         }
         if (M5Cardputer.Keyboard.keysState().enter) detailView = false;
@@ -892,6 +947,7 @@ void LootMenu::handleInput() {
     if (M5Cardputer.Keyboard.isKeyPressed('r') || M5Cardputer.Keyboard.isKeyPressed('R'))
         reloadList();
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
+    if (inspectKey) runInspector(inspectAll);
 }
 
 void LootMenu::update() {

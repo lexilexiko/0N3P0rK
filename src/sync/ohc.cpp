@@ -26,6 +26,17 @@ static const char*    OHC_PENDING = "/0N3P0rK/ohc/_pending.txt";
 // and its outcome is written here and can be opened from FILEMGR or pulled over
 // XFER.
 static const char*    OHC_LASTLOG = "/0N3P0rK/ohc/last.log";
+// Reply scrape buffer. It is needed for as long as one JSON reply is being
+// read, so it is taken from the heap per upload and returned on the way out:
+// as a function-local static it parked 2 KB of .bss in the image forever.
+static const size_t   OHC_BODY_MAX = 2048;
+
+// Frees the scrape buffer on every exit path - uploadCapture has many returns.
+struct OhcScopedFree {
+    void* p;
+    explicit OhcScopedFree(void* mem) : p(mem) {}
+    ~OhcScopedFree() { if (p) free(p); }
+};
 
 namespace OHC {
 
@@ -479,10 +490,17 @@ static bool uploadCapture(const char* filepath, const char* email,
 
     // counts sit before the long WPA* hash strings, so 2 KB is enough after
     // headers are gone. Keep scanning even if the notice is large.
-    static char body[2048];
+    char* body = (char*)malloc(OHC_BODY_MAX);
+    if (!body) {
+        client.stop();
+        snprintf(s_lastError, sizeof(s_lastError), "low heap");
+        if (out) snprintf(out->error, sizeof(out->error), "%s", s_lastError);
+        return false;
+    }
+    OhcScopedFree bodyGuard(body);
     size_t bl = 0;
     unsigned long t0 = millis();
-    while (got && (uint32_t)(millis() - t0) < 20000 && bl + 1 < sizeof(body)) {
+    while (got && (uint32_t)(millis() - t0) < 20000 && bl + 1 < OHC_BODY_MAX) {
         int avail = client.available();
         if (avail <= 0) {
             if (!client.connected()) break;
@@ -491,7 +509,7 @@ static bool uploadCapture(const char* filepath, const char* email,
             continue;
         }
         int n = client.read(reinterpret_cast<uint8_t*>(body) + bl,
-                            sizeof(body) - 1 - bl);
+                            OHC_BODY_MAX - 1 - bl);
         if (n <= 0) continue;
         bl += (size_t)n;
         t0 = millis();

@@ -735,6 +735,9 @@ void Display::drawBottomBar() {
             case AppMode::MP3:
                 Mp3PlayerMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::INSPECTOR:
+                InspectorPig::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::TASKS:
                 strncpy(left, ";/. select  ENT stop  ` back", sizeof(left) - 1);
                 break;
@@ -873,7 +876,8 @@ void Display::update() {
     const bool coverFarm = !hid &&
         (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD ||
          App::mode() == AppMode::MP3 ||
-         App::mode() == AppMode::PIGPASS);
+         App::mode() == AppMode::PIGPASS ||
+         App::mode() == AppMode::INSPECTOR);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
