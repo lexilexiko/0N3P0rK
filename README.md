@@ -25,11 +25,12 @@ Secret menu codes are **not** listed here (keep them private).
 9. [LED indicator](#led-indicator)
 10. [XFER file transfer](#xfer-file-transfer)
 11. [Music (MP3 player)](#music-mp3-player)
-12. [PigPass](#pigpass)
-13. [SD layout](#sd-layout)
-14. [Web site](#web-site)
-15. [Version history](#version-history)
-16. [Legal & credits](#legal--credits)
+12. [InspectorPig](#inspectorpig-inspect)
+13. [PigPass](#pigpass)
+14. [SD layout](#sd-layout)
+15. [Web site](#web-site)
+16. [Version history](#version-history)
+17. [Legal & credits](#legal--credits)
 
 ---
 
@@ -541,6 +542,50 @@ engine is stopped on entry so the decoder has room in the internal heap.
 
 If memory is too tight the scene shows `LOW MEM` instead of playing — stop
 other services (capture, XFER, portal) and press `3` again.
+
+---
+
+## InspectorPig (INSPECT)
+
+Offline capture and handshake inspector. Reads the files in
+`/0N3P0rK/handshakes/` and dissects them the way Wireshark would: container,
+radiotap headers, 802.11 frame classes, EAPOL message numbers (M1..M4),
+replay counter alignment, and RSN parameters (WPA/WPA2, CCMP/TKIP, PSK/SAE).
+
+Use it before syncing to WPASec, Pwncrack, or OnlineHashCrack to verify that a
+capture really holds a complete, crackable handshake instead of an empty
+container or an unmatched frame pair.
+
+### Controls
+
+| Key | Action |
+| --- | --- |
+| `;` / `,` | Move selection up |
+| `.` / `/` | Move selection down |
+| `ENT` | Inspect the selected capture (opens the detailed report) |
+| `A` | Inspect **all** captures in `/0N3P0rK/handshakes/` |
+| `R` | Rescan the handshakes folder |
+| `` ` `` | Return to list (from report) or exit to main menu |
+
+### Reports on SD
+
+Every inspection is saved to `/0N3P0rK/inspector/`:
+
+- Single-file run: `/0N3P0rK/inspector/<capture_name>.txt` (full field dissection)
+- All-captures run: `/0N3P0rK/inspector/report.txt` (summary table plus per-file details)
+
+Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
+
+### Verdicts
+
+- **GOOD** (score 85–100): complete PMKID or full EAPOL pair with matching
+  replay counters and valid RSN data.
+- **USABLE** (score 60–84): valid material, but missing secondary fields
+  (e.g. no beacon seen so ESSID is unknown, or slight header anomaly).
+- **PARTIAL** (score 30–59): incomplete exchange (e.g. M1 without M2, or M2
+  without M1). Not crackable yet.
+- **BROKEN** (score 0–29): empty container, truncated packets, or non-capture
+  data.
 
 ---
 

@@ -47,6 +47,8 @@ const char* const DIR_HANDSHAKES = "/0N3P0rK/handshakes";
 const char* const DIR_WPASEC     = "/0N3P0rK/wpa-sec";
 const char* const DIR_PWNCRACK   = "/0N3P0rK/pwncrack";
 const char* const DIR_OHC        = "/0N3P0rK/ohc";
+// Reports written by the handshake inspector (InspectorPig).
+const char* const DIR_INSPECTOR  = "/0N3P0rK/inspector";
 const char* const DIR_RESULTS    = "/0N3P0rK/wpa-sec";
 const char* const DIR_EVILPIG    = "/0N3P0rK/evilpig";
 const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
