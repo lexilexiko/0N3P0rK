@@ -1038,7 +1038,7 @@ void update() {
             hide();
             return;
         }
-        const uint8_t statN = 9;
+        const uint8_t statN = 10;
         if (up && s_statScroll > 0) {
             s_statScroll--;
             SFX::play(SFX::MENU_CLICK);
