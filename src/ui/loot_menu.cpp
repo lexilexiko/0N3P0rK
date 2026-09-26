@@ -524,14 +524,12 @@ void LootMenu::runDiag() {
     Storage::brewHeap();
 
     char line[42];
-    if (directTls) {
+    if (ohc) {
+        addDiag(OHC::hasAccount() ? "OHC email set" : "OHC email missing");
+    } else if (wpa) {
         addDiag(WPASec::hasApiKey() ? "KEY ok 32 hex" : "KEY missing key.txt");
     } else {
         addDiag(Pwncrack::hasApiKey() ? "KEY ok" : "KEY missing key.txt");
-    }
-    if (ohc) {
-        // No key here — the account email is the credential.
-        addDiag(OHC::hasAccount() ? "OHC email set" : "OHC email missing");
     }
     snprintf(line, sizeof(line), "SD %s  LOOT %u",
              Storage::available() ? "ok" : "NO", (unsigned)count);

@@ -56,7 +56,7 @@ static const char* const H_ATTACK[] = {
     "RINGS ON THE SNOUT. LOOT ON SD."
 };
 static const char* const H_LOOT[] = {
-    "WPASEC + PWNCRACK. ONE BAG.",
+    "WPASEC + PWN + OHC. ONE BAG.",
     ",/ SWITCH TAB. S SYNC."
 };
 static const char* const H_PIG[] = {

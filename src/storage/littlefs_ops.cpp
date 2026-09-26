@@ -122,6 +122,7 @@ bool begin() {
     SD.mkdir(DIR_HS);
     SD.mkdir(DIR_WPASEC);
     SD.mkdir(DIR_PWNCRACK);
+    SD.mkdir(DIR_OHC);
     SD.mkdir(DIR_EVILPIG);
     SD.mkdir(DIR_PIGPASS);
     SD.mkdir(DIR_PASSWORLD);
@@ -515,12 +516,23 @@ void loadKeysIntoNet() {
         Net::setPwncrackKey(buf);
         Serial.println("[SD] pwncrack key loaded");
     }
-    // OnlineHashCrack takes the account email instead of an API key. The file
-    // is optional: with no email the OHC tab simply reports NO OHC EMAIL.
+    // OnlineHashCrack takes the account email instead of an API key. Do NOT
+    // reuse loadKeyFile() here: that helper pulls a 32-hex run for WPA-SEC
+    // and would mangle an address whose local-part looks like hex.
     char mail[80];
-    if (loadKeyFile(FILE_OHC_EMAIL, mail, sizeof(mail))) {
-        if (Net::setOhcEmail(mail)) Serial.println("[SD] ohc email loaded");
-        else Serial.println("[SD] ohc email invalid, ignored");
+    if (s_mounted && SD.exists(FILE_OHC_EMAIL)) {
+        File ef = SD.open(FILE_OHC_EMAIL, "r");
+        if (ef) {
+            size_t n = ef.readBytes(mail, sizeof(mail) - 1);
+            ef.close();
+            mail[n] = '\0';
+            while (n > 0 && (mail[n - 1] == '\n' || mail[n - 1] == '\r' || mail[n - 1] == ' '))
+                mail[--n] = '\0';
+            if (mail[0]) {
+                if (Net::setOhcEmail(mail)) Serial.println("[SD] ohc email loaded");
+                else Serial.println("[SD] ohc email invalid, ignored");
+            }
+        }
     }
 }
 

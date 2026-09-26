@@ -26,9 +26,6 @@ static const char*    OHC_PENDING = "/0N3P0rK/ohc/_pending.txt";
 // and its outcome is written here and can be opened from FILEMGR or pulled over
 // XFER.
 static const char*    OHC_LASTLOG = "/0N3P0rK/ohc/last.log";
-// Multipart delimiter. A PCAP file never contains the literal "----0N3P0rK",
-// so the token cannot collide with capture bytes.
-static const char*    OHC_BOUNDARY = "----0N3P0rKOHC7d91a2f4";
 
 namespace OHC {
 
@@ -378,22 +375,26 @@ static bool uploadCapture(const char* filepath, const char* email,
     const char* filename = Storage::baseName(filepath);
     if (!filename || !filename[0]) filename = "capture.pcap";
 
+    // Unique boundary each POST so capture bytes cannot collide with it.
+    char boundary[32];
+    snprintf(boundary, sizeof(boundary), "----OHC%08lX", (unsigned long)millis());
+
     char emailHead[256];
     snprintf(emailHead, sizeof(emailHead),
              "--%s\r\n"
              "Content-Disposition: form-data; name=\"email\"\r\n\r\n"
              "%s\r\n",
-             OHC_BOUNDARY, email);
+             boundary, email);
 
     char fileHead[352];
     snprintf(fileHead, sizeof(fileHead),
              "--%s\r\n"
              "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
              "Content-Type: application/octet-stream\r\n\r\n",
-             OHC_BOUNDARY, filename);
+             boundary, filename);
 
     char tail[64];
-    snprintf(tail, sizeof(tail), "\r\n--%s--\r\n", OHC_BOUNDARY);
+    snprintf(tail, sizeof(tail), "\r\n--%s--\r\n", boundary);
 
     size_t contentLength = strlen(emailHead) + strlen(fileHead) + fileSize + strlen(tail);
 
@@ -410,7 +411,7 @@ static bool uploadCapture(const char* filepath, const char* email,
     client.printf("Host: %s\r\n", OHC_HOST);
     client.printf("User-Agent: 0N3P0rK/" ON3PORK_VERSION " OHC\r\n");
     client.printf("Accept: application/json\r\n");
-    client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", OHC_BOUNDARY);
+    client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
     client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
     client.print("Connection: close\r\n\r\n");
     client.print(emailHead);
@@ -442,8 +443,43 @@ static bool uploadCapture(const char* filepath, const char* email,
     char status[80] = "";
     bool got = ioReadStatusLine(client, status, sizeof(status), 45000);
 
-    // Bounded read of the JSON summary (documented size is well under 1 KB).
-    static char body[1024];
+    // Drop HTTP headers. The JSON starts after the blank line. Without this
+    // the 1 KB scrape filled up with Date/Content-Type plus OHC's long
+    // "notice" legal text and never reached "accepted"/"already_sent" —
+    // every good upload looked like "not accepted".
+    if (got) {
+        char hline[160];
+        size_t hi = 0;
+        bool headersDone = false;
+        unsigned long ht = millis();
+        while ((uint32_t)(millis() - ht) < 15000 && !headersDone) {
+            int avail = client.available();
+            if (avail <= 0) {
+                if (!client.connected()) break;
+                delay(5);
+                yield();
+                continue;
+            }
+            int ch = client.read();
+            if (ch < 0) continue;
+            if (ch == '\n') {
+                if (hi == 0) headersDone = true;
+                hi = 0;
+            } else if (ch != '\r' && hi + 1 < sizeof(hline)) {
+                hline[hi++] = (char)ch;
+            }
+        }
+        if (!headersDone) {
+            client.stop();
+            snprintf(s_lastError, sizeof(s_lastError), "hdr timeout");
+            if (out) snprintf(out->error, sizeof(out->error), "%s", s_lastError);
+            return false;
+        }
+    }
+
+    // counts sit before the long WPA* hash strings, so 2 KB is enough after
+    // headers are gone. Keep scanning even if the notice is large.
+    static char body[2048];
     size_t bl = 0;
     unsigned long t0 = millis();
     while (got && (uint32_t)(millis() - t0) < 20000 && bl + 1 < sizeof(body)) {
@@ -459,8 +495,12 @@ static bool uploadCapture(const char* filepath, const char* email,
         if (n <= 0) continue;
         bl += (size_t)n;
         t0 = millis();
+        // We only need the batch counters. Stop once they are in the buffer
+        // so a huge hashes[] array cannot push "skipped"/"rejected" out.
+        if (bl > 400 && strstr(body, "\"rejected\"")) break;
     }
     body[bl] = '\0';
+    ioDrain(client, 3000);
     client.stop();
 
     if (!got || !status[0]) {
@@ -520,12 +560,16 @@ static bool uploadCapture(const char* filepath, const char* email,
         if (skip > 0) {
             char r[24] = "";
             jsonStringIn(body, "skipped", "reason", r, sizeof(r));
-            out->alreadySent = (strcasecmp(r, "already_sent") == 0);
+            out->alreadySent = (strcasecmp(r, "already_sent") == 0) ||
+                               (r[0] == '\0' && strstr(body, "already_sent") != nullptr);
+        } else if (strstr(body, "already_sent")) {
+            out->alreadySent = true;
         }
         if (rej > 0) {
             char r[24] = "";
             jsonStringIn(body, "rejected", "reason", r, sizeof(r));
-            out->noHashFound = (strcasecmp(r, "no_hash_found") == 0);
+            out->noHashFound = (strcasecmp(r, "no_hash_found") == 0) ||
+                               (r[0] == '\0' && strstr(body, "no_hash_found") != nullptr);
             char m[64] = "";
             jsonStringIn(body, "rejected", "message", m, sizeof(m));
             if (m[0]) strncpy(out->error, m, sizeof(out->error) - 1);
@@ -536,11 +580,13 @@ static bool uploadCapture(const char* filepath, const char* email,
         s_lastError[0] = '\0';
         return true;
     }
-    if (out && out->alreadySent) {
+    if ((out && out->alreadySent) || strstr(body, "already_sent")) {
+        if (out) out->alreadySent = true;
         snprintf(s_lastError, sizeof(s_lastError), "already sent");
         return true;   // known to the server: must not be retried
     }
-    if (out && out->noHashFound) {
+    if ((out && out->noHashFound) || strstr(body, "no_hash_found")) {
+        if (out) out->noHashFound = true;
         snprintf(s_lastError, sizeof(s_lastError), "no hash found");
         return false;
     }
