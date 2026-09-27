@@ -37,17 +37,21 @@ public:
 private:
     enum class Phase : uint8_t { LIST, DETAIL };
     enum class Kind : uint8_t { PCAP, HC22000 };
+    // Two tabs, PigPass-style: raw captures and hashcat lines.
+    enum class Tab : uint8_t { PCAP = 0, HC22000 = 1 };
 
     struct Entry {
         char     name[64];
         uint32_t size;
         Kind     kind;
-        bool     checked;     // has a verdict from the last single-file run
+        bool     checked;     // has a verdict from the last run on this file
         uint8_t  score;       // 0..100 confidence
         char     verdict[14];
     };
 
-    static constexpr uint8_t MAX_ENTRIES = 80;
+    // One page of the list lives in the heap at a time; `[` / `]` walk the
+    // pages, so the folder can hold far more captures than the buffer.
+    static constexpr uint8_t PAGE_SIZE   = 48;
     static constexpr uint8_t VIS_ROWS    = 5;
     static constexpr uint8_t MAX_LINES   = 72;
     static constexpr uint8_t LINE_LEN    = 46;
@@ -55,9 +59,16 @@ private:
     // does not have to fit in heap and is not marked BROKEN for being "too big".
     static constexpr uint32_t READ_MAX_22000 = 4096u;
     static constexpr uint32_t PKT_CAP        = 768u;
+    // Verdict index on SD. Append-only; older lines for a name lose to newer
+    // ones, so a re-check simply overwrites the previous answer.
+    static constexpr uint32_t VERDICT_MAX    = 16000u;
 
     static bool  running;
     static Phase phase;
+    static Tab   tab;
+    static uint16_t page;
+    static bool     hasMore;
+    static uint16_t totalItems;
     // The file list and the report lines live on the heap only while the
     // INSPECT view is open: the module costs nothing to have loaded, and a
     // visit gives the buffers back on exit. Both are null for the LOOT hooks,
@@ -91,6 +102,11 @@ private:
 
     // --- list -------------------------------------------------------------
     static void refreshList();
+    static void gotoPage(uint16_t p);
+    static void switchTab(int8_t dir);
+    // Verdict index, so an answer survives leaving the mode and a reboot.
+    static void loadVerdicts();
+    static void saveVerdict(const Entry& e);
     static void handleInput();
     static void drawList(M5Canvas& canvas);
     static void drawDetail(M5Canvas& canvas);
