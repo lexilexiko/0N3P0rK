@@ -24,9 +24,15 @@ static File s_reportOut;
 // When set, emit() sends text to the report file only and leaves the screen
 // buffer alone (used by the ALL run, which would otherwise overflow it).
 static bool s_streamOnly = false;
+// Verdict index: one "name|score|verdict" line per checked capture, appended.
+static const char* const VERDICT_FILE = "/0N3P0rK/inspector/state.txt";
 
 bool InspectorPig::running = false;
 InspectorPig::Phase InspectorPig::phase = InspectorPig::Phase::LIST;
+InspectorPig::Tab InspectorPig::tab = InspectorPig::Tab::PCAP;
+uint16_t InspectorPig::page = 0;
+bool InspectorPig::hasMore = false;
+uint16_t InspectorPig::totalItems = 0;
 InspectorPig::Entry* InspectorPig::entries = nullptr;
 uint8_t InspectorPig::entryCount = 0;
 uint8_t InspectorPig::sel = 0;
@@ -594,11 +600,21 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
     return score;
 }
 
-// ---- file list -------------------------------------------------------------
+// Which names belong to the active tab.
+static bool tabMatches(bool hcTab, const char* n) {
+    return hcTab ? isHc22000Name(n) : isPcapName(n);
+}
+
+// Rebuilds the page in `entries`: counts the matches for the active tab, skips
+// the pages before `page`, fills up to PAGE_SIZE rows and notes whether more
+// remain. Verdicts already stored on the card are applied on the way out, so a
+// capture checked earlier shows its answer immediately instead of being redone.
 void InspectorPig::refreshList() {
     entryCount = 0;
     sel = 0;
     scroll = 0;
+    hasMore = false;
+    totalItems = 0;
     if (!entries) {
         snprintf(statusMsg, sizeof(statusMsg), "NO MEM");
         return;
@@ -613,17 +629,29 @@ void InspectorPig::refreshList() {
         snprintf(statusMsg, sizeof(statusMsg), "NO /handshakes");
         return;
     }
+
+    const bool hcTab = (tab == Tab::HC22000);
+    const uint16_t toSkip = (uint16_t)(page * PAGE_SIZE);
+    uint16_t seen = 0;
+
     File f = dir.openNextFile();
-    while (f && entryCount < MAX_ENTRIES) {
+    while (f) {
         if (!f.isDirectory()) {
             const char* nm = Storage::baseName(f.name());
-            if (nm && nm[0] && (isPcapName(nm) || isHc22000Name(nm))) {
-                Entry& e = entries[entryCount];
-                memset(&e, 0, sizeof(e));
-                strncpy(e.name, nm, sizeof(e.name) - 1);
-                e.size = (uint32_t)f.size();
-                e.kind = isHc22000Name(nm) ? Kind::HC22000 : Kind::PCAP;
-                entryCount++;
+            if (nm && nm[0] && tabMatches(hcTab, nm)) {
+                if (seen >= toSkip && entryCount < PAGE_SIZE) {
+                    Entry& e = entries[entryCount];
+                    memset(&e, 0, sizeof(e));
+                    strncpy(e.name, nm, sizeof(e.name) - 1);
+                    e.size = (uint32_t)f.size();
+                    e.kind = isHc22000Name(nm) ? Kind::HC22000 : Kind::PCAP;
+                    entryCount++;
+                } else if (entryCount >= PAGE_SIZE) {
+                    hasMore = true;   // at least one match past this page
+                    break;
+                }
+                seen++;
+                totalItems++;
             }
         }
         f.close();
@@ -631,7 +659,79 @@ void InspectorPig::refreshList() {
     }
     if (f) f.close();
     dir.close();
-    snprintf(statusMsg, sizeof(statusMsg), "%u CAPTURES", (unsigned)entryCount);
+
+    loadVerdicts();
+
+    if (totalItems == 0) {
+        snprintf(statusMsg, sizeof(statusMsg), hcTab ? "NO .22000" : "NO PCAP");
+    } else {
+        snprintf(statusMsg, sizeof(statusMsg), "%u P%u", (unsigned)totalItems,
+                 (unsigned)(page + 1));
+    }
+}
+
+void InspectorPig::gotoPage(uint16_t p) {
+    page = p;
+    refreshList();
+    if (entryCount == 0 && page > 0) {
+        // Ran past the end (files were removed): step back one page.
+        page--;
+        refreshList();
+    }
+}
+
+void InspectorPig::switchTab(int8_t dir) {
+    (void)dir;   // two tabs: either direction toggles
+    tab = (tab == Tab::PCAP) ? Tab::HC22000 : Tab::PCAP;
+    page = 0;
+    refreshList();
+    Display::showToast(tab == Tab::HC22000 ? "TAB .22000" : "TAB PCAP", 700);
+}
+
+// Applies the stored verdicts to the current page. Lines are read in order and
+// later lines win, so re-checking a capture simply updates the answer.
+void InspectorPig::loadVerdicts() {
+    if (!entries || entryCount == 0) return;
+    if (!Storage::fileExists(VERDICT_FILE)) return;
+    File f = SD.open(VERDICT_FILE, "r");
+    if (!f) return;
+    char line[96];
+    while (f.available()) {
+        size_t n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+        line[n] = '\0';
+        while (n > 0 && (line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = '\0';
+        if (n == 0) continue;
+        char* bar = strchr(line, '|');
+        if (!bar) continue;
+        *bar = '\0';
+        int sc = atoi(bar + 1);
+        if (sc < 0) sc = 0;
+        if (sc > 100) sc = 100;
+        for (uint8_t i = 0; i < entryCount; i++) {
+            if (strcmp(entries[i].name, line) == 0) {
+                entries[i].checked = true;
+                entries[i].score = (uint8_t)sc;
+                snprintf(entries[i].verdict, sizeof(entries[i].verdict), "%s",
+                         verdictFor((uint8_t)sc));
+                break;
+            }
+        }
+        yield();
+    }
+    f.close();
+}
+
+// Append "name|score|verdict". Append-only keeps this cheap — no read/modify/
+// write of the whole index per check — and the newest line for a name wins.
+void InspectorPig::saveVerdict(const Entry& e) {
+    if (!e.name[0]) return;
+    Storage::ensureDir(Storage::DIR_INSPECTOR);
+    if (Storage::fileSize(VERDICT_FILE) > VERDICT_MAX) SD.remove(VERDICT_FILE);
+    File f = SD.open(VERDICT_FILE, "a");
+    if (!f) return;
+    f.printf("%s|%u|%s\n", e.name, (unsigned)e.score, e.verdict);
+    f.flush();
+    f.close();
 }
 
 uint8_t InspectorPig::analyzePath(const char* path, Kind kind) {
@@ -697,12 +797,13 @@ void InspectorPig::inspectSelected() {
     if (s_reportOut) s_reportOut.close();
     s_streamOnly = false;
     s_reportOut = SD.open(out, "w");
+    const bool reportOk = (bool)s_reportOut;
 
     char path[96];
     snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, e.name);
     emit("file       : %s", e.name);
     emit("size       : %u bytes", (unsigned)e.size);
-    emit("saved to   : %s", out);
+    emit("saved to   : %s", reportOk ? out : "(open failed!)");
 
     uint8_t score = analyzePath(path, e.kind);
     e.checked = true;
@@ -714,51 +815,91 @@ void InspectorPig::inspectSelected() {
         s_reportOut.flush();
         s_reportOut.close();
     }
+    // Remember the verdict on the card: it is what the list shows on the next
+    // visit, so the same capture never has to be analysed twice.
+    saveVerdict(e);
+
     snprintf(statusMsg, sizeof(statusMsg), "%s %u/100", e.verdict, (unsigned)score);
     phase = Phase::DETAIL;
     lineScroll = 0;
+    Display::showToast(reportOk ? "SAVED /inspector/" : "REPORT SAVE FAIL",
+                       reportOk ? 1200 : 1800);
 }
 
-// Every capture. The verbose text goes to /0N3P0rK/inspector/report.txt while
-// the screen keeps one line per file plus the totals, so a 48-file card is
-// still readable.
+// Every capture on the active tab — the whole folder, not just the page on
+// screen. Verbose text goes to /0N3P0rK/inspector/report.txt, one summary line
+// per capture goes to the screen, and every verdict is written to the index so a
+// later visit shows the answers instead of running the analysis again.
 void InspectorPig::inspectAll() {
-    if (!entryCount) return;
+    if (!entries) return;
+    if (!Storage::available()) {
+        Display::showToast("NO SD", 1200);
+        return;
+    }
+
+    // Names first, analysis second: the directory handle is closed before any
+    // capture is opened, and this buffer is released before returning.
+    const uint16_t kMaxList = 128;
+    char (*names)[Storage::FILE_NAME_MAX] =
+        (char (*)[Storage::FILE_NAME_MAX])malloc((size_t)kMaxList * Storage::FILE_NAME_MAX);
+    if (!names) {
+        Display::showToast("LOW MEM", 1400);
+        return;
+    }
+    const uint16_t listed = Storage::listHandshakes(names, kMaxList);
 
     reportBegin();
     Storage::ensureDir(Storage::DIR_INSPECTOR);
     if (s_reportOut) s_reportOut.close();
-    char reportPath[64];
-    snprintf(reportPath, sizeof(reportPath), "%s/report.txt", Storage::DIR_INSPECTOR);
-    s_reportOut = SD.open(reportPath, "w");
+    s_reportOut = SD.open("/0N3P0rK/inspector/report.txt", "w");
+    const bool reportOk = (bool)s_reportOut;
 
+    const bool hcTab = (tab == Tab::HC22000);
     s_streamOnly = true;
-    emit("scope      : ALL captures in /0N3P0rK/handshakes");
-    emit("count      : %u", (unsigned)entryCount);
+    emit("scope      : ALL %s captures in /0N3P0rK/handshakes",
+         hcTab ? ".22000" : "PCAP");
     s_streamOnly = false;
-    emit("ALL %u CAPTURES", (unsigned)entryCount);
+    emit("ALL %s", hcTab ? ".22000" : "PCAP");
 
     uint8_t good = 0, usable = 0, partial = 0, broken = 0;
-    for (uint8_t i = 0; i < entryCount; i++) {
-        Entry& e = entries[i];
+    uint16_t done = 0;
+    for (uint16_t i = 0; i < listed; i++) {
+        const char* nm = names[i];
+        if (!nm[0] || !tabMatches(hcTab, nm)) continue;
+
         char path[96];
-        snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, e.name);
+        snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, nm);
 
         s_streamOnly = true;
         emit("");
-        emit("--- %s (%u bytes) ---", e.name, (unsigned)e.size);
-        uint8_t score = analyzePath(path, e.kind);
-        e.checked = true;
-        e.score = score;
-        snprintf(e.verdict, sizeof(e.verdict), "%s", verdictFor(score));
-        emit("verdict    : %u/100 %s", (unsigned)score, e.verdict);
+        emit("--- %s ---", nm);
+        uint8_t score = analyzePath(path, isHc22000Name(nm) ? Kind::HC22000
+                                                            : Kind::PCAP);
         s_streamOnly = false;
 
         char shortName[18];
-        strncpy(shortName, e.name, sizeof(shortName) - 1);
+        strncpy(shortName, nm, sizeof(shortName) - 1);
         shortName[sizeof(shortName) - 1] = '\0';
-        emit("%-17s %3u %s", shortName, (unsigned)score, e.verdict);
+        emit("%-16s %3u %s", shortName, (unsigned)score, verdictFor(score));
 
+        // Store the answer, and refresh the row when it is on screen.
+        Entry tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        strncpy(tmp.name, nm, sizeof(tmp.name) - 1);
+        tmp.score = score;
+        snprintf(tmp.verdict, sizeof(tmp.verdict), "%s", verdictFor(score));
+        saveVerdict(tmp);
+        for (uint8_t r = 0; r < entryCount; r++) {
+            if (strcmp(entries[r].name, nm) == 0) {
+                entries[r].checked = true;
+                entries[r].score = score;
+                snprintf(entries[r].verdict, sizeof(entries[r].verdict), "%s",
+                         verdictFor(score));
+                break;
+            }
+        }
+
+        done++;
         if (score >= 85) good++;
         else if (score >= 60) usable++;
         else if (score >= 30) partial++;
@@ -775,11 +916,14 @@ void InspectorPig::inspectAll() {
         s_reportOut.flush();
         s_reportOut.close();
     }
-    snprintf(statusMsg, sizeof(statusMsg), "GOOD %u/%u", (unsigned)good,
-             (unsigned)entryCount);
+    s_streamOnly = false;
+    free(names);
+
+    snprintf(statusMsg, sizeof(statusMsg), "OK %u/%u", (unsigned)good, (unsigned)done);
     phase = Phase::DETAIL;
     lineScroll = 0;
-    Display::showToast("SAVED /inspector/report.txt", 1600);
+    Display::showToast(reportOk ? "SAVED /inspector/" : "REPORT SAVE FAIL",
+                       reportOk ? 1500 : 1900);
 }
 
 // ---- lifecycle -------------------------------------------------------------
@@ -789,11 +933,11 @@ void InspectorPig::start() {
     // read as "inspect this file".
     keyLatch = true;
 
-    // The list is MAX_ENTRIES * sizeof(Entry) and the report screen is
+    // The page is PAGE_SIZE * sizeof(Entry) and the report screen is
     // MAX_LINES * LINE_LEN. Both are only useful while the view is open, so
     // they are taken from the heap for the visit instead of sitting in .bss
     // for the whole run of the firmware.
-    if (!entries) entries = (Entry*)malloc(sizeof(Entry) * MAX_ENTRIES);
+    if (!entries) entries = (Entry*)malloc(sizeof(Entry) * PAGE_SIZE);
     if (!lines)   lines   = (char (*)[LINE_LEN])malloc((size_t)MAX_LINES * LINE_LEN);
     if (!entries || !lines) {
         free(entries);
@@ -806,6 +950,7 @@ void InspectorPig::start() {
     }
 
     running = true;
+    page = 0;
     reportBegin();
     snprintf(statusMsg, sizeof(statusMsg), "SCAN...");
     refreshList();
@@ -843,7 +988,12 @@ void InspectorPig::getStatusLine(char* buf, size_t n) {
                  (unsigned)lineScroll, (unsigned)lineCount);
         return;
     }
-    snprintf(buf, n, "%s  ENT one  A all", statusMsg);
+    if (totalItems > PAGE_SIZE) {
+        snprintf(buf, n, "%s  ENT chk  A all  [/] page  ,/ tab",
+                 statusMsg);
+        return;
+    }
+    snprintf(buf, n, "%s  ENT chk  A all  ,/ tab", statusMsg);
 }
 
 void InspectorPig::handleInput() {
@@ -889,18 +1039,34 @@ void InspectorPig::handleInput() {
     }
     if (M5Cardputer.Keyboard.isKeyPressed('r') ||
         M5Cardputer.Keyboard.isKeyPressed('R')) {
+        page = 0;
         refreshList();
         Display::showToast("RESCAN", 600);
         return;
     }
-    if (M5Cardputer.Keyboard.isKeyPressed(';') ||
-        M5Cardputer.Keyboard.isKeyPressed(',')) {
+    // Tabs first: `,` and `/` switch them, exactly like LOOT and PigPass do.
+    if (M5Cardputer.Keyboard.isKeyPressed(',') ||
+        M5Cardputer.Keyboard.isKeyPressed('/')) {
+        switchTab(M5Cardputer.Keyboard.isKeyPressed(',') ? -1 : +1);
+        return;
+    }
+    // Pages, so a folder with more captures than one page holds stays reachable.
+    if (M5Cardputer.Keyboard.isKeyPressed('[')) {
+        if (page > 0) gotoPage((uint16_t)(page - 1));
+        else Display::showToast("FIRST PAGE", 600);
+        return;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(']')) {
+        if (hasMore) gotoPage((uint16_t)(page + 1));
+        else Display::showToast("LAST PAGE", 600);
+        return;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(';')) {
         if (sel > 0) sel--;
         if (sel < scroll) scroll = sel;
         return;
     }
-    if (M5Cardputer.Keyboard.isKeyPressed('.') ||
-        M5Cardputer.Keyboard.isKeyPressed('/')) {
+    if (M5Cardputer.Keyboard.isKeyPressed('.')) {
         if (sel + 1 < entryCount) sel++;
         if (sel >= scroll + VIS_ROWS) scroll = (uint8_t)(sel - VIS_ROWS + 1);
         return;
@@ -914,31 +1080,51 @@ void InspectorPig::drawList(M5Canvas& canvas) {
     canvas.setTextWrap(false);
     canvas.setTextDatum(top_left);
 
-    canvas.fillRect(4, 2, 232, 13, UiStyle::PANEL);
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString("INSPECTORPIG", 8, 5);
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.setTextDatum(top_right);
-    canvas.drawString(statusMsg, 232, 5);
+    // Two tabs, laid out like the LOOT menu's tab bar (2 x 112 px).
+    const bool hc = (tab == Tab::HC22000);
+    canvas.fillRect(4, 2, 112, 13, hc ? UiStyle::PANEL : UiStyle::PINK);
+    canvas.fillRect(124, 2, 112, 13, hc ? UiStyle::PINK : UiStyle::PANEL);
+    canvas.setTextDatum(top_center);
+    canvas.setTextColor(hc ? UiStyle::TEXT : UiStyle::BG);
+    canvas.drawString("PCAP", 60, 5);
+    canvas.setTextColor(hc ? UiStyle::BG : UiStyle::TEXT);
+    canvas.drawString(".22000", 180, 5);
     canvas.setTextDatum(top_left);
+
+    // Keys on the left, position in the list on the right.
+    canvas.setTextColor(UiStyle::DIM);
+    canvas.drawString("ENT chk  A all  ` back", 6, 18);
+    if (totalItems) {
+        char pg[20];
+        if (totalItems > PAGE_SIZE) {
+            uint16_t pages = (uint16_t)((totalItems + PAGE_SIZE - 1) / PAGE_SIZE);
+            snprintf(pg, sizeof(pg), "%u P%u/%u", (unsigned)totalItems,
+                     (unsigned)(page + 1), (unsigned)pages);
+        } else {
+            snprintf(pg, sizeof(pg), "%u FILES", (unsigned)totalItems);
+        }
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.setTextDatum(top_right);
+        canvas.drawString(pg, 234, 18);
+        canvas.setTextDatum(top_left);
+    }
 
     if (entryCount == 0) {
         canvas.setTextColor(UiStyle::TEXT);
-        canvas.drawString("NO CAPTURES IN", 8, 30);
-        canvas.drawString("/0N3P0rK/handshakes", 8, 42);
+        canvas.drawString(statusMsg, 8, 44);
         canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("` back    R rescan", 8, 62);
+        canvas.drawString(",/ tab    R rescan", 8, 62);
         return;
     }
 
     canvas.setTextColor(UiStyle::CYAN);
-    canvas.drawString("CAPTURE          TYPE   SIZE  VERDICT", 6, 20);
+    canvas.drawString("CAPTURE          TYPE   SIZE  VERDICT", 6, 30);
 
-    int y = 31;
+    int y = 40;
     for (uint8_t i = scroll; i < entryCount && i < scroll + VIS_ROWS; i++) {
         const Entry& e = entries[i];
         bool s = (i == sel);
-        uiListRow(canvas, y, 14, s, UiStyle::PINK);
+        uiListRow(canvas, y, 12, s, UiStyle::PINK);
         canvas.setTextColor(s ? UiStyle::BG : UiStyle::TEXT);
 
         char nm[19];
@@ -952,12 +1138,9 @@ void InspectorPig::drawList(M5Canvas& canvas) {
         snprintf(row, sizeof(row), "%-16s %-4s %5s  %s", nm,
                  e.kind == Kind::HC22000 ? "22K" : "PCAP", sz,
                  e.checked ? e.verdict : "...");
-        canvas.drawString(row, 6, y + 3);
-        y += 14;
+        canvas.drawString(row, 6, y + 2);
+        y += 12;
     }
-
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.drawString("ENT inspect   A all   R rescan", 6, 100);
 }
 
 void InspectorPig::drawDetail(M5Canvas& canvas) {
@@ -1084,6 +1267,16 @@ uint8_t InspectorPig::checkOne(const char* filename, char* msg, size_t msgLen) {
     }
     s_streamOnly = false;
 
+    // Persist it too, so the INSPECT list can show the answer without a re-run.
+    {
+        Entry tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        strncpy(tmp.name, filename, sizeof(tmp.name) - 1);
+        tmp.score = score;
+        snprintf(tmp.verdict, sizeof(tmp.verdict), "%s", verdictFor(score));
+        saveVerdict(tmp);
+    }
+
     if (msg && msgLen)
         snprintf(msg, msgLen, "%s %u/100 SAVED", verdictFor(score), (unsigned)score);
     return score;
@@ -1133,6 +1326,15 @@ uint16_t InspectorPig::checkAll(char* msg, size_t msgLen) {
         uint8_t score = analyzePath(path, isHc22000Name(name) ? Kind::HC22000
                                                              : Kind::PCAP);
         emit("verdict    : %u/100 %s", (unsigned)score, verdictFor(score));
+        // Keep the index up to date, so opening INSPECT later shows this answer.
+        {
+            Entry tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            strncpy(tmp.name, name, sizeof(tmp.name) - 1);
+            tmp.score = score;
+            snprintf(tmp.verdict, sizeof(tmp.verdict), "%s", verdictFor(score));
+            saveVerdict(tmp);
+        }
         files++;
         if (score >= 85) good++;
         else if (score >= 60) usable++;
