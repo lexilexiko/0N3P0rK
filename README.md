@@ -1,6 +1,6 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.5**  
+**Current version: 1.3.5f**  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -88,7 +88,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.5`.
+   `1.3.5f`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -246,6 +246,23 @@ Capture workflow:
 The capture path writes classic PCAP files and prepares Hashcat 22000 material
 when enough valid handshake data is available. Incomplete, oversized, or
 invalid files are rejected instead of being presented as successful captures.
+
+### Checking a capture before upload (LOOT → `i` / `I`)
+
+The handshake inspector is wired straight into **LOOT**, so the capture already
+in front of you can be vetted without leaving the list:
+
+| Key | Action |
+| --- | --- |
+| `i` | Check the highlighted capture → `/0N3P0rK/inspector/<capture>.txt` |
+| `I` | Check **every** capture in `/0N3P0rK/handshakes/` → `/0N3P0rK/inspector/report.txt` |
+
+Both keys work from the list and from the open card (`ENT`), and both answer
+with a toast: `GOOD 92/100 SAVED`, or `12 FILES  OK 9` for the whole folder.
+
+The run is **headless**: no mode switch, no list, no report screen — the
+inspector's view buffers are never allocated for it. Press `i` before `U` / `S`
+and the upload only ever carries a capture that really holds a handshake.
 
 ### OnlineHashCrack (OHC tab)
 
@@ -556,6 +573,20 @@ Use it before syncing to WPASec, Pwncrack, or OnlineHashCrack to verify that a
 capture really holds a complete, crackable handshake instead of an empty
 container or an unmatched frame pair.
 
+### Also reachable from LOOT
+
+The same dissection is available without opening this mode: in **LOOT**, `i`
+checks the highlighted capture and `I` checks the whole folder, both headless
+and with the same report output (see *Checking a capture before upload* above).
+The screen below is the interactive version of it.
+
+### Memory
+
+The file list (~7 KB) and the report screen (~3.3 KB) are taken from the heap
+when the mode opens and are released when it is left. Between visits — and for
+every LOOT check — the module holds no RAM at all, and while it is open it
+never grows beyond those two buffers.
+
 ### Controls
 
 | Key | Action |
@@ -606,6 +637,7 @@ Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
   wpa-sec/        key.txt, results.txt, uploaded.txt
   pwncrack/       key.txt, results.txt, uploaded.txt
   ohc/            email.txt, uploaded.txt (OnlineHashCrack)
+  inspector/      handshake check reports (one .txt per capture + report.txt)
   pigpass/        crack state / results
   Passworld/      wordlists
   talk/           optional monologue lines
@@ -675,7 +707,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - PigPass tabs + scene suspend  
 - Cleaner public site + automatic gallery loading   
 
-### 1.3.0 (current)
+### 1.3.0
 
 #### Capture and stability
 
@@ -727,7 +759,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   ADV hardware.
 
 
-### 1.3.2 (current)
+### 1.3.2
 ---Soon__
 
 ### 1.3.4
@@ -746,7 +778,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Starting the player stops an active capture session to free heap for the
   decoder.
 
-### 1.3.5 (current)
+### 1.3.5 (beta)
 
 #### OnlineHashCrack
 
@@ -777,6 +809,36 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   compacts the heap on exit.
 - **Capture** compacts the heap after the capture buffers are deleted, and the
   release log now reports the largest free block instead of only the total.
+
+---
+
+### 1.3.5f (current)
+
+#### Handshake check in LOOT
+
+- New in **LOOT**: `i` vets the highlighted capture and `I` checks every capture
+  in `/0N3P0rK/handshakes/`. Both write a report to `/0N3P0rK/inspector/` and
+  answer with a verdict toast (`GOOD 92/100 SAVED`, `12 FILES  OK 9`). Both work
+  from the list and from the open card.
+- The check is **headless**: no mode switch, no file list, no report screen. The
+  INSPECT view keeps working exactly as before, it is just no longer required to
+  get an answer.
+- Meant to be pressed before `U` / `S`, so an upload only carries a capture that
+  really holds a handshake.
+
+#### Memory
+
+- **InspectorPig** no longer keeps its file list (`MAX_ENTRIES * sizeof(Entry)`,
+  ≈ 7 KB) and report buffer (`MAX_LINES * LINE_LEN`, ≈ 3.3 KB) in `.bss`: both
+  move to the heap on entry and are returned in `stop()`, so the module costs
+  nothing between visits. A failed allocation exits with a `LOW MEM` notice
+  instead of a half-built view.
+- **OHC** takes its 2 KB reply-scrape buffer from the heap per upload instead of
+  parking it in `.bss` as a function-local static; it is released on every exit
+  path.
+- `InspectorPig::checkAll()` walks the folder in two passes — names first, then
+  analysis — over a short-lived heap list, so no capture is opened while the
+  directory handle is still held.
 
 ---
 

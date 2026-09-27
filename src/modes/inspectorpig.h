@@ -14,6 +14,7 @@
 
 #include <Arduino.h>
 #include <M5Unified.h>
+#include <SD.h>
 
 class InspectorPig {
 public:
@@ -24,12 +25,21 @@ public:
     static bool isRunning() { return running; }
     static void getStatusLine(char* buf, size_t n);
 
+    // --- LOOT hooks ---------------------------------------------------------
+    // Headless runs: the capture is dissected and its report is dropped in
+    // /0N3P0rK/inspector/ without touching the screen or switching modes, so
+    // LOOT can call this with the INSPECT mode never opened. `filename` is a
+    // base name inside /0N3P0rK/handshakes. `msg` receives a line that fits a
+    // toast. checkOne returns the score, checkAll the number of files checked.
+    static uint8_t  checkOne(const char* filename, char* msg, size_t msgLen);
+    static uint16_t checkAll(char* msg, size_t msgLen);
+
 private:
     enum class Phase : uint8_t { LIST, DETAIL };
     enum class Kind : uint8_t { PCAP, HC22000 };
 
     struct Entry {
-        char     name[40];
+        char     name[64];
         uint32_t size;
         Kind     kind;
         bool     checked;     // has a verdict from the last single-file run
@@ -37,27 +47,28 @@ private:
         char     verdict[14];
     };
 
-    static constexpr uint8_t MAX_ENTRIES = 48;
+    static constexpr uint8_t MAX_ENTRIES = 80;
     static constexpr uint8_t VIS_ROWS    = 5;
     static constexpr uint8_t MAX_LINES   = 72;
     static constexpr uint8_t LINE_LEN    = 46;
-    // A capture is read into the heap only while it is being inspected, so the
-    // module costs nothing to have loaded. Anything larger is reported as too
-    // big instead of being silently truncated.
-    static constexpr uint32_t READ_MAX   = 128u * 1024u;
+    // .22000 lines are small; pcaps are streamed off SD so a 1 MB capture
+    // does not have to fit in heap and is not marked BROKEN for being "too big".
+    static constexpr uint32_t READ_MAX_22000 = 4096u;
+    static constexpr uint32_t PKT_CAP        = 768u;
 
     static bool  running;
     static Phase phase;
-    static Entry entries[MAX_ENTRIES];
+    // The file list and the report lines live on the heap only while the
+    // INSPECT view is open: the module costs nothing to have loaded, and a
+    // visit gives the buffers back on exit. Both are null for the LOOT hooks,
+    // which never touch the screen.
+    static Entry* entries;
+    static char (*lines)[LINE_LEN];
     static uint8_t entryCount;
     static uint8_t sel;
     static uint8_t scroll;
     static bool  keyLatch;
     static char  statusMsg[40];
-
-    // Report lines hold whatever the current file produced; the same text is
-    // written to SD while it is generated.
-    static char  lines[MAX_LINES][LINE_LEN];
     static uint8_t lineCount;
     static uint8_t lineScroll;
 
@@ -76,7 +87,7 @@ private:
     static void inspectAll();
     static uint8_t analyzePath(const char* path, Kind kind);  // returns score
     static uint8_t analyze22000(const uint8_t* data, size_t len);
-    static uint8_t analyzePcap(const uint8_t* data, size_t len);
+    static uint8_t analyzePcapFile(File& f, size_t len);
 
     // --- list -------------------------------------------------------------
     static void refreshList();
