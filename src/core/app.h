@@ -21,7 +21,8 @@ enum class AppMode : uint8_t {
     BADUSB,
     MP3,
     TASKS,
-    INSPECTOR
+    INSPECTOR,
+    SCRIPTS
 };
 
 namespace App {

@@ -1,0 +1,45 @@
+PUT THE LUA 5.4 SOURCES IN THIS FOLDER
+======================================
+
+EASIEST: run one script from the project root - it does all of this for you:
+
+    bash scripts/fetch_lua.sh                                    (Linux/macOS/Termux)
+    powershell -ExecutionPolicy Bypass -File scripts/fetch_lua.ps1   (Windows)
+
+    then:  pio run -t upload
+
+The manual steps below are only if you want to do it by hand.
+
+This folder must contain the Lua 5.4 interpreter sources, so that
+`src/script/pigvm.*` can #include <lua.h> / <lauxlib.h> / <lualib.h>.
+It is empty on a fresh checkout on purpose — Lua is vendored, not a lib_deps.
+
+Steps
+-----
+1. Download https://www.lua.org/ftp/lua-5.4.7.tar.gz  (or any 5.4.x)
+2. Unpack and copy the CONTENTS of its src/ folder here, so you end up with:
+
+     lib/lua/src/lua.h
+     lib/lua/src/luaconf.h
+     lib/lua/src/lauxlib.h
+     lib/lua/src/lualib.h
+     lib/lua/src/lapi.c
+     lib/lua/src/lstate.c
+     ... (every l*.c and l*.h from the archive)
+
+   Do NOT copy lua.c / luac.c — they define main() and clash with Arduino.
+
+3. Uncomment this line in platformio.ini -> build_flags:
+
+     -DPORK_LUA=1
+
+   (Already present: -Ilib/lua/src, which is what puts these headers on the
+   include path.)
+
+4. pio run
+
+Do NOT define LUA_USE_POSIX / LUA_USE_LINUX — the board has no POSIX layer.
+Delete this file once the sources are in place; nothing references it.
+
+See ../../lib/lua/README.md and ../../lib/lua/library.json for the details of
+why Lua is vendored instead of pulled from the PlatformIO registry.

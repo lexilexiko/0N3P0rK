@@ -1,6 +1,6 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.5f**  
+**Current version: 1.3.5f - (1.3.5) **  
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -26,11 +26,12 @@ Secret menu codes are **not** listed here (keep them private).
 10. [XFER file transfer](#xfer-file-transfer)
 11. [Music (MP3 player)](#music-mp3-player)
 12. [InspectorPig](#inspectorpig-inspect)
-13. [PigPass](#pigpass)
-14. [SD layout](#sd-layout)
-15. [Web site](#web-site)
-16. [Version history](#version-history)
-17. [Legal & credits](#legal--credits)
+13. [Scripts (Lua)](#scripts-lua)
+14. [PigPass](#pigpass)
+15. [SD layout](#sd-layout)
+16. [Web site](#web-site)
+17. [Version history](#version-history)
+18. [Legal & credits](#legal--credits)
 
 ---
 
@@ -620,6 +621,109 @@ Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
 
 ---
 
+## Scripts (Lua)
+
+The firmware can embed **Lua 5.4** so a card carries its own programs — games,
+demos, small helpers — without reflashing. Stage 1 ships the engine: boot it,
+run a script from SD, hand the memory straight back.
+
+### Enabling it (one command)
+
+Lua is **off by default**, so the firmware builds with or without it. To turn it
+on, run **one** script from the project root — it downloads Lua 5.4, drops the
+sources into `lib/lua/src/` and flips the build flag for you:
+
+```bash
+# Linux / macOS / Termux
+bash scripts/fetch_lua.sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts/fetch_lua.ps1
+```
+
+Then build and flash as usual:
+
+```bash
+pio run -t upload
+```
+
+The script needs `curl` or `wget` plus `tar`. It skips `lua.c` / `luac.c`
+(they define `main()` and would collide with the Arduino core). With the flag
+off, `src/script/pigvm.*` compiles to nothing and the rest of the firmware is
+untouched.
+
+If the flag is on while the sources are missing, the build stops early with a
+clear `PORK_LUA is ON but lib/lua/src has no lua.h` notice instead of a wall of
+missing-header errors.
+
+### The SCRIPTS menu
+
+Menu → **`<>` SCRIPTS**. Two tabs, switched with **TAB**:
+
+| Tab | What it does |
+| --- | --- |
+| **FILES** | Lists every `.lua` in `/0N3P0rK/scripts`. `ENT` runs the highlighted one and the output appears in the console; `R` rescans the folder. |
+| **REPL** | A live Lua prompt. Type a line, `ENT` runs it, and **variables survive between lines**, so an interactive session works line by line. |
+
+| Key | Action |
+| --- | --- |
+| `TAB` | switch FILES ↔ REPL |
+| `;` / `.` | move in the list / scroll the console |
+| `ENT` | run the selected script (FILES) or the typed line (REPL) |
+| `R` | rescan `/0N3P0rK/scripts` |
+| `` ` `` | back (REPL → FILES, output → list, list → root menu) |
+| Backspace | delete a character (REPL), otherwise minimize the window |
+
+The VM exists only while it is needed: a script's state is created for the run
+and closed immediately afterwards, and a REPL state is dropped as soon as the
+tab is left. The SCRIPTS entry also stops capture first, so the script never has
+to share the heap with the capture pipeline.
+
+### Running a script at boot
+
+A script placed here also runs once at boot:
+
+```text
+/0N3P0rK/scripts/boot.lua
+```
+
+The result shows up as a toast (`LUA OK 21K`, or `LUA ERR …`) and on the serial
+console. Ready-to-copy examples are in `examples/scripts/` (`boot.lua`,
+`hello.lua`, `bench.lua`).
+
+### What a script can call today
+
+| Binding | Meaning |
+| --- | --- |
+| `print(...)` | boot toast + serial console |
+| `delay(ms)` | yields; capped at 1000 ms |
+| `millis()` | milliseconds since boot |
+| `heap()` | free heap in bytes |
+
+Standard libraries available: `base` (`ipairs`, `pairs`, `tostring`, `pcall`, …),
+`table`, `string`, `math`, `coroutine`.
+
+### Safety
+
+A user script must never be able to take the device down, so the limits are part
+of the engine rather than bolted on:
+
+- **48 KB allocation budget.** Every Lua allocation goes through a capped
+  allocator. A script that tries to grow past it gets a normal Lua
+  *not enough memory* error instead of starving the heap the capture path needs.
+- **Wall-clock budget** (3 s for the boot script). An instruction hook aborts a
+  script that overruns it, so `while true do end` returns an error instead of
+  hanging the firmware.
+- **Sandboxed stdlib.** `io`, `os`, `package` and `debug` are **not** opened, so
+  a script cannot touch files, the clock, or modules behind the device's back.
+
+The VM is created when a script runs and closed immediately afterwards, so
+between runs the module holds no RAM at all.
+
+---
+
 ## PigPass
 
 - Tabs: **PCAP** and **22000**  
@@ -638,6 +742,7 @@ Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
   pwncrack/       key.txt, results.txt, uploaded.txt
   ohc/            email.txt, uploaded.txt (OnlineHashCrack)
   inspector/      handshake check reports (one .txt per capture + report.txt)
+  scripts/        user Lua scripts — <>/SCRIPTS menu, boot.lua auto-runs
   pigpass/        crack state / results
   Passworld/      wordlists
   talk/           optional monologue lines
@@ -839,6 +944,27 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - `InspectorPig::checkAll()` walks the folder in two passes — names first, then
   analysis — over a short-lived heap list, so no capture is opened while the
   directory handle is still held.
+
+#### On-device scripting (Lua, stage 1)
+
+- Embedded **Lua 5.4** so a card can carry its own programs without reflashing.
+  `src/script/pigvm.*` is the engine, written against the plain Lua C API — the
+  interpreter is vendored into `lib/lua/src` and gated behind `-DPORK_LUA=1`, so
+  the firmware still builds unchanged when scripting is not enabled.
+- A card may carry `/0N3P0rK/scripts/boot.lua`, which runs once at boot with a
+  3 s budget and reports `LUA OK <n>K` / `LUA ERR …` as a toast. An example is in
+  `examples/scripts/boot.lua`.
+- Three limits are part of the engine: a **48 KB allocation budget** (a script
+  that overshoots gets a Lua out-of-memory error instead of starving the
+  capture heap), a **wall-clock budget** enforced by an instruction hook (so a
+  runaway loop errors out instead of hanging), and a **sandboxed stdlib** —
+  `io`/`os`/`package`/`debug` are never opened.
+- Bindings today: `print`, `delay`, `millis`, `heap`, plus base/table/string/
+  math/coroutine. The VM is created per run and closed right after, so it costs
+  no RAM between runs.
+- Stage 2 adds the **SCRIPTS** menu (see above): browse the folder, run a script
+  on demand, and a REPL where variables survive between lines. Still to come:
+  the `screen` / `keys` / `sfx` / `sd` bindings that turn scripts into games.
 
 ---
 
