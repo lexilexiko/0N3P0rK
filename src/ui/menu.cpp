@@ -17,7 +17,6 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
-#include "../modes/scriptmode.h"
 #include "../modes/mp3player.h"
 #include "../modes/xfer.h"
 #include "../modes/badusb.h"
@@ -174,10 +173,6 @@ static const char* const H_INSPECT[] = {
     "READS OUR HANDSHAKES.",
     "ENT ONE  A ALL  REPORTS /inspector/"
 };
-static const char* const H_SCRIPTS[] = {
-    "LUA ON THE CARD. RUN AND PLAY.",
-    "ENT run  TAB repl  R rescan"
-};
 static const RootItem ROOT[] = {
     {"/>", "ATTACK",  H_ATTACK,      2, RootType::GROUP,  GroupId::ATTACK,  0},
     {"[$", "LOOT",    H_LOOT,        2, RootType::DIRECT, GroupId::NONE,    4},
@@ -186,10 +181,9 @@ static const RootItem ROOT[] = {
     {"()", "CONNECT", H_CONNECT_GRP, 2, RootType::GROUP,  GroupId::CONNECT, 0},
     {"::", "SET",     H_SET,         2, RootType::GROUP,  GroupId::SET,     0},
     {"[]", "TASKS",   H_TASKS,       2, RootType::DIRECT, GroupId::NONE,    23},
-    {"?#", "INSPECT", H_INSPECT,     2, RootType::DIRECT, GroupId::NONE,    26},
-    {"<>", "SCRIPTS", H_SCRIPTS,     2, RootType::DIRECT, GroupId::NONE,    27}
+    {"?#", "INSPECT", H_INSPECT,     2, RootType::DIRECT, GroupId::NONE,    26}
 };
-static const uint8_t ROOT_COUNT = 9;
+static const uint8_t ROOT_COUNT = 8;
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
@@ -352,12 +346,6 @@ static void doAction(uint8_t id) {
             // Reads the captures on SD — no radio, so stop capture first.
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::INSPECTOR);
-            break;
-        case 27:
-            // User Lua scripts. They want the heap for themselves, and the
-            // capture pipeline owns ~60K of it, so stop capture first.
-            if (Cap::isRunning()) Cap::stop();
-            App::setMode(AppMode::SCRIPTS);
             break;
         case 9:
             if (Cap::isRunning()) Cap::stop();

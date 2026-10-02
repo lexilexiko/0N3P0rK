@@ -17,7 +17,6 @@
 #include "../modes/filemgr.h"
 #include "../modes/mp3player.h"
 #include "../modes/inspectorpig.h"
-#include "../modes/scriptmode.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -51,7 +50,6 @@ bool overlayMode() {
            s_mode == AppMode::BADUSB ||
            s_mode == AppMode::MP3 ||
            s_mode == AppMode::INSPECTOR ||
-           s_mode == AppMode::SCRIPTS ||
            s_mode == AppMode::TASKS ||
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
@@ -94,7 +92,6 @@ const char* modeName() {
         case AppMode::MP3:      return "MP3";
         case AppMode::TASKS:    return "TASKS";
         case AppMode::INSPECTOR:return "INSPECT";
-        case AppMode::SCRIPTS:  return "SCRIPTS";
         default:                return "?";
     }
 }
@@ -115,7 +112,6 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::BADUSB && BadUsbMode::isRunning()) BadUsbMode::stop();
     if (s_mode == AppMode::MP3 && Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop();
     if (s_mode == AppMode::INSPECTOR && InspectorPig::isRunning()) InspectorPig::stop();
-    if (s_mode == AppMode::SCRIPTS && ScriptMode::isRunning()) ScriptMode::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     s_winHid = false;
     s_mode = m;
@@ -132,7 +128,6 @@ void setMode(AppMode m) {
     if (m == AppMode::BADUSB) BadUsbMode::start();
     if (m == AppMode::MP3) Mp3PlayerMode::start();
     if (m == AppMode::INSPECTOR) InspectorPig::start();
-    if (m == AppMode::SCRIPTS) ScriptMode::start();
     if (m == AppMode::TASKS) TaskManager::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
@@ -300,16 +295,14 @@ void loop() {
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
 
-    if (!SettingsMenu::isTyping() && !FileMgrMode::isTyping() &&
-        !ScriptMode::isTyping())
+    if (!SettingsMenu::isTyping() && !FileMgrMode::isTyping())
         Screenshot::poll();
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
     // Backspace = minimize overlay — NOT in BADUSB (needs DEL for ducky/live)
     if (overlayMode() && s_mode != AppMode::BADUSB &&
-        !SettingsMenu::isTyping() && !FileMgrMode::isTyping() &&
-        !ScriptMode::isTyping()) {
+        !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {
                 s_winHid = !s_winHid;
@@ -363,9 +356,6 @@ void loop() {
     } else if (s_mode == AppMode::INSPECTOR) {
         InspectorPig::update();
         if (!InspectorPig::isRunning()) setMode(AppMode::MENU);
-    } else if (s_mode == AppMode::SCRIPTS) {
-        ScriptMode::update();
-        if (!ScriptMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
@@ -385,7 +375,7 @@ void loop() {
         s_mode == AppMode::USBSD ||
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
         s_mode == AppMode::WIFI || s_mode == AppMode::TASKS ||
-        s_mode == AppMode::INSPECTOR || s_mode == AppMode::SCRIPTS) return;
+        s_mode == AppMode::INSPECTOR) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();

@@ -20,31 +20,3 @@ with open(INFO, "w", encoding="ascii") as f:
     f.write(contents)
 
 print("[pre_build] wrote {p} (v={v} build={t})".format(p=INFO, v=VER, t=TS))
-
-# Fail loudly when scripting is switched on but the interpreter was never
-# vendored - otherwise the build dies with a wall of missing lua.h errors.
-ini = os.path.join(env["PROJECT_DIR"], "platformio.ini")
-lua_h = os.path.join(env["PROJECT_DIR"], "lib", "lua", "src", "lua.h")
-enabled = False
-try:
-    with open(ini, "r", encoding="utf-8") as f:
-        for line in f:
-            s = line.strip()
-            if not s or s[0] in ";#":
-                continue
-            if s.startswith("-DPORK_LUA=1"):
-                enabled = True
-                break
-except OSError:
-    pass
-
-if enabled and not os.path.exists(lua_h):
-    print("")
-    print("[pre_build] ******************************************************")
-    print("[pre_build] PORK_LUA is ON but lib/lua/src has no lua.h")
-    print("[pre_build] run one of:")
-    print("[pre_build]     bash scripts/fetch_lua.sh")
-    print("[pre_build]     powershell -ExecutionPolicy Bypass -File scripts/fetch_lua.ps1")
-    print("[pre_build] ******************************************************")
-    print("")
-    env.Exit(1)

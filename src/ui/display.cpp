@@ -29,7 +29,6 @@
 #include "../modes/badusb.h"
 #include "../modes/filemgr.h"
 #include "../modes/inspectorpig.h"
-#include "../modes/scriptmode.h"
 #include "../modes/mp3player.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
@@ -739,9 +738,6 @@ void Display::drawBottomBar() {
             case AppMode::INSPECTOR:
                 InspectorPig::getStatusLine(left, sizeof(left));
                 break;
-            case AppMode::SCRIPTS:
-                ScriptMode::getStatusLine(left, sizeof(left));
-                break;
             case AppMode::TASKS:
                 strncpy(left, ";/. select  ENT stop  ` back", sizeof(left) - 1);
                 break;
@@ -881,8 +877,7 @@ void Display::update() {
         (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD ||
          App::mode() == AppMode::MP3 ||
          App::mode() == AppMode::PIGPASS ||
-         App::mode() == AppMode::INSPECTOR ||
-         App::mode() == AppMode::SCRIPTS);
+         App::mode() == AppMode::INSPECTOR);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
@@ -898,7 +893,6 @@ void Display::update() {
         else if (App::mode() == AppMode::BADUSB) BadUsbMode::draw(mainCanvas);
         else if (App::mode() == AppMode::MP3) Mp3PlayerMode::draw(mainCanvas);
         else if (App::mode() == AppMode::INSPECTOR) InspectorPig::draw(mainCanvas);
-        else if (App::mode() == AppMode::SCRIPTS) ScriptMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

@@ -21,7 +21,6 @@
 #include "modes/evilpig.h"
 #include "modes/pigpass.h"
 #include "board/led.h"
-#include "script/pigvm.h"
 
 static void preInitWiFiDriverEarly() {
     WiFi.persistent(false);
@@ -84,31 +83,6 @@ void setup() {
     Led::begin();
     EvilPigMode::init();
     PigpassMode::init();
-
-    // User scripts live here whether or not the Lua build flag is on, so the
-    // folder is always there for FileMgr / XFER.
-    Storage::ensureDir(Storage::DIR_SCRIPTS);
-
-#if defined(PORK_LUA) && PORK_LUA
-    // Optional user scripting (build with -DPORK_LUA=1, see lib/lua/README.md).
-    // A card may carry /0N3P0rK/scripts/boot.lua, which runs once here with a
-    // small budget. This is the smallest honest way to prove the Lua VM works on
-    // real hardware; the interactive SCRIPTS menu comes next. The VM is closed
-    // straight after, so nothing stays resident.
-    if (Storage::fileExists("/0N3P0rK/scripts/boot.lua")) {
-        Serial.println("[BOOT] running scripts/boot.lua");
-        bool ok = PigVm::runFile("/0N3P0rK/scripts/boot.lua", 3000);
-        char msg[40];
-        if (ok)
-            snprintf(msg, sizeof(msg), "LUA OK %uK",
-                     (unsigned)(PigVm::heapUsed() / 1024));
-        else
-            snprintf(msg, sizeof(msg), "LUA ERR %.22s", PigVm::lastError());
-        Display::showToast(msg, 2500);
-        PigVm::end();   // give every byte back
-        Serial.printf("[LUA] closed, free=%u\n", (unsigned)ESP.getFreeHeap());
-    }
-#endif
 
     Net::Status s = Net::status();
     Serial.printf("[BOOT] wifi mode ssid=%s ip=%s\n", s.ssid, s.ip);
