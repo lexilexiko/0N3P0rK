@@ -300,8 +300,8 @@ void loop() {
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
-    // Backspace = minimize overlay — NOT in BADUSB (needs DEL for ducky/live)
-    if (overlayMode() && s_mode != AppMode::BADUSB &&
+    // Backspace = minimize overlay, except in file manager where it navigates back.
+    if (overlayMode() && s_mode != AppMode::BADUSB && s_mode != AppMode::FILEMGR &&
         !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {

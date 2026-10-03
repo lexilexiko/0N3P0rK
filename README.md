@@ -1,13 +1,13 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.5f - (1.3.5) **  
+**Current version: 1.3.6b**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.0**.  
+This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6b**.
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -58,7 +58,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6b_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -88,7 +88,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.5f`.
+   `1.3.6b`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -812,7 +812,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 
 ---
 
-### 1.3.5f (current)
+### 1.3.5f
 
 #### Handshake check in LOOT
 
@@ -839,6 +839,42 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - `InspectorPig::checkAll()` walks the folder in two passes — names first, then
   analysis — over a short-lived heap list, so no capture is opened while the
   directory handle is still held.
+
+### 1.3.6b (current)
+
+#### File Manager
+
+- Reworked the SD File Manager with directory navigation, file details,
+  text preview/editing, and JPEG/BMP/PNG image preview.
+- Added create-file, create-folder, rename, copy, move, paste, and confirmed
+  delete operations. Backspace/ESC now navigate back; Backspace removes a
+  character while editing or entering a name.
+- File Manager working memory is allocated only while the mode is open.
+  The text buffer is allocated only for text preview/editing and released
+  when returning to the browser; browsing images and folders does not reserve
+  that 6 KB editor buffer.
+- Directory entries grow in heap-backed batches instead of using a fixed
+  small file limit. The list is sorted and scrollable; if memory runs out,
+  the UI reports that the displayed list is partial.
+
+#### Task Manager and memory
+
+- Reworked **TASKS** to show active services and current heap statistics:
+  free heap, largest free block, minimum free heap, internal free memory, and
+  available SD space.
+- Added scrollable service controls and status details for active tools.
+  WPA-Sec/Pwncrack synchronization is left to its normal shutdown path.
+- Reduced File Manager's static RAM footprint by moving its working buffers
+  and directory entries out of `.bss` and onto the heap for the duration of use.
+  The PlatformIO static RAM report is about 11 KB lower than the preceding
+  build; the main display canvas remains permanently allocated.
+
+#### Interface polish
+
+- Consolidated keyboard guidance in the bottom hint bar and improved the
+  displayed navigation symbols and Escape/Backspace labels.
+- Kept Loot's existing sync presentation while retaining the updated key
+  labels.
 
 ---
 
