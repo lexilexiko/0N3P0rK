@@ -560,7 +560,7 @@ static void drawRoot(M5Canvas& canvas) {
 
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
-    int y0 = 25, lh = 18;
+    int y0 = 24, lh = 20;
     for (uint8_t i = 0; i < VISIBLE && (s_rootScroll + i) < ROOT_COUNT; i++) {
         uint8_t idx = s_rootScroll + i;
         int y = y0 + i * lh;
