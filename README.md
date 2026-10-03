@@ -1,13 +1,13 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.6b**
+**Current version: 1.3.6**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6b**.
+This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6**.
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -840,7 +840,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   analysis — over a short-lived heap list, so no capture is opened while the
   directory handle is still held.
 
-### 1.3.6b (current)
+### 1.3.6 (current)
 
 #### File Manager
 
