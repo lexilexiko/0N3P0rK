@@ -346,7 +346,7 @@ void IrPortMode::update() {
 void IrPortMode::getStatusLine(char* buf, size_t n) {
     if (!buf || !n) return;
     if (phase == Phase::REGION)
-        snprintf(buf, n, "IR REGION  ;/.  ENT");
+        snprintf(buf, n, "IR REGION  ^/v  ENT");
     else if (phase == Phase::BLAST)
         snprintf(buf, n, "IR %u/%u  X STOP", (unsigned)blastIndex, (unsigned)blastTotal);
     else if (phase == Phase::FILE_PICK)

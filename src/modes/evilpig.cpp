@@ -1011,12 +1011,12 @@ const char* EvilPigMode::getBottomHint() {
                      (unsigned long)deauthCount);
             return buf;
         }
-        return "K kick  V loot  ` exit";
+        return "K KICK  V LOOT  ESC EXIT";
     }
-    if (phase == Phase::LOOT) return ";/.  V/ENT back";
-    if (page == 0) return ";/.  ENT clone";
+    if (phase == Phase::LOOT) return "^/v  V/ENT BACK";
+    if (page == 0) return "^/v  ENT CLONE";
     if (page == 1) return "R rescan  V loot";
-    return "` exit";
+    return "ESC EXIT";
 }
 
 // Clip helper: write at most maxLen chars into out (null-terminated)

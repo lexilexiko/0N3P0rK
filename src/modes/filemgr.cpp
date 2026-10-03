@@ -342,12 +342,22 @@ void FileMgrMode::update() {
 
 void FileMgrMode::getStatusLine(char* buffer, size_t n) {
     if (!buffer || !n) return;
-    if (phase == Phase::EDIT)
-        snprintf(buffer, n, "EDIT %s%s  ESC SAVE", openName, dirty ? "*" : "");
-    else if (phase == Phase::VIEW)
-        snprintf(buffer, n, "VIEW %s  E EDIT", openName);
-    else
-        snprintf(buffer, n, "FILES %s %s  V VOL", vol == Volume::SD ? "SD" : "MEM", curPath);
+    uint8_t page = (uint8_t)((millis() / 2200u) % 3u);
+    if (phase == Phase::CONFIRM_DEL) {
+        snprintf(buffer, n, "Y YES  N / ESC NO");
+    } else if (phase == Phase::EDIT) {
+        if (page == 0) snprintf(buffer, n, "EDIT %s%s", openName, dirty ? "*" : "");
+        else if (page == 1) snprintf(buffer, n, "TYPE TEXT  ENT NEWLINE");
+        else snprintf(buffer, n, "^/v </> MOVE  ESC SAVE");
+    } else if (phase == Phase::VIEW) {
+        if (page == 0) snprintf(buffer, n, "VIEW %s", openName);
+        else if (page == 1) snprintf(buffer, n, "^/v SCROLL  E EDIT");
+        else snprintf(buffer, n, "ESC BACK");
+    } else {
+        if (page == 0) snprintf(buffer, n, "FILES %s %s", vol == Volume::SD ? "SD" : "MEM", curPath);
+        else if (page == 1) snprintf(buffer, n, "^/v NAV  ENT OPEN  ESC BACK");
+        else snprintf(buffer, n, "V VOL  N NEW  X DEL");
+    }
 }
 
 void FileMgrMode::drawBrowse(M5Canvas& canvas) {
@@ -378,8 +388,6 @@ void FileMgrMode::drawBrowse(M5Canvas& canvas) {
             canvas.drawString(sz, 190, y + 1);
         }
     }
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.drawString(",/. NAV  ENT OPEN  V VOL  N NEW  X DEL", 8, 112);
 }
 
 void FileMgrMode::drawViewEdit(M5Canvas& canvas) {
@@ -414,11 +422,6 @@ void FileMgrMode::drawViewEdit(M5Canvas& canvas) {
         line++;
         i++;  // skip '\n'
     }
-    canvas.setTextColor(UiStyle::DIM);
-    if (phase == Phase::VIEW)
-        canvas.drawString(";/. SCROLL  E EDIT  ESC BACK", 8, 112);
-    else
-        canvas.drawString(",;./ MOVE  ENT NEWLINE  ESC SAVE", 8, 112);
 }
 
 void FileMgrMode::draw(M5Canvas& canvas) {
@@ -435,8 +438,6 @@ void FileMgrMode::draw(M5Canvas& canvas) {
         strncpy(nm, entries[sel].name, sizeof(nm) - 1);
         nm[sizeof(nm) - 1] = '\0';
         canvas.drawString(nm, 44, 64);
-        canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("Y YES   N/ESC NO", 44, 78);
         return;
     }
     if (phase == Phase::BROWSE) drawBrowse(canvas);

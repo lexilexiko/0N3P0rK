@@ -983,17 +983,19 @@ void InspectorPig::update() {
 
 void InspectorPig::getStatusLine(char* buf, size_t n) {
     if (!buf || !n) return;
+    bool help = ((millis() / 2500u) & 1u) != 0;
     if (phase == Phase::DETAIL) {
-        snprintf(buf, n, "REPORT %u/%u  A all  ` back",
-                 (unsigned)lineScroll, (unsigned)lineCount);
+        if (help) snprintf(buf, n, "^/v SCROLL  ESC BACK");
+        else snprintf(buf, n, "REPORT %u/%u", (unsigned)lineScroll, (unsigned)lineCount);
         return;
     }
-    if (totalItems > PAGE_SIZE) {
-        snprintf(buf, n, "%s  ENT chk  A all  [/] page  ,/ tab",
-                 statusMsg);
-        return;
-    }
-    snprintf(buf, n, "%s  ENT chk  A all  ,/ tab", statusMsg);
+    if (!help) snprintf(buf, n, "%s", statusMsg);
+    else if (totalItems == 0)
+        snprintf(buf, n, "R RESCAN  </> TAB  ESC BACK");
+    else if (totalItems > PAGE_SIZE)
+        snprintf(buf, n, "ENT CHECK  A ALL  [ ] PAGE  </> TAB");
+    else
+        snprintf(buf, n, "ENT CHECK  A ALL  </> TAB  ESC BACK");
 }
 
 void InspectorPig::handleInput() {
@@ -1091,9 +1093,7 @@ void InspectorPig::drawList(M5Canvas& canvas) {
     canvas.drawString(".22000", 180, 5);
     canvas.setTextDatum(top_left);
 
-    // Keys on the left, position in the list on the right.
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.drawString("ENT chk  A all  ` back", 6, 18);
+    // The shared bottom bar displays status and rotating control hints.
     if (totalItems) {
         char pg[20];
         if (totalItems > PAGE_SIZE) {
@@ -1112,8 +1112,6 @@ void InspectorPig::drawList(M5Canvas& canvas) {
     if (entryCount == 0) {
         canvas.setTextColor(UiStyle::TEXT);
         canvas.drawString(statusMsg, 8, 44);
-        canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString(",/ tab    R rescan", 8, 62);
         return;
     }
 

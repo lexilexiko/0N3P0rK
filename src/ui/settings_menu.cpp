@@ -219,22 +219,23 @@ static const char* const H_SYSTEM[] = {
     "RGB LED BRIGHTNESS."
 };
 static const char* const H_RADIO[] = {
-    "STOCK / FOCUS / MAX. TUNE=CUST.",
-    "AUTO / ALL / CLIENTS / FOCUS / HERD.",
-    "OPEN KNOB EDITOR FOR CURRENT METHOD.",
-    "ENT = BACK TO STOCK RADIO.",
-    "HOW LONG YOU SIT ON A CH.",
-    "HOLD CHANNEL AFTER EAPOL.",
-    "LOCK WHEN HANDSHAKE LANDS.",
+    "RADIO PRESET.",
+    "CAPTURE METHOD.",
+    "EDIT CURRENT METHOD OPTIONS.",
+    "RESTORE DEFAULT RADIO SETTINGS.",
+    "TIME PER CHANNEL.",
+    "LOCK DURATION AFTER EAPOL.",
+    "HOLD CHANNEL WHEN HANDSHAKE ARRIVES.",
     "PAIR / +M3 / FULL 4-WAY.",
-    "NEW MAC EACH ATTACK START.",
-    "ALL / PRI 1-6-11 FIRST / CORE.",
-    "SKIP WEAK APS FOR KICK.",
-    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
-    "CAPTURE RING: 4/8/12/16/24/28 SLOTS. MORE USES MORE RAM.",
-    "RICH RADIOTAP CH/RSSI IN PCAP.",
-    "TX POWER OF INJECTED KICK FRAMES (DBM).",
-    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
+    "RANDOMIZE RADIO MAC.",
+    "CHANNEL HOPPING ORDER.",
+    "MINIMUM SIGNAL FOR TARGET SELECTION.",
+    "MAXIMUM HANDSHAKE PCAP SIZE.",
+    "RING SLOTS: MORE SLOTS USE MORE RAM.",
+    "INCLUDE RADIO METADATA IN PCAP.",
+    "TRANSMIT POWER SETTING.",
+    "ATTACK BURST PATTERN.",
+    "SECONDS AFTER PAIR BEFORE SKIPPING AP.",
 };
 // Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
 static const char* const H_KNOBS[] = {
@@ -257,16 +258,24 @@ static const char* const H_BLE[] = {
     "MS EACH ADVERTISEMENT."
 };
 static const char* const H_KEYS[] = {
-    "A = AGGRO HUNT.",
-    "L = QUIET SNIFF.",
-    "P = WORDLIST / MASK.",
-    "E = LAB PORTAL.",
-    "B = BLE FRAMES.",
-    "I = IR BLAST.",
-    "S = 2.4 SWEEP.",
-    "H = WPASEC / PWN / OHC.",
-    "R = RADIO SETTINGS.",
-    "TASK MANAGER."
+    "AGGRESSIVE RADIO CAPTURE.",
+    "LIGHT RADIO SNIFFER.",
+    "LOCAL PASSWORD AUDIT.",
+    "EVILPIG LAB MODE.",
+    "BLE LAB MODE.",
+    "IR TRANSMITTER.",
+    "SPECTRUM SCANNER.",
+    "CAPTURE FILES AND SYNC.",
+    "RADIO SETTINGS.",
+    "SD / LITTLEFS FILE MANAGER.",
+    "PIG SETTINGS.",
+    "LOCAL XFER SERVER.",
+    "BADUSB / BADBLE TOOLS.",
+    "USB SD CARD MODE.",
+    "HOME WIFI SETTINGS.",
+    "STOP ACTIVE TASKS.",
+    "OPEN TASK MANAGER.",
+    "SCREENSHOT."
 };
 
 struct NetRow {
@@ -914,30 +923,54 @@ bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
+    const bool showHelp = ((millis() / 2500u) & 1u) != 0;
     if (s_page == SettingsPage::CONNECT) {
-        if (s_conn == ConnPhase::PASS) return "type pass  BS erase  ENT";
-        return ";/. pick  ENT  R rescan";
+        if (s_conn == ConnPhase::PASS)
+            return showHelp ? "TYPE WIFI PASSWORD" : "TYPE  BS ERASE  ENT SAVE  ESC BACK";
+        if (s_netN == 0)
+            return showHelp ? "NO NETWORKS FOUND" : "R RESCAN  ESC BACK";
+        return showHelp ? "SELECT HOME WIFI" : "^/v PICK  ENT SELECT  R RESCAN  ESC BACK";
     }
-    if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
-    if (s_page == SettingsPage::RADIO_EDIT) return ";/ pick  ENT edit  ` back";
-    if (s_text) return "type  ENT save  BS erase";
-    if (s_bind) return "press a key  ` cancel";
-    if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
-    if (s_editing) return ";/. change  ENT done";
+    if (s_page == SettingsPage::STATUS)
+        return showHelp ? "DEVICE AND STORAGE INFORMATION" : "^/v SCROLL  ESC BACK";
+    if (s_page == SettingsPage::RADIO_EDIT)
+        return showHelp ? "RADIO DETAIL SETTINGS" : "^/v PICK  ENT EDIT  ESC BACK";
+    if (s_text) return showHelp ? "ENTER TEXT VALUE" : "TYPE  ENT SAVE  BS ERASE  ESC CANCEL";
+    if (s_bind) return showHelp ? "PRESS A KEY TO ASSIGN" : "PRESS KEY  BS CLEAR  ESC CANCEL";
+    if (s_page == SettingsPage::KEYS) {
+        if (showHelp && s_idx < sizeof(H_KEYS) / sizeof(H_KEYS[0])) return H_KEYS[s_idx];
+        return "ENT ASSIGN  BS CLEAR  ESC BACK";
+    }
+    if (s_editing) return showHelp ? "ADJUST SELECTED VALUE" : "^/v CHANGE  ENT DONE  ESC BACK";
     uint8_t n = 0;
     const Item* it = items(&n);
     if (it && s_idx < n) {
-        if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
+        if (showHelp) {
+            if (s_page == SettingsPage::RADIO && s_idx < sizeof(H_RADIO) / sizeof(H_RADIO[0]))
+                return H_RADIO[s_idx];
+            if (s_page == SettingsPage::SYSTEM && s_idx < sizeof(H_SYSTEM) / sizeof(H_SYSTEM[0]))
+                return H_SYSTEM[s_idx];
+            if (s_page == SettingsPage::BLE && s_idx < sizeof(H_BLE) / sizeof(H_BLE[0]))
+                return H_BLE[s_idx];
+            if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
+                return H_SCENE[s_idx];
+            if (s_page == SettingsPage::RADIO_EDIT && s_idx < ALL_KNOBS_N) {
+                for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+                    if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) return H_KNOBS[k];
+                }
+            }
+        }
+        if (it[s_idx].kind == Kind::TOGGLE) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
         if (it[s_idx].kind == Kind::TEXT)
-            return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
+            return it[s_idx].id == 16 ? "ENT TYPE CODE  ESC BACK" : "ENT TYPE NAME  ESC BACK";
         if (it[s_idx].kind == Kind::ACTION) {
             if (s_page == SettingsPage::RADIO && it[s_idx].id == 60)
-                return "ENT open knob editor";
-            return "ENT reset radio to STOCK";
+                return "ENT OPEN EDITOR  ESC BACK";
+            return "ENT RESET RADIO  ESC BACK";
         }
-        return "ENT edit  ;/.  ` back";
+        return "ENT EDIT  ^/v MOVE  ESC BACK";
     }
-    return ";/.  ENT  ` back";
+    return "^/v MOVE  ENT SELECT  ESC BACK";
 }
 
 static void updateConnect() {
@@ -1290,17 +1323,12 @@ static void drawConnect(M5Canvas& canvas) {
         char show[40];
         snprintf(show, sizeof(show), ">%s", s_edit);
         canvas.drawString(show, 10, 68);
-        canvas.setTextColor(UI_TITLE);
-        canvas.setTextDatum(top_center);
-        canvas.drawString("TYPE PASSWORD. ENT SAVE.", DISPLAY_W / 2, MAIN_H - 10);
         return;
     }
 
     if (s_netN == 0) {
         canvas.setTextColor(UI_TITLE);
         canvas.drawString("NO NETS", 8, 40);
-        canvas.setTextColor(UI_DIM);
-        canvas.drawString("R = SCAN AGAIN", 8, 56);
         return;
     }
 
@@ -1331,10 +1359,6 @@ static void drawConnect(M5Canvas& canvas) {
         canvas.setTextDatum(top_left);
         canvas.setTextSize(2);
     }
-    canvas.setTextSize(1);
-    canvas.setTextColor(UI_TITLE);
-    canvas.setTextDatum(top_center);
-    canvas.drawString("PICK NET. ONLY TYPE PASS.", DISPLAY_W / 2, MAIN_H - 10);
 }
 
 static void drawStatus(M5Canvas& canvas) {
@@ -1407,10 +1431,6 @@ static void drawStatus(M5Canvas& canvas) {
     if (s_statScroll + STAT_VIS < statN)
         canvas.drawString("v", DISPLAY_W - 12, MAIN_H - 22);
 
-    canvas.setTextColor(UI_TITLE);
-    canvas.setTextDatum(top_center);
-    canvas.drawString(";/.  ` BACK", DISPLAY_W / 2, MAIN_H - 10);
-    canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font0);
 }
 
@@ -1477,30 +1497,6 @@ void draw(M5Canvas& canvas) {
     if (s_scroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
 
-    const char* const* hints = H_SCENE;
-    uint8_t hintIdx = s_idx;
-    if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
-    else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
-    else if (s_page == SettingsPage::BLE) hints = H_BLE;
-    else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
-    else if (s_page == SettingsPage::RADIO_EDIT) {
-        // Each EDITED item is a copy of an ALL_RADIO_KNOBS entry — find the
-        // matching hint by id so the description matches the highlighted knob.
-        hints = H_KNOBS;
-        hintIdx = 0;
-        for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
-            if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) {
-                hintIdx = k;
-                break;
-            }
-        }
-    }
-    if (s_idx < n && (s_page != SettingsPage::RADIO_EDIT || hintIdx < ALL_KNOBS_N)) {
-        canvas.setTextColor(UI_TITLE);
-        canvas.setTextDatum(top_center);
-        canvas.drawString(hints[hintIdx], DISPLAY_W / 2, MAIN_H - 10);
-        canvas.setTextDatum(top_left);
-    }
 }
 
 }  // namespace SettingsMenu

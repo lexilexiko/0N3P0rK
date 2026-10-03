@@ -1,5 +1,5 @@
 // OnePork-style settings: SCENE / RADIO / BLE
-// ;/. move   ENT = toggle or enter value   then ;/. change   ` back
+// ^/v move   ENT = toggle or enter value   then ^/v change   ESC back
 #pragma once
 
 #include <M5Unified.h>

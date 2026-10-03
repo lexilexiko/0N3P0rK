@@ -1808,8 +1808,6 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
             canvas.drawString("PUT .TXT:", 4, listTop + 28);
             canvas.drawString("/0N3P0rK/Passworld", 4, listTop + 40);
         }
-        canvas.setTextColor(UiStyle::GOLD);
-        canvas.drawString(hsBrowser ? ",/ tab  ` exit" : "` =EXIT", 4, MAIN_H - 10);
         return;
     }
 
@@ -1852,11 +1850,6 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
         canvas.drawString("v", DISPLAY_W - 10, listTop + (VISIBLE_ITEMS - 1) * lineHeight);
     }
 
-    canvas.setTextColor(UiStyle::GOLD);
-    if (state == PigpassState::SELECT_HANDSHAKE)
-        canvas.drawString(";/. move  ,/ tab  ENT  `", 4, MAIN_H - 10);
-    else
-        canvas.drawString(";/. move  ENT sel  ` back", 4, MAIN_H - 10);
 }
 
 void PigpassMode::drawMaskSetup(M5Canvas& canvas) {
@@ -1905,8 +1898,6 @@ void PigpassMode::drawMaskSetup(M5Canvas& canvas) {
         canvas.drawString(buf, 4, 84);
     }
 
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. set   ,/ len   ENT go", 4, MAIN_H - 10);
 }
 
 void PigpassMode::drawUI(M5Canvas& canvas) {
@@ -2009,14 +2000,6 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
         canvas.drawString(buf, 4, y);
     }
 
-    canvas.setTextColor(UiStyle::GOLD);
-    if (state == PigpassState::RUNNING) {
-        canvas.drawString("ENT pause   ` save+exit", 4, MAIN_H - 10);
-    } else if (state == PigpassState::PAUSED) {
-        canvas.drawString("ENT resume  ` save+exit", 4, MAIN_H - 10);
-    } else {
-        canvas.drawString("ENT / ` exit", 4, MAIN_H - 10);
-    }
 }
 
 void PigpassMode::handleMaskInput() {
@@ -2277,11 +2260,38 @@ void PigpassMode::runBrute() {
 void PigpassMode::getStatusLine(char* out, size_t len) {
     if (!out || len == 0) return;
     out[0] = '\0';
+    const bool showHelp = state != PigpassState::RUNNING &&
+                          ((millis() / 2500u) & 1u) != 0;
+
+    if (showHelp) {
+        switch (state) {
+            case PigpassState::SELECT_HANDSHAKE:
+                snprintf(out, len, "^/v MOVE  </> TAB  ENT OPEN  ESC BACK");
+                return;
+            case PigpassState::SELECT_WORDLIST:
+                snprintf(out, len, "^/v MOVE  ENT SELECT  ESC BACK");
+                return;
+            case PigpassState::SELECT_MASK:
+                snprintf(out, len, "^/v SET  </> LEN  ENT START  ESC BACK");
+                return;
+            case PigpassState::RUNNING:
+                snprintf(out, len, "ENT PAUSE  ESC SAVE AND EXIT");
+                return;
+            case PigpassState::PAUSED:
+                snprintf(out, len, "ENT RESUME  ESC SAVE AND EXIT");
+                return;
+            case PigpassState::DONE:
+                snprintf(out, len, "ENT / ESC EXIT");
+                return;
+            default:
+                break;
+        }
+    }
 
     switch (state) {
         case PigpassState::SELECT_HANDSHAKE:
             if (files.empty()) {
-                snprintf(out, len, "NO HANDSHAKES  ` EXIT");
+                snprintf(out, len, "NO HANDSHAKES");
             } else if (selectedIndex < files.size()) {
                 snprintf(out, len, "HS: %s", files[selectedIndex].name);
             } else {
@@ -2290,7 +2300,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
             break;
         case PigpassState::SELECT_WORDLIST:
             if (files.empty()) {
-                snprintf(out, len, "NO WORDLISTS  ` BACK");
+                snprintf(out, len, "NO WORDLISTS");
             } else if (selectedIndex < files.size()) {
                 snprintf(out, len, "WL: %s", files[selectedIndex].name);
             } else {
@@ -2319,7 +2329,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
             if (s_currentTry[0]) {
                 snprintf(out, len, "PAUSE %s", s_currentTry);
             } else {
-                snprintf(out, len, "PAUSED  ENT=RESUME");
+                snprintf(out, len, "PAUSED");
             }
             break;
         case PigpassState::DONE:

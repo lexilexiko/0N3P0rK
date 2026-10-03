@@ -290,6 +290,9 @@ void Display::clearBottomOverlay() { setBottomHint(""); }
 
 bool Display::showConfirmBox(const char* title, const char* message) {
     M5Canvas& c = mainCanvas;
+    char savedHint[sizeof(bottomHint)];
+    memcpy(savedHint, bottomHint, sizeof(savedHint));
+    setBottomHint("ENT YES  ESC NO");
     for (;;) {
         M5Cardputer.update();
         c.fillSprite(UiStyle::BG);
@@ -302,15 +305,20 @@ bool Display::showConfirmBox(const char* title, const char* message) {
         c.setTextSize(1);
         c.setTextColor(UiStyle::TEXT);
         c.drawString(message ? message : "", 120, 48);
-        c.setTextColor(UiStyle::DIM);
-        c.drawString("ENT=YES   ` =NO", 120, 70);
         c.setTextDatum(top_left);
+        drawBottomBar();
         pushAll();
 
         if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
             auto k = M5Cardputer.Keyboard.keysState();
-            if (k.enter) return true;
-            if (keyEsc()) return false;
+            if (k.enter) {
+                memcpy(bottomHint, savedHint, sizeof(bottomHint));
+                return true;
+            }
+            if (keyEsc()) {
+                memcpy(bottomHint, savedHint, sizeof(bottomHint));
+                return false;
+            }
         }
         delay(16);
     }
@@ -682,7 +690,10 @@ void Display::drawBottomBar() {
     } else {
         switch (App::mode()) {
             case AppMode::FARM:
-                left[0] = '\0';
+                if (CardsTable::isActive())
+                    CardsTable::getStatusLine(left, sizeof(left));
+                else
+                    left[0] = '\0';
                 break;
             case AppMode::LOOT:
                 strncpy(left, LootMenu::getBottomHint(), sizeof(left) - 1);
@@ -739,7 +750,7 @@ void Display::drawBottomBar() {
                 InspectorPig::getStatusLine(left, sizeof(left));
                 break;
             case AppMode::TASKS:
-                strncpy(left, ";/. select  ENT stop  ` back", sizeof(left) - 1);
+                strncpy(left, "^/v SELECT  ENT STOP  ESC BACK", sizeof(left) - 1);
                 break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
@@ -758,6 +769,30 @@ void Display::drawBottomBar() {
                 left[0] = '\0';
                 break;
         }
+    }
+
+    // When capture stays active behind a tool/menu, rotate its controls into
+    // the same bar instead of hiding them under the capture status.
+    if (capLive && ((millis() / 2500u) & 1u)) {
+        switch (App::mode()) {
+            case AppMode::MENU:
+                strncpy(left, Menu::selectedHint(), sizeof(left) - 1);
+                break;
+            case AppMode::LOOT:
+                strncpy(left, LootMenu::getBottomHint(), sizeof(left) - 1);
+                break;
+            case AppMode::WIFI:
+            case AppMode::PIG:
+            case AppMode::TUNE:
+                strncpy(left, SettingsMenu::bottomHint(), sizeof(left) - 1);
+                break;
+            case AppMode::TASKS:
+                strncpy(left, "^/v SELECT  ENT STOP  ESC BACK", sizeof(left) - 1);
+                break;
+            default:
+                break;
+        }
+        left[sizeof(left) - 1] = '\0';
     }
 
     if (App::windowHidden()) {

@@ -204,8 +204,6 @@ void draw(M5Canvas& canvas) {
         canvas.drawString(state, DISPLAY_W - 12, y + 1);
         canvas.setTextDatum(top_left);
     }
-    canvas.setTextColor(dim);
-    canvas.drawString(";/. select  ENT stop  ` back", 8, MAIN_H - 10);
 }
 
 }  // namespace TaskManager

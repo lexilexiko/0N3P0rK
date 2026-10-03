@@ -996,7 +996,7 @@ void getStatusLine(char* out, size_t n) {
     bool keys = ((millis() / BAR_FLIP_MS) & 1) == 0;
     if (s_phase == HUNT) {
         if (keys) {
-            snprintf(out, n, "D depth  ` stop");
+            snprintf(out, n, "D DEPTH  ESC STOP");
         } else {
             snprintf(out, n, "HUNT %s  %s",
                      huntDepthName(s_huntDepth),
@@ -1004,14 +1004,14 @@ void getStatusLine(char* out, size_t n) {
         }
     } else if (s_phase == LOCK) {
         if (keys) {
-            snprintf(out, n, "ENT hunt  D %s  SPC  `", huntDepthName(s_huntDepth));
+            snprintf(out, n, "ENT HUNT  D %s  SPC  ESC", huntDepthName(s_huntDepth));
         } else {
             int idx = findNet(s_monBssid);
             snprintf(out, n, "LOCK CH%u  %u STA",
                      s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
         }
     } else if (keys) {
-        snprintf(out, n, ";/. sel  ENT lock  A hunt  F  `");
+        snprintf(out, n, "^/v SEL  ENT LOCK  A HUNT  F  ESC");
     } else {
         snprintf(out, n, "SPEC  %u AP  CH%u  %upps", s_nNet, s_ch, (unsigned)s_pps);
     }

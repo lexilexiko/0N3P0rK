@@ -481,7 +481,7 @@ void start() {
     s_lastErr[0] = 0;
     Avatar::suspendScene();
     rescan();
-    setStatus("1/2/3 tabs  U/B  P");
+    setStatus("READY");
     Display::showToast("BADUSB", 700);
 }
 
@@ -521,7 +521,7 @@ void update() {
     if (s_tab == Tab::Live && s_liveArmed) {
         if (st.fn && keyEsc()) {
             s_liveArmed = false;
-            setStatus("LIVE not armed — ENT to type");
+            setStatus("LIVE READY");
             SFX::play(SFX::Event::BACK_NAV);
             return;
         }
@@ -553,13 +553,13 @@ void update() {
             stopHid();
             s_tr = Transport::Usb;
             s_phase = Phase::Idle;
-            setStatus("press C to link");
+            setStatus("USB SELECTED");
             uiKey = true;
         } else if (c == 'b' || c == 'B') {
             stopHid();
             s_tr = Transport::Ble;
             s_phase = Phase::Idle;
-            setStatus("press C to link");
+            setStatus("BLE SELECTED");
             uiKey = true;
         } else if (c == 'p' || c == 'P') {
             s_prof = (s_prof == Profile::PC) ? Profile::Phone : Profile::PC;
@@ -624,7 +624,7 @@ void update() {
         if (st.enter) {
             if (!needLinkForAction()) return; // startHidStack() already set an accurate status (incl. BLE PIN)
             s_liveArmed = true;
-            setStatus("LIVE armed - FN+` exit");
+            setStatus("LIVE ARMED");
             SFX::play(SFX::Event::CONFIRM);
         }
     }
@@ -679,16 +679,10 @@ void draw(M5Canvas& canvas) {
                 canvas.print(s_files[idx]);
             }
         }
-        canvas.setTextColor(0x8410, 0x0841);
-        canvas.setCursor(2, 92);
-        canvas.print(";/. ENT  C=link  U/B  `");
     } else if (s_tab == Tab::Live) {
         canvas.setTextColor(0xC618, 0x0841);
         canvas.setCursor(2, 48);
-        canvas.print(s_liveArmed ? "ARMED - typing live" : "ENT to start typing");
-        canvas.setTextColor(0x8410, 0x0841);
-        canvas.setCursor(2, 92);
-        canvas.print(s_liveArmed ? "FN+` exit  (all keys -> target)" : "ENT start  U/B  `");
+        canvas.print(s_liveArmed ? "ARMED - typing live" : "READY");
     } else {
         uint8_t n = presetCount();
         uint8_t base = s_panelIdx > 1 ? (uint8_t)(s_panelIdx - 1) : 0;
@@ -702,9 +696,6 @@ void draw(M5Canvas& canvas) {
             canvas.setCursor(4, y);
             canvas.print(presets()[idx].label);
         }
-        canvas.setTextColor(0x8410, 0x0841);
-        canvas.setCursor(2, 92);
-        canvas.print(";/. ENT  C=link  P=`");
     }
 }
 
@@ -716,8 +707,28 @@ void getStatusLine(char* out, size_t n) {
         out[0] = 0;
         return;
     }
-    const char* tab = s_tab == Tab::Scripts ? "SCR" : (s_tab == Tab::Live ? "LIVE" : "PAD");
-    snprintf(out, n, "BAD %s %s %s", s_tr == Transport::Usb ? "USB" : "BLE", tab, s_status);
+    const uint8_t page = (uint8_t)((millis() / 2500u) % 3u);
+    if (page == 0) {
+        const char* tab = s_tab == Tab::Scripts ? "SCR" : (s_tab == Tab::Live ? "LIVE" : "PAD");
+        snprintf(out, n, "BAD %s %s %s", s_tr == Transport::Usb ? "USB" : "BLE", tab, s_status);
+    } else if (s_tab == Tab::Scripts) {
+        if (page == 1)
+            snprintf(out, n, "1-3 TAB  ^/v MOVE  ENT RUN");
+        else
+            snprintf(out, n, "R SCAN  C LINK  U/B MODE  ESC EXIT");
+    } else if (s_tab == Tab::Live) {
+        if (s_liveArmed)
+            snprintf(out, n, "FN+ESC DISARM  LIVE INPUT ACTIVE");
+        else if (page == 1)
+            snprintf(out, n, "ENT ARM  ESC EXIT");
+        else
+            snprintf(out, n, "C LINK  U/B MODE  1-3 TAB");
+    } else {
+        if (page == 1)
+            snprintf(out, n, "1-3 TAB  ^/v PICK  ENT RUN");
+        else
+            snprintf(out, n, "P PROFILE  C LINK  U/B MODE  ESC EXIT");
+    }
 }
 
 }  // namespace BadUsbMode

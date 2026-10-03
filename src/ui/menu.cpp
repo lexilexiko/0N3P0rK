@@ -57,7 +57,7 @@ static const char* const H_ATTACK[] = {
 };
 static const char* const H_LOOT[] = {
     "WPASEC + PWN + OHC. ONE BAG.",
-    ",/ SWITCH TAB. S SYNC."
+    "</> SWITCH TAB. S SYNC."
 };
 static const char* const H_PIG[] = {
     "HER FACE. HER WORLD.",
@@ -77,7 +77,7 @@ static const char* const H_SYS[] = {
 };
 static const char* const H_STAT[] = {
     "BOARD BATT SD WIFI KEYS.",
-    "READ ONLY. ` BACK."
+    "READ ONLY. ESC BACK."
 };
 static const char* const H_RADIO[] = {
     "HOP LOCK DEAUTH RSSI MAC.",
@@ -117,7 +117,7 @@ static const char* const H_KEYS[] = {
 };
 static const char* const H_BLE[] = {
     "APPLE / WIN / ANDROID FRAMES.",
-    "OWN DEVICES. ;/. FAMILY."
+    "OWN DEVICES. ^/v FAMILY."
 };
 static const char* const H_IR[] = {
     "IR PORT. POINT AT THE TV.",
@@ -162,7 +162,7 @@ static const char* const H_LIFE[] = {
 };
 static const char* const H_TWEAK[] = {
     "SKIN SEASON SKY SOUND.",
-    ",/ CYCLE  ENT NAME."
+    "</> CYCLE  ENT NAME."
 };
 
 static const char* const H_MP3[] = {
@@ -412,17 +412,18 @@ void onEnter(AppMode mode) {
 }
 
 const char* hint() {
-    if (s_editing) return "type  ENT save  ` cancel";
+    if (s_editing) return "TYPE  ENT SAVE  ESC CANCEL";
     if (App::mode() == AppMode::MENU) {
-        return s_group == GroupId::NONE ? ";/.  ENT open  ` farm" : ";/.  ENT  ` back";
+        return s_group == GroupId::NONE ? "^/v  ENT OPEN  ESC FARM" : "^/v  ENT  ESC BACK";
     }
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
         App::mode() == AppMode::WIFI)
         return SettingsMenu::bottomHint();
-    return ";/.  ENT  ` back";
+    return "^/v  ENT  ESC BACK";
 }
 
 const char* selectedHint() {
+    if (((millis() / 2500u) & 1u) == 0) return hint();
     if (s_group != GroupId::NONE) {
         const Item* it = groupItems(s_group);
         uint8_t n = groupSize(s_group);
