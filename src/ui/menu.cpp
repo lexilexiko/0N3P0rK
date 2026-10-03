@@ -593,8 +593,8 @@ static void drawRoot(M5Canvas& canvas) {
 static void drawModal(M5Canvas& canvas) {
     const uint16_t BOX_BG = 0x18C3, BOX_EDGE = 0xFE60, BOX_TITLE = 0xFFE0;
     const uint16_t BOX_TEXT = 0xEF5D, BOX_SEL = 0x2D20, BOX_SEL_T = 0xFFE0;
-    int boxW = 220, boxH = 90;
-    int boxX = (DISPLAY_W - boxW) / 2, boxY = 20;
+    int boxW = 220, boxH = 96;
+    int boxX = (DISPLAY_W - boxW) / 2, boxY = 6;
     canvas.fillRoundRect(boxX, boxY, boxW, boxH, 6, BOX_BG);
     canvas.drawRoundRect(boxX, boxY, boxW, boxH, 6, BOX_EDGE);
     canvas.drawRoundRect(boxX + 1, boxY + 1, boxW - 2, boxH - 2, 5, BOX_EDGE);
@@ -611,10 +611,10 @@ static void drawModal(M5Canvas& canvas) {
     canvas.setTextSize(2);
     for (int i = 0; i < MODAL_VIS && (s_modalScroll + i) < n; i++) {
         int idx = s_modalScroll + i;
-        int y = boxY + 24 + i * 16;
+        int y = boxY + 24 + i * 18;
         bool sel = (idx == s_modalIdx);
         if (sel) {
-            canvas.fillRect(boxX + 6, y, boxW - 12, 15, BOX_SEL);
+            canvas.fillRect(boxX + 6, y, boxW - 12, 17, BOX_SEL);
             canvas.setTextColor(BOX_SEL_T);
         } else {
             canvas.setTextColor(BOX_TEXT);

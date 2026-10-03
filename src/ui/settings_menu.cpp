@@ -51,12 +51,14 @@ static const Item SCENE[] = {
     {"WOLF EAT",  Kind::TOGGLE, 15, 0, 1, 1},
     {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
     {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
-    {"GRASS",     Kind::TOGGLE, 10, 0, 1, 1},
+    {"GRASS BACK",Kind::TOGGLE, 10, 0, 1, 1},
+    {"GRASS FRONT",Kind::TOGGLE,21, 0, 1, 1},
     {"SHOW PIG",  Kind::TOGGLE, 11, 0, 1, 1},
     {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
     {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
+    {"CPU HUD",   Kind::TOGGLE, 22, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
@@ -198,15 +200,18 @@ static const char* const H_SCENE[] = {
     "RANDOM WOLF VISITOR.",
     "SEASONAL PROPS ON FARM.",
     "COMPANION PIG ON FARM.",
+    "DUEL CARD TABLE ON FARM.",
     "KILL EATS RANDOM HANDSHAKES.",
     "FRUIT TREES AND DROPS.",
     "RAIN SNOW CLOUDS BIRDS.",
-    "GRASS / DIRT FLOOR.",
+    "BACK GRASS AND DIRT FLOOR.",
+    "GRASS IN FRONT OF THE PIG.",
     "DRAW THE PIG BODY.",
     "LEAVES BANKS BUTTERFLIES.",
     "SPEECH BUBBLE ON/OFF.",
     "SEC BETWEEN MONOLOGUES.",
     "-/= CYCLE ANIMS ON FARM.",
+    "FRAME LOAD VS 33MS BUDGET.",
     "TYPE CODE. ENT."
 };
 
@@ -320,7 +325,8 @@ static const Item* items(uint8_t* n) {
 }
 
 static bool allLayersOn() {
-    return SceneLayers::pig && SceneLayers::grass && SceneLayers::trees &&
+    return SceneLayers::pig && SceneLayers::grassBack && SceneLayers::grassFront &&
+           SceneLayers::trees &&
            SceneLayers::sky && SceneLayers::weather && SceneLayers::seasonFx &&
            SceneLayers::mood && SceneLayers::wolf;
 }
@@ -435,11 +441,13 @@ static int getValue(const Item& it) {
             case 15: return p.wolfEatLoot ? 1 : 0;
             case 8: return (p.fruitTreesAmbient && SceneLayers::trees) ? 1 : 0;
             case 9: return SceneLayers::weather ? 1 : 0;
-            case 10: return SceneLayers::grass ? 1 : 0;
+            case 10: return SceneLayers::grassBack ? 1 : 0;
+            case 21: return SceneLayers::grassFront ? 1 : 0;
             case 11: return SceneLayers::pig ? 1 : 0;
             case 12: return SceneLayers::seasonFx ? 1 : 0;
             case 13: return SceneLayers::mood ? 1 : 0;
             case 14: return p.animTest ? 1 : 0;
+            case 22: return SceneLayers::cpuHud ? 1 : 0;
             case 18: return p.propsEnabled ? 1 : 0;
             case 19: return p.friendEnabled ? 1 : 0;
             case 20: return p.cardsEnabled ? 1 : 0;
@@ -754,7 +762,8 @@ static bool setValue(const Item& it, int v) {
                 SceneLayers::trees = v != 0;
                 break;
             case 9: SceneLayers::weather = v != 0; break;
-            case 10: SceneLayers::grass = v != 0; break;
+            case 10: SceneLayers::grassBack = v != 0; break;
+            case 21: SceneLayers::grassFront = v != 0; break;
             case 11: SceneLayers::pig = v != 0; break;
             case 12: SceneLayers::seasonFx = v != 0; break;
             case 13: SceneLayers::mood = v != 0; break;
@@ -762,6 +771,7 @@ static bool setValue(const Item& it, int v) {
                 p.animTest = v != 0;
                 if (v != 0) Display::showToast("ANIM TEST: -/= ON FARM", 1800);
                 break;
+            case 22: SceneLayers::cpuHud = v != 0; break;
             default: return false;
         }
         Config::save();
@@ -1334,7 +1344,7 @@ static void drawConnect(M5Canvas& canvas) {
 
     canvas.setTextSize(2);
     const int y0 = 24;
-    const int lh = 18;
+    const int lh = 20;
     for (uint8_t i = 0; i < VIS && (s_netScroll + i) < s_netN; i++) {
         uint8_t idx = s_netScroll + i;
         int y = y0 + i * lh;
@@ -1471,7 +1481,7 @@ void draw(M5Canvas& canvas) {
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
     const int y0 = 24;
-    const int lh = 18;
+    const int lh = 20;
     for (uint8_t i = 0; i < VIS && (s_scroll + i) < n; i++) {
         uint8_t idx = s_scroll + i;
         int y = y0 + i * lh;

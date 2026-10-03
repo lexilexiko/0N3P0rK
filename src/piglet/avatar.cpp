@@ -1329,8 +1329,11 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
     if (SceneLayers::seasonFx) {
         SeasonalFx::drawBackdrop(canvas);  // spring bolts sit in the sky
     }
+    // Advance the world treadmill once per frame, even when grass is hidden.
+    updateGrass();
+
     // Back grass first — trees sit on top of turf (foreground of grass)
-    if (SceneLayers::grass) {
+    if (SceneLayers::grassBack) {
         drawGrass(canvas, false);
     }
 
@@ -1667,7 +1670,7 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         updateAndDrawSparkles(canvas);
     }
     // Grass IN FRONT of feet/ankles only (not a wall covering the body)
-    if (SceneLayers::grass) {
+    if (SceneLayers::grassFront) {
         drawGrass(canvas, true);
     }
 
@@ -1777,9 +1780,6 @@ void Avatar::updateGrass() {
 }
 
 void Avatar::drawGrass(M5Canvas& canvas, bool frontLayer) {
-    // Scroll once on back pass
-    if (!frontLayer) updateGrass();
-
     Ground::DrawCtx ctx;
     ctx.pigX = currentX;
     ctx.pigLift = getJumpLiftPx();

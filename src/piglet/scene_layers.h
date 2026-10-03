@@ -8,7 +8,8 @@ namespace SceneLayers {
 
 // Defaults: all visual layers ON, CPU HUD OFF
 extern bool pig;
-extern bool grass;
+extern bool grassBack;
+extern bool grassFront;
 extern bool trees;
 extern bool sky;       // sky gradient backdrop
 extern bool weather;   // rain/snow/clouds/birds/wind

@@ -436,6 +436,23 @@ void Display::drawFarm() {
 
     Credits::update();
     if (Credits::isPlaying()) Credits::draw(mainCanvas);
+
+    if (SceneLayers::cpuHud && App::mode() == AppMode::FARM &&
+        !App::windowHidden() && sceneLive) {
+        char hud[20];
+        snprintf(hud, sizeof(hud), "CPU %u%% %ums",
+                 (unsigned)SceneLayers::getCpuPct(),
+                 (unsigned)SceneLayers::getFrameMs());
+        const int hudW = 96;
+        const int hudX = DISPLAY_W - hudW - 4;
+        mainCanvas.fillRoundRect(hudX, 2, hudW, 13, 3, 0x1082);
+        mainCanvas.drawRoundRect(hudX, 2, hudW, 13, 3, 0x7BEF);
+        mainCanvas.setTextSize(1);
+        mainCanvas.setTextColor(0xFFFF);
+        mainCanvas.setTextDatum(top_left);
+        mainCanvas.drawString(hud, hudX + 5, 4);
+    }
+
     drawToast();
 }
 

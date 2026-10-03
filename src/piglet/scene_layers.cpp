@@ -4,7 +4,8 @@
 namespace SceneLayers {
 
 bool pig = true;
-bool grass = true;
+bool grassBack = true;
+bool grassFront = true;
 bool trees = true;
 bool sky = true;
 bool weather = true;
@@ -23,7 +24,7 @@ static uint16_t s_frameMs = 0;
 static constexpr uint32_t kBudgetUs = 33000;
 
 void init() {
-    pig = grass = trees = sky = weather = seasonFx = mood = wolf = true;
+    pig = grassBack = grassFront = trees = sky = weather = seasonFx = mood = wolf = true;
     cpuHud = false;
     s_avgUs = 0;
     s_cpuPct = 0;
@@ -31,7 +32,7 @@ void init() {
 }
 
 void setAll(bool on) {
-    pig = grass = trees = sky = weather = seasonFx = mood = wolf = on;
+    pig = grassBack = grassFront = trees = sky = weather = seasonFx = mood = wolf = on;
 }
 
 void beginFrame() {
