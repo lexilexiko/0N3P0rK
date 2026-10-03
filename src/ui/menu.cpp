@@ -551,8 +551,6 @@ static void drawRoot(M5Canvas& canvas) {
     static const uint16_t CAT[] = {0xF800, 0xFE60, 0xFDB6, 0x07E0};
 
     canvas.fillSprite(UI_BG);
-    canvas.fillRect(0, MAIN_H - 6, DISPLAY_W, 6, 0x6A20);
-    canvas.fillRect(0, MAIN_H - 7, DISPLAY_W, 1, 0x45A0);
 
     canvas.setTextDatum(top_center);
     canvas.setTextSize(2);

@@ -47,8 +47,6 @@ uint16_t getColorBG() {
 
 void uiListBackground(M5Canvas& canvas) {
     canvas.fillSprite(UiStyle::BG);
-    canvas.fillRect(0, MAIN_H - 5, DISPLAY_W, 5, UiStyle::DIRT);
-    canvas.fillRect(0, MAIN_H - 6, DISPLAY_W, 1, 0x45A0);
 }
 
 void uiListRow(M5Canvas& canvas, int y, int lineH, bool selected, uint16_t accent) {

@@ -71,7 +71,6 @@ static void paintSyncLive() {
     auto& d = M5.Display;
     const int y0 = TOP_BAR_H;
     d.fillRect(0, y0, DISPLAY_W, MAIN_H, UiStyle::BG);
-    d.fillRect(0, y0 + MAIN_H - 5, DISPLAY_W, 5, UiStyle::DIRT);
     d.setTextSize(1);
     d.setTextWrap(false);
     d.setTextDatum(top_left);
