@@ -84,6 +84,7 @@ static const Item RADIO[] = {
     {"EDIT",    Kind::ACTION, 60, 0, 0, 0},   // open RADIO_EDIT for current method
     // Sniffer-direct settings that affect CAPTURE not the method:
     {"HOP MS",  Kind::VALUE,  0,  50, 2000, 50},
+    {"MIN DWELL",Kind::VALUE, 23, 0, 600, 50},
     {"LOCK MS", Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS", Kind::TOGGLE, 2,  0, 1, 1},
     {"HS DEPTH",Kind::VALUE,  24, 0, 2, 1},
@@ -231,6 +232,7 @@ static const char* const H_RADIO[] = {
     "CAPTURE METHOD.",
     "EDIT CURRENT METHOD OPTIONS.",
     "TIME PER CHANNEL.",
+    "MIN TIME PER CHANNEL; OFF DISABLES IT.",
     "LOCK DURATION AFTER EAPOL.",
     "HOLD CHANNEL WHEN HANDSHAKE ARRIVES.",
     "PAIR / +M3 / FULL 4-WAY.",
@@ -564,6 +566,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (isRadioPage() && it.id == 18) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (isRadioPage() && it.id == 23) {
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dMS", v);
     } else if (isRadioPage() && it.id == 24) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (isRadioPage() && it.id == 28) {
@@ -855,7 +861,9 @@ static bool setValue(const Item& it, int v) {
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;
             case 22: r.scoreThr = (int16_t)v; break;
-            case 23: r.dwellMinMs = (uint16_t)v; break;
+            case 23:
+                r.dwellMinMs = (uint16_t)((v > 0 && v < 50) ? 0 : v);
+                break;
             case 24: r.hsDepth = (uint8_t)v; break;
             case 25: r.dataAct = (uint8_t)(v != 0 ? 1 : 0); break;
             case 26: r.strictLock = v != 0; break;

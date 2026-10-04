@@ -147,7 +147,7 @@ struct RadioConfig {
     uint8_t jitterMs = 0;      // 0..20: random ms between deauth/disassoc (anti-WIDS)
     uint8_t cooldownMs = 0;    // 0..30s: per-AP cooldown after kick (PORKCHOP method)
     int16_t scoreThr = 0;      // -100..200: min score to attack in PORKCHOP method (0 = score all)
-    uint16_t dwellMinMs = 120; // 50..600: minimum channel dwell (for PASSIVE-like adaptive hop)
+    uint16_t dwellMinMs = 120; // 0=OFF, otherwise 50..600 minimum channel dwell
     // How much of the 4-way handshake to insist on before giving up on a
     // target and moving to the next one. M1+M2 is already enough to crack
     // (see Hc22000::hasPair()) - this only controls how patient the lock-

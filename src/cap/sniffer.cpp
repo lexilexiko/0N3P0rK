@@ -152,7 +152,7 @@ static bool     s_fatPcap = false;    // slim radiotap (8B) is enough for wpa-se
 static uint8_t  s_jitterMs = 0;       // 0..20 random ms between mgmt frames
 static uint8_t  s_cooldownSec = 0;    // 0..30 seconds per-AP cooldown after kick
 static int16_t  s_scoreThr = 0;        // -100..200, PORKCHOP method min score
-static uint16_t s_dwellMinMs = 120;    // 50..600 minimum channel dwell
+static uint16_t s_dwellMinMs = 120;    // 0=OFF, otherwise 50..600 minimum channel dwell
 static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
 static bool     s_dataAct = false;     // count data frames for FOCUS activity
 static bool     s_strictLock = true;   // FOCUS ignores score while lock-on-BSSID
@@ -1533,7 +1533,8 @@ static void startCommon(RunMode mode) {
     s_dwellMinMs = Config::radio().dwellMinMs;
     s_hsDepth = Config::radio().hsDepth;
     if (s_hsDepth > 2) s_hsDepth = 2;
-    if (s_dwellMinMs < 50) s_dwellMinMs = 50;
+    if (s_dwellMinMs > 0 && s_dwellMinMs < 50) s_dwellMinMs = 50;
+    if (s_dwellMinMs > 600) s_dwellMinMs = 600;
     s_dataAct = Config::radio().dataAct != 0;
     s_strictLock = Config::radio().strictLock;
     s_depthHoldSec = Config::radio().depthHoldSec;
@@ -1905,7 +1906,9 @@ void loop() {
         }
         return;
     }
-    if (now - s_lastHopMs >= s_hopMs) {
+    uint16_t hopIntervalMs = s_hopMs;
+    if (s_dwellMinMs > hopIntervalMs) hopIntervalMs = s_dwellMinMs;
+    if (now - s_lastHopMs >= hopIntervalMs) {
         s_lastHopMs = now;
         uint8_t hopN = 0;
         const uint8_t* hops = hopTable(&hopN);

@@ -106,7 +106,7 @@ CAP_PACK_REGISTER(mypack, "MYPACK", "ALL", kMyPreset)
 | Пак        | Методика   | Философия                                                                 |
 |------------|------------|---------------------------------------------------------------------------|
 | `STOCK`    | `AUTO`     | Дефолт — спокойные настройки, AUTO-ротация по таймеру                      |
-| `OURS`     | `OURS`     | Broadcast kick, никаких трюков. Самый тихий и предсказуемый                 |
+| `SOFT`     | `ALL`      | Пассивный захват: без kick, PMKID probe, EAPOL TX и CSA                     |
 | `PAN`      | `PAN`      | Bidir + EAPOL-Start/Logoff + PMKID probe. Сбалансированный                  |
 | `WOLF`     | `PAN`      | PAN + CSA-herd + auth-flood. Агрессивный                                    |
 | `PORKCHOP` | `PORK`     | Porkchop-style: scoring одной цели, EMA по RSSI/клиентам, бир-бир jitter  |
@@ -116,4 +116,3 @@ CAP_PACK_REGISTER(mypack, "MYPACK", "ALL", kMyPreset)
 
 В меню **RADIO → PACK** пак идёт в порядке: `STOCK` → пользовательские (по
 имени файла) → `CUSTOM`.
-
