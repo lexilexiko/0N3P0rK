@@ -82,7 +82,6 @@ static const Item RADIO[] = {
     {"PACK",    Kind::VALUE,  18, 0, 0, 1},   // max resolved at runtime
     {"METHOD",  Kind::VALUE,  7,  0, 0, 1},   // max resolved at runtime
     {"EDIT",    Kind::ACTION, 60, 0, 0, 0},   // open RADIO_EDIT for current method
-    {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
     // Sniffer-direct settings that affect CAPTURE not the method:
     {"HOP MS",  Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS", Kind::VALUE,  1,  0, 15000, 500},
@@ -97,6 +96,7 @@ static const Item RADIO[] = {
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
     {"AUTO SKIP",Kind::VALUE, 50, 0, 60, 1},
+    {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -230,7 +230,6 @@ static const char* const H_RADIO[] = {
     "RADIO PRESET.",
     "CAPTURE METHOD.",
     "EDIT CURRENT METHOD OPTIONS.",
-    "RESTORE DEFAULT RADIO SETTINGS.",
     "TIME PER CHANNEL.",
     "LOCK DURATION AFTER EAPOL.",
     "HOLD CHANNEL WHEN HANDSHAKE ARRIVES.",
@@ -244,6 +243,7 @@ static const char* const H_RADIO[] = {
     "TRANSMIT POWER SETTING.",
     "ATTACK BURST PATTERN.",
     "SECONDS AFTER PAIR BEFORE SKIPPING AP.",
+    "RESTORE DEFAULT RADIO SETTINGS.",
 };
 // Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
 static const char* const H_KNOBS[] = {
@@ -298,6 +298,7 @@ static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
 static bool s_bind = false;
+static bool s_resetConfirm = false;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
@@ -925,6 +926,7 @@ void show(SettingsPage page) {
     s_editing = false;
     s_text = false;
     s_bind = false;
+    s_resetConfirm = false;
     s_keyWas = true;
     s_openMs = millis();
     if (page == SettingsPage::CONNECT) {
@@ -945,12 +947,14 @@ void hide() {
     s_editing = false;
     s_text = false;
     s_bind = false;
+    s_resetConfirm = false;
 }
 
 bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
+    if (s_resetConfirm) return "ENT RESET  ESC CANCEL";
     const bool showHelp = ((millis() - s_openMs) % 7500u) < 5000u;
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS)
@@ -1121,6 +1125,19 @@ void update() {
     bool erase = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del;
     bool esc = tick;
 
+    if (s_resetConfirm) {
+        if (esc) {
+            s_resetConfirm = false;
+            SFX::play(SFX::BACK_NAV);
+        } else if (keys.enter) {
+            Config::resetRadio();
+            s_resetConfirm = false;
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("RADIO RESET", 1000);
+        }
+        return;
+    }
+
     uint8_t n = 0;
     const Item* list = items(&n);
     if (!list || n == 0) return;
@@ -1282,9 +1299,8 @@ void update() {
 
     if (cur.kind == Kind::ACTION) {
         if (s_page == SettingsPage::RADIO && cur.id == 19) {
-            Config::resetRadio();
-            SFX::play(SFX::CONFIRM);
-            Display::showToast("RADIO RESET", 1000);
+            s_resetConfirm = true;
+            SFX::play(SFX::MENU_CLICK);
         } else if (s_page == SettingsPage::RADIO && cur.id == 60) {
             // EDIT: build knob list for current method and open RADIO_EDIT
             buildEditItems();
@@ -1533,6 +1549,19 @@ void draw(M5Canvas& canvas) {
     canvas.setTextColor(UI_DIM);
     if (s_scroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
+
+    if (s_resetConfirm) {
+        const int16_t boxX = 20, boxY = 34, boxW = DISPLAY_W - 40, boxH = 42;
+        canvas.fillRoundRect(boxX, boxY, boxW, boxH, 4, 0x1082);
+        canvas.drawRoundRect(boxX, boxY, boxW, boxH, 4, 0xFFE0);
+        canvas.setTextDatum(top_center);
+        canvas.setTextColor(0xFFE0);
+        canvas.drawString("RESET RADIO SETTINGS?", DISPLAY_W / 2, boxY + 7);
+        canvas.setTextColor(UI_TEXT);
+        canvas.drawString("ENT = RESET   ESC = CANCEL",
+                          DISPLAY_W / 2, boxY + 23);
+        canvas.setTextDatum(top_left);
+    }
 
 }
 
