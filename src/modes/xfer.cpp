@@ -298,7 +298,7 @@ void getStatusLine(char* out, size_t n) {
         out[0] = 0;
         return;
     }
-    if ((millis() / 2500u) & 1u)
+    if ((millis() % 7500u) >= 5000u)
         snprintf(out, n, "ESC EXIT  PHONE CONNECTS TO AP");
     else
         snprintf(out, n, "XFER %u STA  %s",

@@ -19,7 +19,7 @@ static const Preset kWolfPreset{
     /* jitterMs      */ 1,
     /* cooldownSec   */ 3,      // CLIENTS mostly ignores; kept for FOCUS if swapped
     /* scoreThr      */ 0,
-    /* hsDepth       */ 1,
+    /* hsDepth       */ 0,
     /* dataAct       */ 0,      // CLIENTS does not score; leave off
     /* strictLock    */ true,
     /* depthHoldSec  */ 8,

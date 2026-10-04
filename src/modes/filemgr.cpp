@@ -834,7 +834,8 @@ void FileMgrMode::update() {
 
 void FileMgrMode::getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    uint8_t page = (uint8_t)((millis() / 2200u) % 3u);
+    const uint8_t hintPhase = (uint8_t)((millis() % 10000u) / 2500u);
+    const uint8_t page = hintPhase < 2 ? 0 : (uint8_t)(hintPhase - 1);
     switch (phase) {
         case Phase::BROWSE:
             if (!curPath) snprintf(out, n, "LOW MEMORY");

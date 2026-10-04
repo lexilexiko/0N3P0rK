@@ -19,7 +19,7 @@ static const Preset kAggroPreset{
     /* jitterMs      */ 1,      // minimal spacing - volume over stealth
     /* cooldownSec   */ 4,      // short cooldown, keep pressure
     /* scoreThr      */ -20,    // attack weaker scores too
-    /* hsDepth       */ 1,      // still want +M3 when we can
+    /* hsDepth       */ 0,      // still want +M3 when we can
     /* dataAct       */ 1,      // busy APs first
     /* strictLock    */ true,
     /* depthHoldSec  */ 10,     // aggressive hold after pair

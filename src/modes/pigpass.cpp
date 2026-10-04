@@ -2261,7 +2261,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
     if (!out || len == 0) return;
     out[0] = '\0';
     const bool showHelp = state != PigpassState::RUNNING &&
-                          ((millis() / 2500u) & 1u) != 0;
+                          (millis() % 7500u) >= 5000u;
 
     if (showHelp) {
         switch (state) {

@@ -31,8 +31,6 @@ static const int WF_ROWS = 8;
 static const int CH_Y = 67;
 static const int INFO_Y = 1;
 static const int LIST_Y = 77;
-static const uint32_t BAR_FLIP_MS = 2200;
-
 static const int8_t RSSI_MIN = -100;
 static const int8_t RSSI_MAX = -60;
 static const int8_t NOISE = -92;
@@ -1148,7 +1146,7 @@ bool isRunning() { return s_run; }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    bool keys = ((millis() / BAR_FLIP_MS) & 1) == 0;
+    bool keys = (millis() % 7500u) >= 5000u;
     if (s_phase == HUNT) {
         if (keys) {
             snprintf(out, n, "D DEPTH  ESC STOP");

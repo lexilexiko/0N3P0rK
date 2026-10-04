@@ -951,7 +951,7 @@ bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
-    const bool showHelp = ((millis() / 2500u) & 1u) != 0;
+    const bool showHelp = ((millis() - s_openMs) % 7500u) >= 5000u;
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS)
             return showHelp ? "TYPE WIFI PASSWORD" : "TYPE  BS ERASE  ENT SAVE  ESC BACK";
@@ -1236,6 +1236,7 @@ void update() {
         if (s_page == SettingsPage::RADIO_EDIT) {
             s_page = SettingsPage::RADIO;
             s_idx = 2; s_scroll = 0;
+            s_openMs = millis();
             SFX::play(SFX::BACK_NAV);
             return;
         }
@@ -1250,8 +1251,10 @@ void update() {
             return;
         }
         s_editing = false;
+        const uint8_t oldIdx = s_idx;
         if (up && s_idx > 0) s_idx--;
         else if (down && s_idx + 1 < n) s_idx++;
+        if (s_idx != oldIdx) s_openMs = millis();
         keepVisible(n);
         SFX::play(SFX::MENU_CLICK);
         return;
@@ -1289,6 +1292,7 @@ void update() {
             }
             s_page = SettingsPage::RADIO_EDIT;
             s_idx = 0; s_scroll = 0;
+            s_openMs = millis();
             SFX::play(SFX::MENU_CLICK);
             char toast[24];
             snprintf(toast, sizeof(toast), "EDIT: %s", currentMethodName());
@@ -1297,6 +1301,7 @@ void update() {
             // Back from RADIO_EDIT
             s_page = SettingsPage::RADIO;
             s_idx = 2; s_scroll = 0; // land on EDIT row
+            s_openMs = millis();
             SFX::play(SFX::BACK_NAV);
         }
         return;
@@ -1321,6 +1326,7 @@ void update() {
         return;
     }
     s_editing = !s_editing;
+    s_openMs = millis();
     SFX::play(SFX::MENU_CLICK);
 }
 

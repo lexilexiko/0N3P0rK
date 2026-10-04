@@ -1003,9 +1003,10 @@ void EvilPigMode::update() {
 
 const char* EvilPigMode::getBottomHint() {
     static char buf[40];
-    uint8_t page = (uint8_t)((millis() / 2200u) & 3u);
+    const bool showDetails = (millis() % 7500u) < 5000u;
+    uint8_t page = (uint8_t)((millis() / 2500u) & 3u);
     if (phase == Phase::PORTAL) {
-        if (page & 1) {
+        if (showDetails) {
             snprintf(buf, sizeof(buf), "HIT %u  ON %u  K %lu",
                      (unsigned)hitCount, (unsigned)getClientCount(),
                      (unsigned long)deauthCount);

@@ -423,7 +423,7 @@ const char* hint() {
 }
 
 const char* selectedHint() {
-    if (((millis() / 2500u) & 1u) == 0) return hint();
+    if ((millis() % 7500u) >= 5000u) return hint();
     if (s_group != GroupId::NONE) {
         const Item* it = groupItems(s_group);
         uint8_t n = groupSize(s_group);
