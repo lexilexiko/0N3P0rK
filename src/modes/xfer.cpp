@@ -288,9 +288,6 @@ void draw(M5Canvas& canvas) {
     canvas.setTextColor(0x05A0, 0x0000);
     canvas.setCursor(4, 92);
     canvas.print(s_status);
-    canvas.setCursor(4, 104);
-    canvas.setTextColor(0x03A0, 0x0000);
-    canvas.print("` exit — phone joins AP");
 }
 
 bool isRunning() { return s_run; }
@@ -301,7 +298,11 @@ void getStatusLine(char* out, size_t n) {
         out[0] = 0;
         return;
     }
-    snprintf(out, n, "XFER %u sta %s", (unsigned)WiFi.softAPgetStationNum(), s_status);
+    if ((millis() / 2500u) & 1u)
+        snprintf(out, n, "ESC EXIT  PHONE CONNECTS TO AP");
+    else
+        snprintf(out, n, "XFER %u STA  %s",
+                 (unsigned)WiFi.softAPgetStationNum(), s_status);
 }
 
 }  // namespace XferMode

@@ -1,13 +1,13 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.5f - (1.3.5) **  
+**Current version: 1.3.6**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.0**.  
+This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6**.
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -58,7 +58,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6b_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -88,7 +88,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.5f`.
+   `1.3.6b`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -375,6 +375,25 @@ points, clients, channels, authentication type, and PMF information. Press
 `ENTER` on a network to lock its view. Spectrum can suspend the farm scene to
 reduce CPU work while it is active.
 
+The band view can be panned and zoomed like a bench analyzer instead of always
+showing all 13 channels squeezed together:
+
+| Key | Action |
+| --- | --- |
+| `^` / `v` | Move the network selection up / down |
+| `</>` | Slide the band left / right (hold to keep panning) |
+| `-` / `=` | Zoom the band out / in |
+| `0` | Reset to the full band |
+
+Arrow notation matches the on-device hints: `^` / `v` are `;` / `.`, and `</>`
+are `,` / `/`.
+
+Zooming in shrinks the visible span (72 → 40 → 24 → 14 → 8 → 5 MHz) so a single
+channel fills the screen. The channel numbers along the axis only show the
+channels currently in view, and the radio hops only across those visible
+channels, so the highlighted channel always matches what you see. Selecting a
+network with `;` / `.` recentres the view if that network is off-screen.
+
 ## BadUSB and BadBLE
 
 The **CONNECT → BADUSB** tool provides authorized HID automation over either
@@ -627,50 +646,6 @@ Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
 - While open: farm **scene suspended** (like Spectrum minimize idea); resume when closed / minimized as designed  
 - Results / checkpoints on SD under `pigpass/`
 
-### Candidate sources
-
-After a handshake is picked you choose where the candidate keys come from. The
-two starred entries are generators built into the firmware — they need no file
-on the card:
-
-| Entry | What it tries |
-| --- | --- |
-| `* MASK GEN *` | every combination of a chosen charset and length (8–12) |
-| `* DEFAULT PSK *` | keys derived from the network's own SSID / BSSID |
-| any `.txt` / `.lst` / `.dict` | the wordlist itself, line by line |
-
-**`* DEFAULT PSK *` is worth running first.** A router that still carries its
-factory key gives it up in seconds, while the same key inside a wordlist may sit
-hundreds of thousands of lines deep. The rules, in the order they are tried:
-
-- the SSID itself — as-is, lower, upper, capitalised
-- SSID + year (`2017`–`2026`) — the most common ISP and router default
-- vendor defaults, when the SSID names the vendor (TP-Link, Zyxel, D-Link,
-  Netgear, ASUS, Huawei, ZTE, Draytek, Realtek, Technicolor, Sagem, and a few
-  ISP names), plus any digit run embedded in the SSID
-- BSSID slices — the MAC in bare, upper, colon and dotted form, plus its last 4
-  and 6 digits, the way it is printed on the label sticker
-- SSID + digits — `0`–`9`, `00`–`99`, `000`–`999`
-- bare numeric keys, 8 digits
-
-Candidates shorter than 8 characters are impossible for WPA and are skipped, and
-duplicates are dropped so a repeat never costs a PBKDF2 round. The list is
-capped at 256 entries, and the stats line shows both the winning rule and the
-progress:
-
-```text
-DEF SSID + YEAR 137/248
-```
-
-The candidate table is taken from the heap only while a run is in progress and
-handed back when the run ends or PigPass is left, so it costs nothing while the
-mode is idle — about 10 KB at the cap, never permanently. On serial this appears
-as `[DEFPSK] N candidates (top: …)` and `[DEFPSK] table released, free=…`.
-
-If a handshake has no SSID (a hidden network captured without its beacon) there
-is nothing to derive from, and the run is refused with `NO SSID TO USE` instead
-of starting a pass that cannot succeed.
-
 ---
 
 ## SD layout (typical)
@@ -856,7 +831,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 
 ---
 
-### 1.3.5f (current)
+### 1.3.5f
 
 #### Handshake check in LOOT
 
@@ -883,6 +858,42 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - `InspectorPig::checkAll()` walks the folder in two passes — names first, then
   analysis — over a short-lived heap list, so no capture is opened while the
   directory handle is still held.
+
+### 1.3.6 (current)
+
+#### File Manager
+
+- Reworked the SD File Manager with directory navigation, file details,
+  text preview/editing, and JPEG/BMP/PNG image preview.
+- Added create-file, create-folder, rename, copy, move, paste, and confirmed
+  delete operations. Backspace/ESC now navigate back; Backspace removes a
+  character while editing or entering a name.
+- File Manager working memory is allocated only while the mode is open.
+  The text buffer is allocated only for text preview/editing and released
+  when returning to the browser; browsing images and folders does not reserve
+  that 6 KB editor buffer.
+- Directory entries grow in heap-backed batches instead of using a fixed
+  small file limit. The list is sorted and scrollable; if memory runs out,
+  the UI reports that the displayed list is partial.
+
+#### Task Manager and memory
+
+- Reworked **TASKS** to show active services and current heap statistics:
+  free heap, largest free block, minimum free heap, internal free memory, and
+  available SD space.
+- Added scrollable service controls and status details for active tools.
+  WPA-Sec/Pwncrack synchronization is left to its normal shutdown path.
+- Reduced File Manager's static RAM footprint by moving its working buffers
+  and directory entries out of `.bss` and onto the heap for the duration of use.
+  The PlatformIO static RAM report is about 11 KB lower than the preceding
+  build; the main display canvas remains permanently allocated.
+
+#### Interface polish
+
+- Consolidated keyboard guidance in the bottom hint bar and improved the
+  displayed navigation symbols and Escape/Backspace labels.
+- Kept Loot's existing sync presentation while retaining the updated key
+  labels.
 
 ---
 

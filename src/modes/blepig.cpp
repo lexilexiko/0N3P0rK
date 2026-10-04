@@ -261,7 +261,11 @@ void BlePigMode::update() {
 }
 
 void BlePigMode::getStatusLine(char* out, size_t len) {
-    snprintf(out, len, "BLE %s %lu", familyName(family), (unsigned long)bursts);
+    if (!out || !len) return;
+    if ((millis() / 2500u) & 1u)
+        snprintf(out, len, "^/v FAMILY  ESC EXIT");
+    else
+        snprintf(out, len, "BLE %s %lu", familyName(family), (unsigned long)bursts);
 }
 
 void BlePigMode::draw(M5Canvas& canvas) {
@@ -294,6 +298,4 @@ void BlePigMode::draw(M5Canvas& canvas) {
     snprintf(buf, sizeof(buf), "%us", (unsigned)sec);
     canvas.drawString(buf, 4, 84);
 
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. family   ` exit", 4, MAIN_H - 10);
 }

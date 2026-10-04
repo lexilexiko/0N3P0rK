@@ -248,7 +248,7 @@ void draw(M5Canvas& canvas) {
         canvas.drawString("MSC DID NOT START", 8, 72);
     } else if (s_eject) {
         canvas.setTextColor(UiStyle::GREEN);
-        canvas.drawString("PC EJECTED. ` LEAVES.", 8, 72);
+        canvas.drawString("PC EJECTED", 8, 72);
     } else {
         char line[44];
         uint32_t mb = (s_sectors / 2048);

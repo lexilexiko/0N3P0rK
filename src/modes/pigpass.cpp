@@ -10,7 +10,6 @@
 
 #include "pigpass.h"
 #include "pigpass_crypto.h"
-#include "default_psk.h"
 #include <M5Cardputer.h>
 #include <SD.h>
 #include <string.h>
@@ -51,19 +50,9 @@ uint8_t PigpassMode::maskLen = 8;
 uint64_t PigpassMode::maskIndex = 0;
 char PigpassMode::maskCharset[72] = {0};
 uint8_t PigpassMode::maskCharsetLen = 0;
-bool PigpassMode::defaultMode = false;
-uint32_t PigpassMode::defaultIndex = 0;
-uint16_t PigpassMode::defaultTotal = 0;
-char PigpassMode::defaultRule[20] = "";
-bool PigpassMode::defaultReady = false;
 
 // Virtual list entry path for mask generator
 static const char* kMaskVirtualPath = "@mask";
-
-// Virtual list entry path for the derived factory-PSK generator. Same trick as
-// the mask entry: an entry in the wordlist browser that is not a file, so the
-// user picks "DEFAULT PSK" instead of hunting for a dictionary on the card.
-static const char* kDefaultVirtualPath = "@default";
 
 // Handshake / PMKID material extracted from .pcap or hashcat .22000
 struct HandshakeData {
@@ -1120,18 +1109,6 @@ void PigpassMode::scanWordlistFiles() {
         files.push_back(e);
     }
 
-    // Second: candidates derived from the handshake's own SSID / BSSID. Placed
-    // high on purpose — when a router still carries its factory key this list
-    // cracks it in seconds, while the files below may take hours.
-    if (files.size() < MAX_FILES) {
-        PigpassFileEntry e;
-        strncpy(e.name, "* DEFAULT PSK *", sizeof(e.name) - 1);
-        e.name[sizeof(e.name) - 1] = '\0';
-        strncpy(e.path, kDefaultVirtualPath, sizeof(e.path) - 1);
-        e.path[sizeof(e.path) - 1] = '\0';
-        files.push_back(e);
-    }
-
     if (!Config::isSDAvailable()) {
         Serial.println("[PIGPASS] No SD card for wordlist scan");
         selectedIndex = 0;
@@ -1210,14 +1187,6 @@ void PigpassMode::start() {
     handshakePath[0] = '\0';
     wordlistPath[0] = '\0';
     maskMode = false;
-    // A previous derived run must not leak into the next one: if the new
-    // selection is a wordlist, defaultMode has to be off or runBrute would
-    // keep feeding derived candidates instead of the file.
-    defaultMode = false;
-    defaultReady = false;
-    defaultIndex = 0;
-    defaultTotal = 0;
-    defaultRule[0] = '\0';
     maskCharsetId = 0;
     maskLen = 8;
     maskIndex = 0;
@@ -1252,16 +1221,6 @@ void PigpassMode::stop() {
     if (wordlistFile) {
         wordlistFile.close();
     }
-    // The derived-candidate table is heap memory, so it has to go back when the
-    // mode is left — not when the list happens to run out, since the user may
-    // pause, switch tabs or stop mid-list. The flags must not survive either:
-    // the next run would otherwise believe a default run is still configured.
-    defaultMode = false;
-    defaultReady = false;
-    defaultIndex = 0;
-    defaultTotal = 0;
-    defaultRule[0] = '\0';
-    DefaultPsk::release();
     freePbkdfCtx();
     resetWordlistBuffer();
     g_hsCryptoReady = false;
@@ -1563,7 +1522,6 @@ void PigpassMode::beginWordlistRun(const char* path) {
     strncpy(wordlistPath, path, sizeof(wordlistPath) - 1);
     wordlistPath[sizeof(wordlistPath) - 1] = '\0';
     maskMode = false;
-    defaultMode = false;      // file run: never fall back to derived candidates
     saveLastWordlist(wordlistPath);
 
     if (!handshake.valid && !parsePcapHandshake(handshakePath)) {
@@ -1622,110 +1580,6 @@ void PigpassMode::beginWordlistRun(const char* path) {
         startTime = millis();
         lastUpdateTime = startTime;
     }
-    transitionState(PigpassState::RUNNING);
-}
-
-size_t PigpassMode::buildDefaultCandidates() {
-    DefaultPsk::Target t;
-    memset(&t, 0, sizeof(t));
-
-    // handshake.ssid is authoritative; fall back to the mode's copy, which is
-    // set from it when the file was parsed.
-    if (handshake.valid && handshake.ssid[0]) {
-        strncpy(t.ssid, handshake.ssid, sizeof(t.ssid) - 1);
-    } else if (ssid[0]) {
-        strncpy(t.ssid, ssid, sizeof(t.ssid) - 1);
-    }
-
-    // The BSSID is optional: a .22000 always has it, a bare pcap may not, and
-    // the SSID-only rules still produce a useful list. handshake keeps the AP
-    // MAC as raw bytes, so render it as the bare hex the generator expects.
-    char hex13[13] = {0};
-    if (handshake.valid) {
-        bool any = false;
-        for (size_t i = 0; i < 6; i++) if (handshake.ap_mac[i]) { any = true; break; }
-        if (any) {
-            static const char* kHex = "0123456789abcdef";
-            const uint8_t* m = handshake.ap_mac;
-            for (size_t i = 0; i < 6; i++) {
-                hex13[i * 2]     = kHex[(m[i] >> 4) & 0x0F];
-                hex13[i * 2 + 1] = kHex[m[i] & 0x0F];
-            }
-            hex13[12] = '\0';
-        }
-    }
-    strncpy(t.bssid, hex13, sizeof(t.bssid) - 1);
-
-    size_t n = DefaultPsk::build(t);
-    defaultTotal = (uint16_t)((n > 0xFFFF) ? 0xFFFF : n);
-    defaultIndex = 0;
-    defaultReady = (n > 0);
-    strncpy(defaultRule, DefaultPsk::topRuleName(), sizeof(defaultRule) - 1);
-    defaultRule[sizeof(defaultRule) - 1] = '\0';
-    return n;
-}
-
-bool PigpassMode::nextDefaultPassword(char* out, size_t outSz) {
-    if (!defaultReady || !DefaultPsk::emit(defaultIndex, out, outSz)) return false;
-    defaultIndex++;
-    return true;
-}
-
-void PigpassMode::beginDefaultRun() {
-    if (!handshake.valid && !parsePcapHandshake(handshakePath)) {
-        Display::showToast("BAD HANDSHAKE FILE");
-        transitionState(PigpassState::SELECT_HANDSHAKE);
-        return;
-    }
-    prepareHandshakeCrypto();
-    strncpy(ssid, handshake.ssid, 32);
-    ssid[32] = 0;
-
-    size_t n = buildDefaultCandidates();
-    if (n == 0) {
-        // No SSID in this handshake (hidden network captured without a beacon):
-        // there is nothing to derive from, so send the user back rather than
-        // starting a run that cannot succeed.
-        Serial.println("[PIGPASS] default psk: no candidates (no ssid)");
-        Display::showToast("NO SSID TO USE");
-        transitionState(PigpassState::SELECT_WORDLIST);
-        return;
-    }
-
-    defaultMode = true;
-    maskMode = false;
-    // Checkpoint identity, same idea as the mask run.
-    snprintf(wordlistPath, sizeof(wordlistPath), "@default:%u",
-             (unsigned)defaultTotal);
-
-    clearFileList();
-    stopCrackSession();
-    resetWordlistBuffer();
-    freePbkdfCtx();
-    if (wordlistFile) { wordlistFile.close(); }
-
-    foundPassword = false;
-    fromCache = false;
-    foundPw[0] = '\0';
-    s_foundFlag = false;
-    s_wordlistDone = false;
-    s_sessionStarted = false;
-
-    // This list is a few hundred candidates and takes seconds, so there is
-    // nothing worth checkpointing mid-way — a reboot just restarts it.
-    s_resumePending = false;
-    s_resumeOffset = 0;
-    s_resumeAttempts = 0;
-    s_resumeElapsed = 0;
-    defaultIndex = 0;
-    attempts = 0;
-    s_attempts = 0;
-    elapsedSeconds = 0;
-    startTime = millis();
-    lastUpdateTime = startTime;
-
-    Serial.printf("[PIGPASS] default psk run: %u candidates, top=%s\n",
-                  (unsigned)defaultTotal, defaultRule);
     transitionState(PigpassState::RUNNING);
 }
 
@@ -1835,10 +1689,6 @@ void PigpassMode::selectCurrentFile() {
             maskIndex = 0;
             applyMaskCharset();
             transitionState(PigpassState::SELECT_MASK);
-            return;
-        }
-        if (strcmp(entry.path, kDefaultVirtualPath) == 0) {
-            beginDefaultRun();
             return;
         }
         beginWordlistRun(entry.path);
@@ -1958,8 +1808,6 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
             canvas.drawString("PUT .TXT:", 4, listTop + 28);
             canvas.drawString("/0N3P0rK/Passworld", 4, listTop + 40);
         }
-        canvas.setTextColor(UiStyle::GOLD);
-        canvas.drawString(hsBrowser ? ",/ tab  ` exit" : "` =EXIT", 4, MAIN_H - 10);
         return;
     }
 
@@ -2002,11 +1850,6 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
         canvas.drawString("v", DISPLAY_W - 10, listTop + (VISIBLE_ITEMS - 1) * lineHeight);
     }
 
-    canvas.setTextColor(UiStyle::GOLD);
-    if (state == PigpassState::SELECT_HANDSHAKE)
-        canvas.drawString(";/. move  ,/ tab  ENT  `", 4, MAIN_H - 10);
-    else
-        canvas.drawString(";/. move  ENT sel  ` back", 4, MAIN_H - 10);
 }
 
 void PigpassMode::drawMaskSetup(M5Canvas& canvas) {
@@ -2055,8 +1898,6 @@ void PigpassMode::drawMaskSetup(M5Canvas& canvas) {
         canvas.drawString(buf, 4, 84);
     }
 
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. set   ,/ len   ENT go", 4, MAIN_H - 10);
 }
 
 void PigpassMode::drawUI(M5Canvas& canvas) {
@@ -2086,7 +1927,7 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
     const char* badge = "IDLE";
     uint16_t badgeCol = UiStyle::DIM;
     if (state == PigpassState::RUNNING) {
-        badge = (defaultMode ? "DEF" : (maskMode ? "MASK" : "RUN"));
+        badge = maskMode ? "MASK" : "RUN";
         badgeCol = UiStyle::GREEN;
     } else if (state == PigpassState::PAUSED) {
         badge = "PAUSE";
@@ -2128,17 +1969,9 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
 
     // Stats row
     int y = 64;
-    if ((maskMode || defaultMode) && !fromCache) {
+    if (maskMode && !fromCache) {
         canvas.setTextColor(UiStyle::DIM);
-        if (defaultMode) {
-            // The rule name is the only clue about why this run is short, so
-            // the user can see what to try next.
-            snprintf(buf, sizeof(buf), "DEF %s %u/%u", defaultRule,
-                     (unsigned)defaultIndex, (unsigned)defaultTotal);
-        } else {
-            snprintf(buf, sizeof(buf), "%s L%u", maskCharsetName(),
-                     (unsigned)maskLen);
-        }
+        snprintf(buf, sizeof(buf), "%s L%u", maskCharsetName(), (unsigned)maskLen);
         canvas.drawString(buf, 4, y);
         y += 12;
     }
@@ -2167,14 +2000,6 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
         canvas.drawString(buf, 4, y);
     }
 
-    canvas.setTextColor(UiStyle::GOLD);
-    if (state == PigpassState::RUNNING) {
-        canvas.drawString("ENT pause   ` save+exit", 4, MAIN_H - 10);
-    } else if (state == PigpassState::PAUSED) {
-        canvas.drawString("ENT resume  ` save+exit", 4, MAIN_H - 10);
-    } else {
-        canvas.drawString("ENT / ` exit", 4, MAIN_H - 10);
-    }
 }
 
 void PigpassMode::handleMaskInput() {
@@ -2346,7 +2171,7 @@ void PigpassMode::runBrute() {
 
     // Boot session once — no FreeRTOS worker (avoids TASK FAIL on low heap)
     if (!s_sessionStarted && !s_wordlistDone) {
-        if (!maskMode && !defaultMode) {
+        if (!maskMode) {
             if (!wordlistFile) {
                 wordlistFile = SD.open(wordlistPath, FILE_READ);
                 if (!wordlistFile) {
@@ -2416,16 +2241,6 @@ void PigpassMode::runBrute() {
         if (maskMode) {
             got = nextMaskPassword(password, sizeof(password));
             if (!got) s_wordlistDone = true;
-        } else if (defaultMode) {
-            got = nextDefaultPassword(password, sizeof(password));
-            if (!got) {
-                // List spent. Hand the ~10 KB back immediately rather than at
-                // stop(): the result screen is drawn next and the device may go
-                // anywhere from there.
-                DefaultPsk::release();
-                defaultReady = false;
-                s_wordlistDone = true;
-            }
         } else {
             got = readNextPassword(password, sizeof(password));
             if (!got) s_wordlistDone = true;
@@ -2445,11 +2260,38 @@ void PigpassMode::runBrute() {
 void PigpassMode::getStatusLine(char* out, size_t len) {
     if (!out || len == 0) return;
     out[0] = '\0';
+    const bool showHelp = state != PigpassState::RUNNING &&
+                          ((millis() / 2500u) & 1u) != 0;
+
+    if (showHelp) {
+        switch (state) {
+            case PigpassState::SELECT_HANDSHAKE:
+                snprintf(out, len, "^/v MOVE  </> TAB  ENT OPEN  ESC BACK");
+                return;
+            case PigpassState::SELECT_WORDLIST:
+                snprintf(out, len, "^/v MOVE  ENT SELECT  ESC BACK");
+                return;
+            case PigpassState::SELECT_MASK:
+                snprintf(out, len, "^/v SET  </> LEN  ENT START  ESC BACK");
+                return;
+            case PigpassState::RUNNING:
+                snprintf(out, len, "ENT PAUSE  ESC SAVE AND EXIT");
+                return;
+            case PigpassState::PAUSED:
+                snprintf(out, len, "ENT RESUME  ESC SAVE AND EXIT");
+                return;
+            case PigpassState::DONE:
+                snprintf(out, len, "ENT / ESC EXIT");
+                return;
+            default:
+                break;
+        }
+    }
 
     switch (state) {
         case PigpassState::SELECT_HANDSHAKE:
             if (files.empty()) {
-                snprintf(out, len, "NO HANDSHAKES  ` EXIT");
+                snprintf(out, len, "NO HANDSHAKES");
             } else if (selectedIndex < files.size()) {
                 snprintf(out, len, "HS: %s", files[selectedIndex].name);
             } else {
@@ -2458,7 +2300,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
             break;
         case PigpassState::SELECT_WORDLIST:
             if (files.empty()) {
-                snprintf(out, len, "NO WORDLISTS  ` BACK");
+                snprintf(out, len, "NO WORDLISTS");
             } else if (selectedIndex < files.size()) {
                 snprintf(out, len, "WL: %s", files[selectedIndex].name);
             } else {
@@ -2477,11 +2319,6 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
             } else if (maskMode) {
                 snprintf(out, len, "MASK %lu  %.1f/s",
                          (unsigned long)att_lo, rate);
-            } else if (defaultMode) {
-                // Same shape as the mask line, so the derived run is visibly its
-                // own mode rather than looking like a plain wordlist pass.
-                snprintf(out, len, "DEF %u/%u  %.1f/s",
-                         (unsigned)defaultIndex, (unsigned)defaultTotal, rate);
             } else {
                 snprintf(out, len, "TRY %lu  %.1f/s  %us",
                          (unsigned long)att_lo, rate, (unsigned)elapsedSeconds);
@@ -2492,7 +2329,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
             if (s_currentTry[0]) {
                 snprintf(out, len, "PAUSE %s", s_currentTry);
             } else {
-                snprintf(out, len, "PAUSED  ENT=RESUME");
+                snprintf(out, len, "PAUSED");
             }
             break;
         case PigpassState::DONE:

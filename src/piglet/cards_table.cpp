@@ -964,20 +964,6 @@ void drawActive(M5Canvas& canvas) {
             canvas.setCursor(x + CW / 2 - 3, 68);
             canvas.printf("%u", (unsigned)(i + 1));
         }
-        canvas.setTextColor(0xC618, 0x1082);
-        canvas.setCursor(4, 94);
-        canvas.print("1-5 card");
-        canvas.setCursor(70, 94);
-        if (s_selCount == PICK_N) {
-            canvas.setTextColor(0xFFE0, 0x1082);
-            canvas.print("ENT play");
-        } else {
-            canvas.setTextColor(0x8410, 0x1082);
-            canvas.print("need 2");
-        }
-        canvas.setTextColor(0x8410, 0x1082);
-        canvas.setCursor(170, 94);
-        canvas.print("` exit");
         return;
     }
 
@@ -1015,12 +1001,6 @@ void drawActive(M5Canvas& canvas) {
     } else {
         canvas.print("—");
     }
-    canvas.setTextColor(0xFFE0, 0x1082);
-    canvas.setCursor(155, 94);
-    if (s_phase == Phase::MATCH_OVER)
-        canvas.print("ENT ok");
-    else
-        canvas.print("ENT next");
 }
 
 
@@ -1031,15 +1011,14 @@ void getStatusLine(char* buf, size_t n) {
     if (!s_active) { buf[0] = '\0'; return; }
     if (s_phase == Phase::SELECT) {
         if (s_selCount == PICK_N)
-            snprintf(buf, n, "1-5 card  ENT play  ` exit");
+            snprintf(buf, n, "1-5 CARD  ENT PLAY  ESC EXIT");
         else
-            snprintf(buf, n, "1-5 pick 2 cards  ` exit");
+            snprintf(buf, n, "1-5 PICK 2 CARDS  ESC EXIT");
     } else if (s_phase == Phase::MATCH_OVER) {
-        snprintf(buf, n, "ENT confirm  ` exit");
+        snprintf(buf, n, "ENT CONFIRM  ESC EXIT");
     } else {
-        snprintf(buf, n, "ENT next  ` exit");
+        snprintf(buf, n, "ENT NEXT  ESC EXIT");
     }
 }
 
 }  // namespace CardsTable
-

@@ -1,19 +1,21 @@
 #include "task_manager.h"
 #include "loot_menu.h"
-
 #include "display.h"
 #include "keys.h"
 #include "../cap/sniffer.h"
+#include "../cap/hc22000.h"
 #include "../modes/badusb.h"
 #include "../modes/blepig.h"
 #include "../modes/evilpig.h"
 #include "../modes/filemgr.h"
+#include "../modes/inspectorpig.h"
 #include "../modes/irport.h"
 #include "../modes/pigpass.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/xfer.h"
 #include "../modes/mp3player.h"
+#include "../storage/littlefs_ops.h"
 #include "../sync/pwncrack.h"
 #include "../sync/wpasec.h"
 #include <WiFi.h>
@@ -26,17 +28,27 @@ namespace {
 
 enum Row : uint8_t {
     RADIO, WIFI, BLE, IR, EVILPIG, PIGPASS, SPECTRUM, USBSD, FILEMGR, XFER,
-    BADUSB, WPA_SYNC, PWN_SYNC, LOOT, MP3, STOP_ALL, ROW_COUNT
+    BADUSB, WPA_SYNC, PWN_SYNC, LOOT, MP3, INSPECTOR, STOP_ALL, ROW_COUNT
 };
 
+static constexpr uint8_t VISIBLE_ROWS = 5;
 bool s_running = false;
 uint8_t s_selected = 0;
+uint8_t s_scroll = 0;
 bool s_keyWas = false;
+uint32_t s_lastStatsMs = 0;
+size_t s_freeHeap = 0;
+size_t s_largestBlock = 0;
+size_t s_minFreeHeap = 0;
+size_t s_internalFree = 0;
+size_t s_sdFree = 0;
+bool s_sdAvailable = false;
 
 const char* rowName(Row row) {
     static const char* const names[] = {
         "RADIO", "WIFI", "BLE", "IR", "EVILPIG", "PIGPASS", "SPECTRUM",
-        "USB SD", "FILES", "XFER", "BADUSB", "WPA-SEC", "PWNCRACK", "LOOT", "MP3", "STOP ALL"
+        "USB SD", "FILES", "XFER", "BADUSB", "WPA-SEC", "PWNCRACK",
+        "LOOT", "MP3", "INSPECT", "STOP ALL"
     };
     return names[row];
 }
@@ -59,21 +71,91 @@ bool rowActive(Row row) {
         case PWN_SYNC: return Pwncrack::isBusy();
         case LOOT: return LootMenu::isActive();
         case MP3: return Mp3PlayerMode::isRunning();
-        default: return false;
+        case INSPECTOR: return InspectorPig::isRunning();
+        case ROW_COUNT: return false;
+    }
+    return false;
+}
+
+bool networkSyncActive() {
+    return WPASec::isBusy() || Pwncrack::isBusy();
+}
+
+void refreshMemoryStats() {
+    uint32_t now = millis();
+    if (s_lastStatsMs && (uint32_t)(now - s_lastStatsMs) < 500) return;
+    s_lastStatsMs = now;
+    s_freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    s_largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    s_minFreeHeap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    s_internalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    s_sdAvailable = Storage::available();
+    if (s_sdAvailable) {
+        size_t total = SD.totalBytes();
+        size_t used = SD.usedBytes();
+        s_sdFree = total > used ? total - used : 0;
+    } else {
+        s_sdFree = 0;
     }
 }
 
-const char* rowCost(Row row) {
+uint8_t activeCount() {
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < ROW_COUNT; ++i)
+        if (rowActive((Row)i)) ++count;
+    return count;
+}
+
+void rowInfo(Row row, char* out, size_t n) {
+    if (!out || !n) return;
+    out[0] = '\0';
+    if (!rowActive(row)) {
+        snprintf(out, n, "OFF");
+        return;
+    }
     switch (row) {
-        case RADIO: return "48K*";
-        case SPECTRUM: return "~10K";
-        case PIGPASS: return "~5K";
-        case WIFI: return "dyn";
+        case RADIO: {
+            const char* mode = Cap::runMode() == Cap::RunMode::Light ? "LIGHT" :
+                               Cap::runMode() == Cap::RunMode::Aggressive ? "AGGR" : "PIN";
+            const Cap::Counters& c = Cap::counters();
+            snprintf(out, n, "%s CH%02u HS%u", mode, (unsigned)c.currentChannel,
+                     (unsigned)Hc22000::pairCount());
+            break;
+        }
+        case WIFI: {
+            wifi_mode_t mode = WiFi.getMode();
+            if (mode == WIFI_AP) snprintf(out, n, "AP %u CLIENT", (unsigned)WiFi.softAPgetStationNum());
+            else if (mode == WIFI_STA) snprintf(out, n, "STA");
+            else if (mode == WIFI_AP_STA)
+                snprintf(out, n, "AP+STA %u", (unsigned)WiFi.softAPgetStationNum());
+            else snprintf(out, n, "ON");
+            break;
+        }
+        case BLE:
+            snprintf(out, n, "BURSTS %lu", (unsigned long)BlePigMode::getBursts());
+            break;
+        case PIGPASS:
+            snprintf(out, n, "%s", PigpassMode::getCurrentTry()[0] ? "CRACKING" : "ACTIVE");
+            break;
+        case EVILPIG:
+            snprintf(out, n, "%s", EvilPigMode::getStatus());
+            break;
         case WPA_SYNC:
-        case PWN_SYNC: return "TLS";
-        case LOOT: return "UI";
-        case MP3: return "~30K";
-        default: return "-";
+        case PWN_SYNC:
+            snprintf(out, n, "NETWORK SYNC");
+            break;
+        case LOOT:
+            snprintf(out, n, "FILE SYNC / BROWSE");
+            break;
+        case MP3:
+            snprintf(out, n, "PLAYER ACTIVE");
+            break;
+        case STOP_ALL:
+            snprintf(out, n, "ACTION");
+            break;
+        default:
+            snprintf(out, n, "ACTIVE");
+            break;
     }
 }
 
@@ -93,13 +175,12 @@ void stopRow(Row row) {
         case FILEMGR: if (FileMgrMode::isRunning()) FileMgrMode::stop(); break;
         case XFER: if (XferMode::isRunning()) XferMode::stop(); break;
         case BADUSB: if (BadUsbMode::isRunning()) BadUsbMode::stop(); break;
-        case MP3: if (Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop(); break;
-        case LOOT: if (LootMenu::isActive()) LootMenu::hide(); break;
         case WPA_SYNC:
         case PWN_SYNC:
-            // Network sync is deliberately not force-killed: the client owns
-            // its socket and must close it through its normal UI flow.
             break;
+        case LOOT: if (LootMenu::isActive()) LootMenu::hide(); break;
+        case MP3: if (Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop(); break;
+        case INSPECTOR: if (InspectorPig::isRunning()) InspectorPig::stop(); break;
         case STOP_ALL:
             Cap::stop();
             if (BlePigMode::isRunning()) BlePigMode::stop();
@@ -112,11 +193,14 @@ void stopRow(Row row) {
             if (XferMode::isRunning()) XferMode::stop();
             if (BadUsbMode::isRunning()) BadUsbMode::stop();
             if (Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop();
+            if (InspectorPig::isRunning()) InspectorPig::stop();
             if (LootMenu::isActive()) LootMenu::hide();
-            WiFi.disconnect(true, false);
-            WiFi.mode(WIFI_OFF);
+            if (!networkSyncActive()) {
+                WiFi.disconnect(true, false);
+                WiFi.mode(WIFI_OFF);
+            }
             break;
-        default:
+        case ROW_COUNT:
             break;
     }
 }
@@ -125,14 +209,15 @@ void stopRow(Row row) {
 
 void begin() {
     s_running = false;
-    s_selected = 0;
+    s_selected = s_scroll = 0;
     s_keyWas = false;
 }
 
 void start() {
     s_running = true;
-    s_selected = 0;
+    s_selected = s_scroll = 0;
     s_keyWas = true;
+    s_lastStatsMs = 0;
 }
 
 void stop() {
@@ -149,63 +234,103 @@ void update() {
         stop();
         return;
     }
+    if (keyMin()) {
+        stop();
+        return;
+    }
     if (M5Cardputer.Keyboard.isKeyPressed(';')) {
-        if (s_selected > 0) s_selected--;
+        if (s_selected > 0) --s_selected;
+        if (s_selected < s_scroll) s_scroll = s_selected;
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
-        if (s_selected + 1 < ROW_COUNT) s_selected++;
+        if (s_selected + 1 < ROW_COUNT) ++s_selected;
+        if (s_selected >= s_scroll + VISIBLE_ROWS)
+            s_scroll = (uint8_t)(s_selected - VISIBLE_ROWS + 1);
         return;
     }
     if (M5Cardputer.Keyboard.keysState().enter) {
-        stopRow((Row)s_selected);
-        if (s_selected == STOP_ALL) {
+        Row selected = (Row)s_selected;
+        stopRow(selected);
+        if (selected == STOP_ALL && networkSyncActive())
+            Display::showToast("STOPPED EXCEPT SYNC", 1200);
+        else if (selected == WPA_SYNC || selected == PWN_SYNC)
+            Display::showToast("CLOSE SYNC IN LOOT", 1200);
+        else if (selected == STOP_ALL)
             Display::showToast("ALL STOPPED", 900);
-        } else {
-            Display::showToast(rowActive((Row)s_selected) ? "STOP FAILED" : "STOPPED", 700);
-        }
+        else
+            Display::showToast(rowActive(selected) ? "STOP FAILED" : "STOPPED", 700);
     }
 }
 
 void draw(M5Canvas& canvas) {
-    const uint16_t bg = 0x2145, panel = 0x3A8A, title = 0xFFE0;
-    const uint16_t text = 0xEF5D, dim = 0x9CD3, active = 0xFDB6;
-    canvas.fillSprite(bg);
-    canvas.setTextDatum(top_center);
-    canvas.setTextSize(2);
-    canvas.setTextColor(title);
-    canvas.drawString("TASK MANAGER", DISPLAY_W / 2, 2);
-    canvas.drawLine(8, 20, DISPLAY_W - 8, 20, title);
-
-    char mem[32];
-    snprintf(mem, sizeof(mem), "HEAP %uK  BLOCK %uK",
-             (unsigned)(ESP.getFreeHeap() / 1024),
-             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024));
-    canvas.setTextDatum(top_left);
+    refreshMemoryStats();
+    canvas.fillSprite(UiStyle::BG);
     canvas.setTextSize(1);
-    canvas.setTextColor(dim);
-    canvas.drawString(mem, 8, 24);
+    canvas.setTextDatum(top_left);
+    canvas.setTextWrap(false);
 
-    const int y0 = 38;
-    const int lh = 13;
-    for (uint8_t i = 0; i < 5; i++) {
-        uint8_t row = (uint8_t)((s_selected / 5) * 5 + i);
-        if (row >= ROW_COUNT) break;
-        int y = y0 + i * lh;
-        bool selected = row == s_selected;
-        if (selected) canvas.fillRect(6, y - 1, DISPLAY_W - 12, lh, active);
-        else canvas.fillRect(6, y, DISPLAY_W - 12, lh - 1, panel);
-        canvas.setTextColor(selected ? bg : text);
-        canvas.drawString(rowName((Row)row), 12, y + 1);
+    canvas.setTextColor(UiStyle::TITLE);
+    canvas.setTextSize(2);
+    canvas.drawString("TASKS", 7, 1);
+    canvas.setTextSize(1);
+    canvas.setTextColor(UiStyle::CYAN);
+    char active[24];
+    snprintf(active, sizeof(active), "ON %u/%u",
+             (unsigned)activeCount(), (unsigned)ROW_COUNT);
+    canvas.setTextDatum(top_right);
+    canvas.drawString(active, DISPLAY_W - 7, 7);
+    canvas.setTextDatum(top_left);
+    canvas.drawFastHLine(6, 18, DISPLAY_W - 12, UiStyle::PANEL);
+
+    char mem[48];
+    canvas.setTextColor(UiStyle::TEXT);
+    snprintf(mem, sizeof(mem), "FREE %uK   BIG %uK",
+             (unsigned)(s_freeHeap / 1024),
+             (unsigned)(s_largestBlock / 1024));
+    canvas.drawString(mem, 7, 21);
+    canvas.setTextColor(UiStyle::DIM);
+    if (s_sdAvailable) {
+        snprintf(mem, sizeof(mem), "MIN %uK INT %uK SD %uMB",
+                 (unsigned)(s_minFreeHeap / 1024),
+                 (unsigned)(s_internalFree / 1024),
+                 (unsigned)(s_sdFree / (1024 * 1024)));
+    } else {
+        snprintf(mem, sizeof(mem), "MIN %uK INT %uK SD OFF",
+                 (unsigned)(s_minFreeHeap / 1024),
+                 (unsigned)(s_internalFree / 1024));
+    }
+    canvas.drawString(mem, 7, 31);
+    canvas.drawFastHLine(6, 41, DISPLAY_W - 12, UiStyle::PANEL);
+
+    for (uint8_t i = 0; i < VISIBLE_ROWS; ++i) {
+        uint8_t index = (uint8_t)(s_scroll + i);
+        if (index >= ROW_COUNT) break;
+        const int y = 44 + i * 11;
+        const Row row = (Row)index;
+        const bool selected = index == s_selected;
+        const bool activeRow = rowActive(row);
+        if (selected) canvas.fillRoundRect(4, y - 1, DISPLAY_W - 8, 11, 2, UiStyle::PINK);
+        canvas.setTextColor(selected ? UiStyle::BG : UiStyle::TEXT);
+        canvas.drawString(rowName(row), 8, y);
+
+        char info[32];
+        rowInfo(row, info, sizeof(info));
+        canvas.setTextColor(selected ? UiStyle::BG :
+                            activeRow ? UiStyle::GREEN : UiStyle::DIM);
         canvas.setTextDatum(top_right);
-        char state[18];
-        snprintf(state, sizeof(state), "%s %s",
-                 rowActive((Row)row) ? "ON" : "OFF", rowCost((Row)row));
-        canvas.drawString(state, DISPLAY_W - 12, y + 1);
+        canvas.drawString(info, DISPLAY_W - 8, y);
         canvas.setTextDatum(top_left);
     }
-    canvas.setTextColor(dim);
-    canvas.drawString(";/. select  ENT stop  ` back", 8, MAIN_H - 10);
+
+    if (s_scroll > 0) {
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.drawString("^", DISPLAY_W - 7, 43);
+    }
+    if (s_scroll + VISIBLE_ROWS < ROW_COUNT) {
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.drawString("v", DISPLAY_W - 7, 88);
+    }
 }
 
 }  // namespace TaskManager

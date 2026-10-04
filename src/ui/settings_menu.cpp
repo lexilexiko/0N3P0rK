@@ -51,12 +51,14 @@ static const Item SCENE[] = {
     {"WOLF EAT",  Kind::TOGGLE, 15, 0, 1, 1},
     {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
     {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
-    {"GRASS",     Kind::TOGGLE, 10, 0, 1, 1},
+    {"GRASS BACK",Kind::TOGGLE, 10, 0, 1, 1},
+    {"GRASS FRONT",Kind::TOGGLE,21, 0, 1, 1},
     {"SHOW PIG",  Kind::TOGGLE, 11, 0, 1, 1},
     {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
     {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
+    {"CPU HUD",   Kind::TOGGLE, 22, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
@@ -198,15 +200,18 @@ static const char* const H_SCENE[] = {
     "RANDOM WOLF VISITOR.",
     "SEASONAL PROPS ON FARM.",
     "COMPANION PIG ON FARM.",
+    "DUEL CARD TABLE ON FARM.",
     "KILL EATS RANDOM HANDSHAKES.",
     "FRUIT TREES AND DROPS.",
     "RAIN SNOW CLOUDS BIRDS.",
-    "GRASS / DIRT FLOOR.",
+    "BACK GRASS AND DIRT FLOOR.",
+    "GRASS IN FRONT OF THE PIG.",
     "DRAW THE PIG BODY.",
     "LEAVES BANKS BUTTERFLIES.",
     "SPEECH BUBBLE ON/OFF.",
     "SEC BETWEEN MONOLOGUES.",
     "-/= CYCLE ANIMS ON FARM.",
+    "FRAME LOAD VS 33MS BUDGET.",
     "TYPE CODE. ENT."
 };
 
@@ -219,22 +224,23 @@ static const char* const H_SYSTEM[] = {
     "RGB LED BRIGHTNESS."
 };
 static const char* const H_RADIO[] = {
-    "STOCK / FOCUS / MAX. TUNE=CUST.",
-    "AUTO / ALL / CLIENTS / FOCUS / HERD.",
-    "OPEN KNOB EDITOR FOR CURRENT METHOD.",
-    "ENT = BACK TO STOCK RADIO.",
-    "HOW LONG YOU SIT ON A CH.",
-    "HOLD CHANNEL AFTER EAPOL.",
-    "LOCK WHEN HANDSHAKE LANDS.",
+    "RADIO PRESET.",
+    "CAPTURE METHOD.",
+    "EDIT CURRENT METHOD OPTIONS.",
+    "RESTORE DEFAULT RADIO SETTINGS.",
+    "TIME PER CHANNEL.",
+    "LOCK DURATION AFTER EAPOL.",
+    "HOLD CHANNEL WHEN HANDSHAKE ARRIVES.",
     "PAIR / +M3 / FULL 4-WAY.",
-    "NEW MAC EACH ATTACK START.",
-    "ALL / PRI 1-6-11 FIRST / CORE.",
-    "SKIP WEAK APS FOR KICK.",
-    "MAX HANDSHAKE PCAP SIZE: 1024/2048/4096/8192 B.",
-    "CAPTURE RING: 4/8/12/16/24/28 SLOTS. MORE USES MORE RAM.",
-    "RICH RADIOTAP CH/RSSI IN PCAP.",
-    "TX POWER OF INJECTED KICK FRAMES (DBM).",
-    "SEC AFTER PAIR THEN SKIP AP. 0=OFF.",
+    "RANDOMIZE RADIO MAC.",
+    "CHANNEL HOPPING ORDER.",
+    "MINIMUM SIGNAL FOR TARGET SELECTION.",
+    "MAXIMUM HANDSHAKE PCAP SIZE.",
+    "RING SLOTS: MORE SLOTS USE MORE RAM.",
+    "INCLUDE RADIO METADATA IN PCAP.",
+    "TRANSMIT POWER SETTING.",
+    "ATTACK BURST PATTERN.",
+    "SECONDS AFTER PAIR BEFORE SKIPPING AP.",
 };
 // Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
 static const char* const H_KNOBS[] = {
@@ -257,16 +263,24 @@ static const char* const H_BLE[] = {
     "MS EACH ADVERTISEMENT."
 };
 static const char* const H_KEYS[] = {
-    "A = AGGRO HUNT.",
-    "L = QUIET SNIFF.",
-    "P = WORDLIST / MASK.",
-    "E = LAB PORTAL.",
-    "B = BLE FRAMES.",
-    "I = IR BLAST.",
-    "S = 2.4 SWEEP.",
-    "H = WPASEC / PWN / OHC.",
-    "R = RADIO SETTINGS.",
-    "TASK MANAGER."
+    "AGGRESSIVE RADIO CAPTURE.",
+    "LIGHT RADIO SNIFFER.",
+    "LOCAL PASSWORD AUDIT.",
+    "EVILPIG LAB MODE.",
+    "BLE LAB MODE.",
+    "IR TRANSMITTER.",
+    "SPECTRUM SCANNER.",
+    "CAPTURE FILES AND SYNC.",
+    "RADIO SETTINGS.",
+    "SD / LITTLEFS FILE MANAGER.",
+    "PIG SETTINGS.",
+    "LOCAL XFER SERVER.",
+    "BADUSB / BADBLE TOOLS.",
+    "USB SD CARD MODE.",
+    "HOME WIFI SETTINGS.",
+    "STOP ACTIVE TASKS.",
+    "OPEN TASK MANAGER.",
+    "SCREENSHOT."
 };
 
 struct NetRow {
@@ -311,7 +325,8 @@ static const Item* items(uint8_t* n) {
 }
 
 static bool allLayersOn() {
-    return SceneLayers::pig && SceneLayers::grass && SceneLayers::trees &&
+    return SceneLayers::pig && SceneLayers::grassBack && SceneLayers::grassFront &&
+           SceneLayers::trees &&
            SceneLayers::sky && SceneLayers::weather && SceneLayers::seasonFx &&
            SceneLayers::mood && SceneLayers::wolf;
 }
@@ -426,11 +441,13 @@ static int getValue(const Item& it) {
             case 15: return p.wolfEatLoot ? 1 : 0;
             case 8: return (p.fruitTreesAmbient && SceneLayers::trees) ? 1 : 0;
             case 9: return SceneLayers::weather ? 1 : 0;
-            case 10: return SceneLayers::grass ? 1 : 0;
+            case 10: return SceneLayers::grassBack ? 1 : 0;
+            case 21: return SceneLayers::grassFront ? 1 : 0;
             case 11: return SceneLayers::pig ? 1 : 0;
             case 12: return SceneLayers::seasonFx ? 1 : 0;
             case 13: return SceneLayers::mood ? 1 : 0;
             case 14: return p.animTest ? 1 : 0;
+            case 22: return SceneLayers::cpuHud ? 1 : 0;
             case 18: return p.propsEnabled ? 1 : 0;
             case 19: return p.friendEnabled ? 1 : 0;
             case 20: return p.cardsEnabled ? 1 : 0;
@@ -745,7 +762,8 @@ static bool setValue(const Item& it, int v) {
                 SceneLayers::trees = v != 0;
                 break;
             case 9: SceneLayers::weather = v != 0; break;
-            case 10: SceneLayers::grass = v != 0; break;
+            case 10: SceneLayers::grassBack = v != 0; break;
+            case 21: SceneLayers::grassFront = v != 0; break;
             case 11: SceneLayers::pig = v != 0; break;
             case 12: SceneLayers::seasonFx = v != 0; break;
             case 13: SceneLayers::mood = v != 0; break;
@@ -753,6 +771,7 @@ static bool setValue(const Item& it, int v) {
                 p.animTest = v != 0;
                 if (v != 0) Display::showToast("ANIM TEST: -/= ON FARM", 1800);
                 break;
+            case 22: SceneLayers::cpuHud = v != 0; break;
             default: return false;
         }
         Config::save();
@@ -914,30 +933,54 @@ bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
+    const bool showHelp = ((millis() / 2500u) & 1u) != 0;
     if (s_page == SettingsPage::CONNECT) {
-        if (s_conn == ConnPhase::PASS) return "type pass  BS erase  ENT";
-        return ";/. pick  ENT  R rescan";
+        if (s_conn == ConnPhase::PASS)
+            return showHelp ? "TYPE WIFI PASSWORD" : "TYPE  BS ERASE  ENT SAVE  ESC BACK";
+        if (s_netN == 0)
+            return showHelp ? "NO NETWORKS FOUND" : "R RESCAN  ESC BACK";
+        return showHelp ? "SELECT HOME WIFI" : "^/v PICK  ENT SELECT  R RESCAN  ESC BACK";
     }
-    if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
-    if (s_page == SettingsPage::RADIO_EDIT) return ";/ pick  ENT edit  ` back";
-    if (s_text) return "type  ENT save  BS erase";
-    if (s_bind) return "press a key  ` cancel";
-    if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
-    if (s_editing) return ";/. change  ENT done";
+    if (s_page == SettingsPage::STATUS)
+        return showHelp ? "DEVICE AND STORAGE INFORMATION" : "^/v SCROLL  ESC BACK";
+    if (s_page == SettingsPage::RADIO_EDIT)
+        return showHelp ? "RADIO DETAIL SETTINGS" : "^/v PICK  ENT EDIT  ESC BACK";
+    if (s_text) return showHelp ? "ENTER TEXT VALUE" : "TYPE  ENT SAVE  BS ERASE  ESC CANCEL";
+    if (s_bind) return showHelp ? "PRESS A KEY TO ASSIGN" : "PRESS KEY  BS CLEAR  ESC CANCEL";
+    if (s_page == SettingsPage::KEYS) {
+        if (showHelp && s_idx < sizeof(H_KEYS) / sizeof(H_KEYS[0])) return H_KEYS[s_idx];
+        return "ENT ASSIGN  BS CLEAR  ESC BACK";
+    }
+    if (s_editing) return showHelp ? "ADJUST SELECTED VALUE" : "^/v CHANGE  ENT DONE  ESC BACK";
     uint8_t n = 0;
     const Item* it = items(&n);
     if (it && s_idx < n) {
-        if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
+        if (showHelp) {
+            if (s_page == SettingsPage::RADIO && s_idx < sizeof(H_RADIO) / sizeof(H_RADIO[0]))
+                return H_RADIO[s_idx];
+            if (s_page == SettingsPage::SYSTEM && s_idx < sizeof(H_SYSTEM) / sizeof(H_SYSTEM[0]))
+                return H_SYSTEM[s_idx];
+            if (s_page == SettingsPage::BLE && s_idx < sizeof(H_BLE) / sizeof(H_BLE[0]))
+                return H_BLE[s_idx];
+            if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
+                return H_SCENE[s_idx];
+            if (s_page == SettingsPage::RADIO_EDIT && s_idx < ALL_KNOBS_N) {
+                for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+                    if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) return H_KNOBS[k];
+                }
+            }
+        }
+        if (it[s_idx].kind == Kind::TOGGLE) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
         if (it[s_idx].kind == Kind::TEXT)
-            return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
+            return it[s_idx].id == 16 ? "ENT TYPE CODE  ESC BACK" : "ENT TYPE NAME  ESC BACK";
         if (it[s_idx].kind == Kind::ACTION) {
             if (s_page == SettingsPage::RADIO && it[s_idx].id == 60)
-                return "ENT open knob editor";
-            return "ENT reset radio to STOCK";
+                return "ENT OPEN EDITOR  ESC BACK";
+            return "ENT RESET RADIO  ESC BACK";
         }
-        return "ENT edit  ;/.  ` back";
+        return "ENT EDIT  ^/v MOVE  ESC BACK";
     }
-    return ";/.  ENT  ` back";
+    return "^/v MOVE  ENT SELECT  ESC BACK";
 }
 
 static void updateConnect() {
@@ -1290,23 +1333,18 @@ static void drawConnect(M5Canvas& canvas) {
         char show[40];
         snprintf(show, sizeof(show), ">%s", s_edit);
         canvas.drawString(show, 10, 68);
-        canvas.setTextColor(UI_TITLE);
-        canvas.setTextDatum(top_center);
-        canvas.drawString("TYPE PASSWORD. ENT SAVE.", DISPLAY_W / 2, MAIN_H - 10);
         return;
     }
 
     if (s_netN == 0) {
         canvas.setTextColor(UI_TITLE);
         canvas.drawString("NO NETS", 8, 40);
-        canvas.setTextColor(UI_DIM);
-        canvas.drawString("R = SCAN AGAIN", 8, 56);
         return;
     }
 
     canvas.setTextSize(2);
     const int y0 = 24;
-    const int lh = 18;
+    const int lh = 20;
     for (uint8_t i = 0; i < VIS && (s_netScroll + i) < s_netN; i++) {
         uint8_t idx = s_netScroll + i;
         int y = y0 + i * lh;
@@ -1331,10 +1369,6 @@ static void drawConnect(M5Canvas& canvas) {
         canvas.setTextDatum(top_left);
         canvas.setTextSize(2);
     }
-    canvas.setTextSize(1);
-    canvas.setTextColor(UI_TITLE);
-    canvas.setTextDatum(top_center);
-    canvas.drawString("PICK NET. ONLY TYPE PASS.", DISPLAY_W / 2, MAIN_H - 10);
 }
 
 static void drawStatus(M5Canvas& canvas) {
@@ -1407,10 +1441,6 @@ static void drawStatus(M5Canvas& canvas) {
     if (s_statScroll + STAT_VIS < statN)
         canvas.drawString("v", DISPLAY_W - 12, MAIN_H - 22);
 
-    canvas.setTextColor(UI_TITLE);
-    canvas.setTextDatum(top_center);
-    canvas.drawString(";/.  ` BACK", DISPLAY_W / 2, MAIN_H - 10);
-    canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font0);
 }
 
@@ -1451,7 +1481,7 @@ void draw(M5Canvas& canvas) {
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
     const int y0 = 24;
-    const int lh = 18;
+    const int lh = 20;
     for (uint8_t i = 0; i < VIS && (s_scroll + i) < n; i++) {
         uint8_t idx = s_scroll + i;
         int y = y0 + i * lh;
@@ -1477,30 +1507,6 @@ void draw(M5Canvas& canvas) {
     if (s_scroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
 
-    const char* const* hints = H_SCENE;
-    uint8_t hintIdx = s_idx;
-    if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
-    else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
-    else if (s_page == SettingsPage::BLE) hints = H_BLE;
-    else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
-    else if (s_page == SettingsPage::RADIO_EDIT) {
-        // Each EDITED item is a copy of an ALL_RADIO_KNOBS entry — find the
-        // matching hint by id so the description matches the highlighted knob.
-        hints = H_KNOBS;
-        hintIdx = 0;
-        for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
-            if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) {
-                hintIdx = k;
-                break;
-            }
-        }
-    }
-    if (s_idx < n && (s_page != SettingsPage::RADIO_EDIT || hintIdx < ALL_KNOBS_N)) {
-        canvas.setTextColor(UI_TITLE);
-        canvas.setTextDatum(top_center);
-        canvas.drawString(hints[hintIdx], DISPLAY_W / 2, MAIN_H - 10);
-        canvas.setTextDatum(top_left);
-    }
 }
 
 }  // namespace SettingsMenu

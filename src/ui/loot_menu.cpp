@@ -71,7 +71,6 @@ static void paintSyncLive() {
     auto& d = M5.Display;
     const int y0 = TOP_BAR_H;
     d.fillRect(0, y0, DISPLAY_W, MAIN_H, UiStyle::BG);
-    d.fillRect(0, y0 + MAIN_H - 5, DISPLAY_W, 5, UiStyle::DIRT);
     d.setTextSize(1);
     d.setTextWrap(false);
     d.setTextDatum(top_left);
@@ -444,7 +443,7 @@ const char* LootMenu::getBottomHint() {
     uint8_t hintCycle = (uint8_t)((millis() / 2500u) % 10u);
     if (syncModal) return "ENT close";
     if (diagModal) {
-        if (hintCycle & 1) return ";/.  scroll log";
+        if (hintCycle & 1) return "^/v  SCROLL LOG";
         return "ENT  close test";
     }
     if (detailView) {
@@ -459,9 +458,9 @@ const char* LootMenu::getBottomHint() {
         if (hintCycle == 0) return "Q  pull results";
         if (hintCycle == 1) return "R  reload list";
         if (hintCycle == 2) return "T  test wifi / api";
-        if (hintCycle == 3) return ",/  wp/pwn/ohc";
+        if (hintCycle == 3) return "</>  WP/PWN/OHC";
         if (hintCycle == 4) return "I  check all files";
-        return "`  back";
+        return "ESC  BACK";
     }
     switch (hintCycle) {
         case 0: return "S  send all pending";
@@ -470,10 +469,10 @@ const char* LootMenu::getBottomHint() {
         case 3: return "D  delete this file";
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
-        case 6: return "[ / ]  prev / next page";
+        case 6: return "[ ]  PREV / NEXT PAGE";
         case 7: return "i  check this file";
         case 8: return "I  check all files";
-        default: return ",/  wp/pwn/ohc";
+        default: return "</>  WP/PWN/OHC";
     }
 }
 
@@ -886,7 +885,7 @@ void LootMenu::handleInput() {
         return;
     }
 
-    // `,` steps back through the tabs, `/` steps forward. Both wrap, so a held
+    // Left/right steps back/forward through tabs. Both wrap, so a held
     // key cycles WPASEC -> PWNCRACK -> OHC -> WPASEC.
     bool tabBack = M5Cardputer.Keyboard.isKeyPressed(',');
     bool tabFwd = M5Cardputer.Keyboard.isKeyPressed('/');

@@ -912,11 +912,7 @@ void Mp3PlayerMode::draw(M5Canvas& canvas) {
         canvas.setTextDatum(top_left);
     } else {
         canvas.setTextColor(UiStyle::GOLD);
-        canvas.drawString("R RESCAN   SD /0N3P0rK/music", 6, 15);
-        canvas.setTextColor(UiStyle::DIM);
-        canvas.setTextDatum(top_right);
-        canvas.drawString("` EXIT", 234, 15);
-        canvas.setTextDatum(top_left);
+        canvas.drawString("SD /0N3P0rK/music", 6, 15);
     }
 
     // ---- cassette (reels spin while playing) ----
@@ -965,9 +961,6 @@ void Mp3PlayerMode::draw(M5Canvas& canvas) {
              (unsigned)(s_rate / 1000), (unsigned)((s_rate % 1000) / 100),
              (unsigned)s_bitrate);
     canvas.drawString(info, 6, 93);
-    // The transport bar is full (1..5 + volume), so the exit key lives here.
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString("` EXIT", 104, 93);
     canvas.setTextColor(UiStyle::DIM);
     snprintf(info, sizeof(info), "HEAP%3uK", (unsigned)(ESP.getFreeHeap() / 1024));
     canvas.setTextDatum(top_right);
@@ -983,13 +976,19 @@ void Mp3PlayerMode::drawBar(M5Canvas& canvas) {
     canvas.setTextSize(1);
     canvas.setTextDatum(top_left);
     canvas.setTextColor(0xEF5D);
-    canvas.drawString("1-", 6, 3);
-    canvas.drawString("2<<", 30, 3);
-    canvas.setTextColor(s_playing ? UiStyle::GREEN : UiStyle::GOLD);
-    canvas.drawString(s_playing ? "3STOP" : "3PLAY", 72, 3);
-    canvas.setTextColor(0xEF5D);
-    canvas.drawString("4>>", 138, 3);
-    canvas.drawString("5+", 176, 3);
+    if (s_n == 0) {
+        canvas.drawString("R RESCAN", 8, 3);
+    } else {
+        canvas.drawString("1-", 6, 3);
+        canvas.drawString("2<<", 30, 3);
+        canvas.setTextColor(s_playing ? UiStyle::GREEN : UiStyle::GOLD);
+        canvas.drawString(s_playing ? "3STOP" : "3PLAY", 66, 3);
+        canvas.setTextColor(0xEF5D);
+        canvas.drawString("4>>", 108, 3);
+        canvas.drawString("5+", 144, 3);
+    }
+    canvas.setTextColor(UiStyle::GOLD);
+    canvas.drawString("ESC EXIT", 162, 3);
     char vb[10];
     snprintf(vb, sizeof(vb), "%3u%%", (unsigned)s_vol);
     canvas.setTextColor(UiStyle::CYAN);

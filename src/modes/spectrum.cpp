@@ -39,6 +39,13 @@ static const int8_t NOISE = -92;
 static const float CENTER0 = 2442.0f;
 static const float WIDTH0 = 72.0f;
 
+// Band view window. WIDTH0 = the whole 2.4 GHz band (all 13 channels).
+// Smaller span = zoomed in; s_center pans. Kept inside [BAND_LO, BAND_HI].
+static const float BAND_LO = 2406.0f;
+static const float BAND_HI = 2478.0f;
+static const float ZOOMS[] = {72.0f, 40.0f, 24.0f, 14.0f, 8.0f, 5.0f};
+static const uint8_t ZOOM_N = 6;
+
 static const uint8_t MAX_NETS = 24;
 static const uint8_t MAX_CLI = 8;
 static const uint8_t VIS_CLI = 5;
@@ -96,6 +103,8 @@ static int8_t s_sel = -1;
 static uint8_t s_selMac[6];
 static bool s_hasSel = false;
 static float s_center = CENTER0;
+static float s_width = WIDTH0;
+static uint8_t s_zoomI = 0;
 static uint8_t s_hopI = 0;
 static uint8_t s_ch = 6;
 static uint32_t s_lastHop = 0;
@@ -189,8 +198,8 @@ static float chToFreq(uint8_t ch) {
 }
 
 static int freqToX(float f) {
-    float left = s_center - WIDTH0 * 0.5f;
-    float t = (f - left) / WIDTH0;
+    float left = s_center - s_width * 0.5f;
+    float t = (f - left) / s_width;
     return L + (int)(t * (float)W);
 }
 
@@ -202,6 +211,68 @@ static int rssiToY(int8_t rssi) {
     if (y < TOP) y = TOP;
     if (y > BOT) y = BOT;
     return y;
+}
+
+// --- band view: pan / zoom ------------------------------------------------
+static void clearWaterfall() {
+    if (s_wf) memset(s_wf, 0, (size_t)WF_ROWS * W);
+}
+
+static void clampView() {
+    if (s_width > ZOOMS[0]) s_width = ZOOMS[0];
+    if (s_width < ZOOMS[ZOOM_N - 1]) s_width = ZOOMS[ZOOM_N - 1];
+    float half = s_width * 0.5f;
+    if (s_center < BAND_LO + half) s_center = BAND_LO + half;
+    if (s_center > BAND_HI - half) s_center = BAND_HI - half;
+}
+
+static void panView(int dir) {
+    if (s_width >= ZOOMS[0]) {
+        Display::showToast("FULL BAND", 700);
+        return;
+    }
+    s_center += (float)dir * (s_width * 0.25f);
+    clampView();
+    clearWaterfall();
+}
+
+static void zoomView(int dir) {
+    int ni = (int)s_zoomI + dir;
+    if (ni < 0) ni = 0;
+    if (ni > (int)ZOOM_N - 1) ni = (int)ZOOM_N - 1;
+    if (ni == (int)s_zoomI) return;
+    s_zoomI = (uint8_t)ni;
+    s_width = ZOOMS[s_zoomI];
+    clampView();
+    clearWaterfall();
+    char m[20];
+    snprintf(m, sizeof(m), "SPAN %.0fMHZ", s_width);
+    Display::showToast(m, 700);
+}
+
+static void resetView() {
+    s_zoomI = 0;
+    s_width = WIDTH0;
+    s_center = CENTER0;
+    clampView();
+    clearWaterfall();
+    Display::showToast("FULL BAND", 700);
+}
+
+// Recenter only if a network would fall outside the current window.
+static void ensureVisible(float freq) {
+    float half = s_width * 0.5f;
+    if (freq < s_center - half + 1.0f || freq > s_center + half - 1.0f) {
+        s_center = freq;
+        clampView();
+        clearWaterfall();
+    }
+}
+
+static bool chVisible(uint8_t ch) {
+    float f = chToFreq(ch);
+    float half = s_width * 0.5f;
+    return f >= s_center - half - 2.5f && f <= s_center + half + 2.5f;
 }
 
 static float sincAmp(float dist) {
@@ -472,9 +543,37 @@ static void hopTick() {
     uint32_t now = millis();
     if (now - s_lastHop < HOP_MS) return;
     s_lastHop = now;
-    s_hopI = (uint8_t)((s_hopI + 1) % HOP_N);
-    s_ch = HOP[s_hopI];
+    // Hop across the channels currently on screen so the CH marker in the
+    // axis always matches what the radio is parked on. At full band this is
+    // the same 1..13 sweep as before.
+    for (uint8_t k = 0; k < HOP_N; k++) {
+        s_hopI = (uint8_t)((s_hopI + 1) % HOP_N);
+        uint8_t cc = HOP[s_hopI];
+        if (chVisible(cc)) { s_ch = cc; break; }
+    }
     esp_wifi_set_channel(s_ch, WIFI_SECOND_CHAN_NONE);
+}
+
+// Hold [,] / [/] to slide the band. Uses raw key state (not the one-shot
+// latch) so it repeats while held — that's what makes it feel like a pan.
+static uint32_t s_viewT0 = 0;
+static void viewTick() {
+    if (s_phase != SWEEP) return;
+    if (s_width >= ZOOMS[0]) {  // full band on screen: nothing to pan
+        s_viewT0 = 0;
+        return;
+    }
+    bool left = M5Cardputer.Keyboard.isKeyPressed(',');
+    bool right = M5Cardputer.Keyboard.isKeyPressed('/');
+    if (!left && !right) {
+        s_viewT0 = 0;
+        return;
+    }
+    uint32_t now = millis();
+    if (s_viewT0 && now - s_viewT0 < 90) return;
+    s_viewT0 = now;
+    if (left) panView(-1);
+    else panView(+1);
 }
 
 static void prune() {
@@ -624,8 +723,8 @@ static void revealTick() {
 static void updateBuf() {
     for (int i = 0; i < W; i++)
         s_col[i] = (int8_t)(NOISE + (int)(noise7() % 4) - 2);
-    float leftF = s_center - WIDTH0 * 0.5f;
-    float px = WIDTH0 / (float)W;
+    float leftF = s_center - s_width * 0.5f;
+    float px = s_width / (float)W;
     for (uint8_t i = 0; i < s_nNet; i++) {
         if (!passFilt(s_net[i])) continue;
         float c = s_net[i].freq;
@@ -674,11 +773,11 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t
     if (rx < L || lx > R) return;
     if (lx < L) lx = L;
     if (rx > R) rx = R;
-    float leftF = s_center - WIDTH0 * 0.5f;
+    float leftF = s_center - s_width * 0.5f;
     (void)act;
     int prevY = BOT;
     for (int x = lx; x <= rx; x++) {
-        float f = leftF + (float)(x - L) * WIDTH0 / (float)W;
+        float f = leftF + (float)(x - L) * s_width / (float)W;
         float amp = sincAmp(f - freq);
         int y = BOT - (int)(h * amp);
         if (y < TOP) y = TOP;
@@ -773,9 +872,14 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     if (s_filt == F_VULN) fn = "VULN";
     else if (s_filt == F_SOFT) fn = "SOFT";
     else if (s_filt == F_HIDDEN) fn = "HID";
-    char info[40];
-    snprintf(info, sizeof(info), "[F] %s  %u AP  %upps  CH%u",
-             fn, tot, (unsigned)s_pps, s_ch);
+    char info[44];
+    if (s_zoomI == 0) {
+        snprintf(info, sizeof(info), "[F] %s  %u AP  %upps  CH%u",
+                 fn, tot, (unsigned)s_pps, s_ch);
+    } else {
+        snprintf(info, sizeof(info), "[F] %s %uAP %upps CH%u Z%u",
+                 fn, tot, (unsigned)s_pps, s_ch, (unsigned)s_zoomI);
+    }
     c.setTextDatum(top_left);
     c.setTextColor(UiStyle::GOLD);
     c.drawString(info, 2, INFO_Y);
@@ -949,6 +1053,8 @@ void start() {
     s_phase = SWEEP;
     s_filt = F_ALL;
     s_center = CENTER0;
+    s_width = WIDTH0;
+    s_zoomI = 0;
     s_reveal = false;
     s_busy = false;
     memset(s_col, RSSI_MIN, sizeof(s_col));
@@ -996,7 +1102,7 @@ void getStatusLine(char* out, size_t n) {
     bool keys = ((millis() / BAR_FLIP_MS) & 1) == 0;
     if (s_phase == HUNT) {
         if (keys) {
-            snprintf(out, n, "D depth  ` stop");
+            snprintf(out, n, "D DEPTH  ESC STOP");
         } else {
             snprintf(out, n, "HUNT %s  %s",
                      huntDepthName(s_huntDepth),
@@ -1004,16 +1110,24 @@ void getStatusLine(char* out, size_t n) {
         }
     } else if (s_phase == LOCK) {
         if (keys) {
-            snprintf(out, n, "ENT hunt  D %s  SPC  `", huntDepthName(s_huntDepth));
+            snprintf(out, n, "ENT HUNT  D %s  SPC  ESC", huntDepthName(s_huntDepth));
         } else {
             int idx = findNet(s_monBssid);
             snprintf(out, n, "LOCK CH%u  %u STA",
                      s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
         }
-    } else if (keys) {
-        snprintf(out, n, ";/. sel  ENT lock  A hunt  F  `");
     } else {
-        snprintf(out, n, "SPEC  %u AP  CH%u  %upps", s_nNet, s_ch, (unsigned)s_pps);
+        // SWEEP: cycle three hint pages so pan/zoom fits without dropping the
+        // original lock/hunt/filter hints.
+        uint8_t pg = (uint8_t)((millis() / BAR_FLIP_MS) % 3u);
+        if (pg == 0) {
+            snprintf(out, n, "^/v SEL  </> PAN  -/= ZOOM  ESC");
+        } else if (pg == 1) {
+            snprintf(out, n, "ENT LOCK  A HUNT  F FILT  ESC");
+        } else {
+            snprintf(out, n, "CH%u  %.0f-%.0fMHZ  %uAP",
+                     s_ch, s_center - s_width * 0.5f, s_center + s_width * 0.5f, s_nNet);
+        }
     }
 }
 
@@ -1022,6 +1136,7 @@ static void handleSweep() {
         int n = nextSel(-1);
         if (n >= 0) {
             setSel(n);
+            ensureVisible(s_net[n].freq);
             SFX::play(SFX::MENU_CLICK);
         }
     }
@@ -1029,9 +1144,13 @@ static void handleSweep() {
         int n = nextSel(+1);
         if (n >= 0) {
             setSel(n);
+            ensureVisible(s_net[n].freq);
             SFX::play(SFX::MENU_CLICK);
         }
     }
+    if (M5Cardputer.Keyboard.isKeyPressed('-')) zoomView(-1);
+    if (M5Cardputer.Keyboard.isKeyPressed('=')) zoomView(+1);
+    if (M5Cardputer.Keyboard.isKeyPressed('0')) resetView();
     if (M5Cardputer.Keyboard.isKeyPressed('f') || M5Cardputer.Keyboard.isKeyPressed('F')) {
         s_filt = (Filt)((s_filt + 1) & 3);
         if (s_sel < 0 || s_sel >= s_nNet || !passFilt(s_net[s_sel]))
@@ -1110,6 +1229,7 @@ void update() {
     if (s_phase == HUNT) {
         Cap::loop();
     } else {
+        viewTick();
         hopTick();
         prune();
         updateBuf();

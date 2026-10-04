@@ -57,7 +57,7 @@ static const char* const H_ATTACK[] = {
 };
 static const char* const H_LOOT[] = {
     "WPASEC + PWN + OHC. ONE BAG.",
-    ",/ SWITCH TAB. S SYNC."
+    "</> SWITCH TAB. S SYNC."
 };
 static const char* const H_PIG[] = {
     "HER FACE. HER WORLD.",
@@ -77,7 +77,7 @@ static const char* const H_SYS[] = {
 };
 static const char* const H_STAT[] = {
     "BOARD BATT SD WIFI KEYS.",
-    "READ ONLY. ` BACK."
+    "READ ONLY. ESC BACK."
 };
 static const char* const H_RADIO[] = {
     "HOP LOCK DEAUTH RSSI MAC.",
@@ -117,7 +117,7 @@ static const char* const H_KEYS[] = {
 };
 static const char* const H_BLE[] = {
     "APPLE / WIN / ANDROID FRAMES.",
-    "OWN DEVICES. ;/. FAMILY."
+    "OWN DEVICES. ^/v FAMILY."
 };
 static const char* const H_IR[] = {
     "IR PORT. POINT AT THE TV.",
@@ -162,7 +162,7 @@ static const char* const H_LIFE[] = {
 };
 static const char* const H_TWEAK[] = {
     "SKIN SEASON SKY SOUND.",
-    ",/ CYCLE  ENT NAME."
+    "</> CYCLE  ENT NAME."
 };
 
 static const char* const H_MP3[] = {
@@ -412,17 +412,18 @@ void onEnter(AppMode mode) {
 }
 
 const char* hint() {
-    if (s_editing) return "type  ENT save  ` cancel";
+    if (s_editing) return "TYPE  ENT SAVE  ESC CANCEL";
     if (App::mode() == AppMode::MENU) {
-        return s_group == GroupId::NONE ? ";/.  ENT open  ` farm" : ";/.  ENT  ` back";
+        return s_group == GroupId::NONE ? "^/v  ENT OPEN  ESC FARM" : "^/v  ENT  ESC BACK";
     }
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
         App::mode() == AppMode::WIFI)
         return SettingsMenu::bottomHint();
-    return ";/.  ENT  ` back";
+    return "^/v  ENT  ESC BACK";
 }
 
 const char* selectedHint() {
+    if (((millis() / 2500u) & 1u) == 0) return hint();
     if (s_group != GroupId::NONE) {
         const Item* it = groupItems(s_group);
         uint8_t n = groupSize(s_group);
@@ -550,8 +551,6 @@ static void drawRoot(M5Canvas& canvas) {
     static const uint16_t CAT[] = {0xF800, 0xFE60, 0xFDB6, 0x07E0};
 
     canvas.fillSprite(UI_BG);
-    canvas.fillRect(0, MAIN_H - 6, DISPLAY_W, 6, 0x6A20);
-    canvas.fillRect(0, MAIN_H - 7, DISPLAY_W, 1, 0x45A0);
 
     canvas.setTextDatum(top_center);
     canvas.setTextSize(2);
@@ -561,7 +560,7 @@ static void drawRoot(M5Canvas& canvas) {
 
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
-    int y0 = 25, lh = 18;
+    int y0 = 24, lh = 20;
     for (uint8_t i = 0; i < VISIBLE && (s_rootScroll + i) < ROOT_COUNT; i++) {
         uint8_t idx = s_rootScroll + i;
         int y = y0 + i * lh;
@@ -594,8 +593,8 @@ static void drawRoot(M5Canvas& canvas) {
 static void drawModal(M5Canvas& canvas) {
     const uint16_t BOX_BG = 0x18C3, BOX_EDGE = 0xFE60, BOX_TITLE = 0xFFE0;
     const uint16_t BOX_TEXT = 0xEF5D, BOX_SEL = 0x2D20, BOX_SEL_T = 0xFFE0;
-    int boxW = 220, boxH = 90;
-    int boxX = (DISPLAY_W - boxW) / 2, boxY = 20;
+    int boxW = 220, boxH = 96;
+    int boxX = (DISPLAY_W - boxW) / 2, boxY = 6;
     canvas.fillRoundRect(boxX, boxY, boxW, boxH, 6, BOX_BG);
     canvas.drawRoundRect(boxX, boxY, boxW, boxH, 6, BOX_EDGE);
     canvas.drawRoundRect(boxX + 1, boxY + 1, boxW - 2, boxH - 2, 5, BOX_EDGE);
@@ -612,10 +611,10 @@ static void drawModal(M5Canvas& canvas) {
     canvas.setTextSize(2);
     for (int i = 0; i < MODAL_VIS && (s_modalScroll + i) < n; i++) {
         int idx = s_modalScroll + i;
-        int y = boxY + 24 + i * 16;
+        int y = boxY + 24 + i * 18;
         bool sel = (idx == s_modalIdx);
         if (sel) {
-            canvas.fillRect(boxX + 6, y, boxW - 12, 15, BOX_SEL);
+            canvas.fillRect(boxX + 6, y, boxW - 12, 17, BOX_SEL);
             canvas.setTextColor(BOX_SEL_T);
         } else {
             canvas.setTextColor(BOX_TEXT);

@@ -92,15 +92,6 @@ private:
     static char maskCharset[72];
     static uint8_t maskCharsetLen;
 
-    // Factory-PSK generator: candidates derived from the network's own SSID /
-    // BSSID. Same shape as the mask mode — no SD file, own index cursor — but
-    // the list is built once per handshake in DefaultPsk.
-    static bool defaultMode;
-    static uint32_t defaultIndex;
-    static uint16_t defaultTotal;
-    static char defaultRule[20];
-    static bool defaultReady;   // built for the current handshake
-
     // Internal methods
     static void drawUI(M5Canvas& canvas);
     static void drawFileBrowser(M5Canvas& canvas, const char* title);
@@ -136,11 +127,4 @@ private:
     static bool nextMaskPassword(char* out, size_t outSz);
     static void beginMaskRun();
     static void beginWordlistRun(const char* path);
-
-    // Factory-PSK generator: candidates derived from the network's own SSID /
-    // BSSID. No SD file and no radio — just string work on the handshake that
-    // is already parsed, so it is always worth a run before a wordlist.
-    static void beginDefaultRun();
-    static size_t buildDefaultCandidates();
-    static bool nextDefaultPassword(char* out, size_t outSz);
 };
