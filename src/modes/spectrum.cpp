@@ -898,19 +898,19 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int y = WF_TOP + row;
         for (int x = 0; x < W; x++) {
             uint8_t in = s_wf[(size_t)br * W + x];
-            if (in <= 32) continue;
+            if (in <= 20) continue;
 
-            const int strength = in > 190 ? 4 : in > 140 ? 3 :
-                                 in > 90 ? 2 : 1;
-            const uint16_t stipple = (uint16_t)(x * 73u + row * 151u);
-            const uint8_t threshold = strength == 4 ? 1 :
-                                      strength == 3 ? 3 :
-                                      strength == 2 ? 5 : 7;
-            if ((stipple & 7u) >= threshold) continue;
+            const bool pixel = in > 200 || (in > 150 && (x & 1) == 0) ||
+                               (in > 100 && x % 3 == 0) ||
+                               (in > 50 && x % 4 == 0) ||
+                               (x % 6 == 0);
+            if (!pixel) continue;
 
-            const uint16_t color = strength >= 3
-                ? blend565(palette.accent, bg, strength == 4 ? 208 : 176)
-                : blend565(palette.signal, bg, strength == 2 ? 152 : 112);
+            const uint16_t color = in > 200
+                ? blend565(palette.accent, bg, 176)
+                : in > 100
+                    ? blend565(palette.signal, bg, 160)
+                    : blend565(palette.signal, bg, 112);
             c.drawPixel(L + x, y, color);
         }
     }

@@ -1,13 +1,13 @@
 # 0N3P0rK — Full project guide & history
 
-**Current version: 1.3.6**
+**Current version: 1.3.6f**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6**.
+This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6f**.
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -58,7 +58,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6b_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6f_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -88,7 +88,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.6b`.
+   `1.3.6f`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -840,7 +840,31 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   analysis — over a short-lived heap list, so no capture is opened while the
   directory handle is still held.
 
-### 1.3.6 (current)
+### 1.3.6f (current)
+
+#### Farm and grass
+
+- Stabilized grass blade shape and layer assignment while the field scrolls,
+  removing visual flicker without changing wind or grass physics.
+- Made back- and foreground grass draw independently; the back layer remains
+  full even when the foreground layer is toggled off.
+
+#### Spectrum
+
+- Refined the spectrum view with a clearer signal trace, more visible noise,
+  and a selected-network profile using an animated dotted fill.
+- Added season-based signal and selection colors.
+- Reworked the signal-history waterfall to use clean horizontal density steps
+  and subdued seasonal colors instead of a white, diagonal-looking pattern.
+
+#### Living bottom bar
+
+- Added subtle animated burrows and a moving pixel-scale crawler to the
+  seasonal soil decoration.
+- Added quiet wet-soil and frost details during rain and snow while preserving
+  the status text and controls.
+
+### 1.3.6 (previous)
 
 #### File Manager
 

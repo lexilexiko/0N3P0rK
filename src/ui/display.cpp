@@ -618,6 +618,8 @@ void Display::drawBottomBar() {
     };
     const uint16_t motif = blend565(fringeTop, DIRT_MID, 112);
     const uint16_t petal = blend565(0xFDB6, DIRT_MID, 120);
+    const uint16_t tunnel = blend565(0x2104, DIRT_MID, 112);
+    const uint16_t tunnelEdge = blend565(fringeTop, DIRT_MID, 72);
     for (int x = 9; x < DISPLAY_W - 5; x += 24) {
         switch (season) {
             case Season::SPRING:
@@ -659,6 +661,38 @@ void Display::drawBottomBar() {
                 break;
         }
     }
+
+    // Fine burrows stay in the lower pixels so status text remains readable.
+    bottomBar.drawFastHLine(3, 12, DISPLAY_W - 6, tunnel);
+    bottomBar.drawFastHLine(8, 13, DISPLAY_W - 16, tunnelEdge);
+    const uint32_t animation = millis() / 180u;
+    for (int x = 18; x < DISPLAY_W - 18; x += 31) {
+        const int branchHeight = 1 + ((animation / 7u + (uint32_t)x) % 3u);
+        bottomBar.drawFastVLine(x, 12 - branchHeight, branchHeight, tunnel);
+        if (((animation / 5u + (uint32_t)x) & 3u) != 0)
+            bottomBar.drawPixel(x + 1, 12 - branchHeight, tunnelEdge);
+    }
+
+    const uint16_t crawler = blend565(season == Season::WINTER ? 0xEF7D : 0xFBE0,
+                                      DIRT_MID, 192);
+    const int crawlerX = 4 + (int)((animation / 2u) % (DISPLAY_W - 8));
+    bottomBar.drawPixel(crawlerX, 11, crawler);
+    bottomBar.drawPixel(crawlerX + 1, 12, crawler);
+    if ((animation & 1u) == 0 && crawlerX + 2 < DISPLAY_W)
+        bottomBar.drawPixel(crawlerX + 2, 11, crawler);
+
+    if (Weather::isRaining()) {
+        const uint16_t wetSoil = blend565(0x04FF, DIRT_MID, 88);
+        const int rainX = 5 + (int)((animation * 3u) % (DISPLAY_W - 10));
+        bottomBar.drawPixel(rainX, 3 + (int)(animation % 5u), wetSoil);
+        bottomBar.drawPixel((rainX + 83) % DISPLAY_W, 4 + (int)((animation + 2u) % 4u),
+                            wetSoil);
+    } else if (Weather::isSnowing()) {
+        const uint16_t frost = blend565(0xFFFF, fringeTop, 104);
+        const int snowX = 8 + (int)((animation * 2u) % (DISPLAY_W - 16));
+        bottomBar.drawPixel(snowX, 2 + (int)(animation % 4u), frost);
+    }
+
     bottomBar.setTextColor(TEXT_COL);
     bottomBar.setTextSize(1);
     bottomBar.setTextDatum(top_left);
