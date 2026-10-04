@@ -32,8 +32,8 @@ static const int INFO_Y = 1;
 static const int LIST_Y = 77;
 static const uint32_t BAR_FLIP_MS = 2200;
 
-static const int8_t RSSI_MIN = -95;
-static const int8_t RSSI_MAX = -30;
+static const int8_t RSSI_MIN = -100;
+static const int8_t RSSI_MAX = -60;
 static const int8_t NOISE = -92;
 
 static const float CENTER0 = 2442.0f;
@@ -211,6 +211,18 @@ static int rssiToY(int8_t rssi) {
     if (y < TOP) y = TOP;
     if (y > BOT) y = BOT;
     return y;
+}
+
+static uint16_t blend565(uint16_t foreground, uint16_t background,
+                         uint8_t foregroundWeight) {
+    uint8_t backgroundWeight = (uint8_t)(255 - foregroundWeight);
+    uint32_t r = (((foreground >> 11) & 0x1F) * foregroundWeight +
+                  ((background >> 11) & 0x1F) * backgroundWeight) / 255;
+    uint32_t g = (((foreground >> 5) & 0x3F) * foregroundWeight +
+                  ((background >> 5) & 0x3F) * backgroundWeight) / 255;
+    uint32_t b = ((foreground & 0x1F) * foregroundWeight +
+                  (background & 0x1F) * backgroundWeight) / 255;
+    return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
 // --- band view: pan / zoom ------------------------------------------------
@@ -768,7 +780,8 @@ static void updateBuf() {
     }
 }
 
-static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool selected, uint16_t act, uint16_t fg) {
+static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool selected,
+                     uint16_t act, uint16_t fg, uint16_t bg) {
     int peakY = rssiToY(rssi);
     int h = BOT - peakY;
     if (h <= 0) return;
@@ -780,12 +793,15 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool selected, uint16
     float leftF = s_center - s_width * 0.5f;
     (void)act;
     int prevY = BOT;
+    const uint16_t fillColor = blend565(UiStyle::PINK, bg, 56);
     for (int x = lx; x <= rx; x++) {
         float f = leftF + (float)(x - L) * s_width / (float)W;
         float amp = sincAmp(f - freq);
         int y = BOT - (int)(h * amp);
         if (y < TOP) y = TOP;
         if (y > BOT) y = BOT;
+        if (selected && y < BOT)
+            c.drawFastVLine(x, y, BOT - y, fillColor);
         uint16_t lineColor = selected ? UiStyle::PINK : fg;
         if (x > lx) c.drawLine(x - 1, prevY, x, y, lineColor);
         prevY = y;
@@ -845,10 +861,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     for (int y = TOP + 8; y < BOT; y += 8)
         c.drawFastHLine(L + 1, y, W - 2, grid);
 
-    const uint16_t noiseColor = (uint16_t)(
-        (((((fg >> 11) & 0x1F) * 2 + ((bg >> 11) & 0x1F) * 6) / 8) << 11) |
-        (((((fg >> 5) & 0x3F) * 2 + ((bg >> 5) & 0x3F) * 6) / 8) << 5) |
-        (((fg & 0x1F) * 2 + (bg & 0x1F) * 6) / 8));
+    const uint16_t noiseColor = blend565(fg, bg, 72);
     for (int x = 0; x < W; x += 2) {
         const int height = noise7() / 2;
         if (height > 0)
@@ -862,7 +875,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         previousY = y;
     }
     for (int x = 0; x < W; x += 3) {
-        if (s_peak[x] <= NOISE + 8) continue;
+        if (s_peak[x] <= NOISE + 4) continue;
         int peakY = rssiToY(s_peak[x]);
         c.drawFastHLine(L + x, peakY, 2, UiStyle::GOLD);
     }
@@ -871,7 +884,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         if (!passFilt(s_net[i])) continue;
         bool sel = (i == (uint8_t)s_sel);
         uint16_t act = (s_net[i].ch <= 13) ? s_chRate[s_net[i].ch] : 0;
-        drawLobe(c, s_net[i].freq, s_net[i].rssi, sel, act, fg);
+        drawLobe(c, s_net[i].freq, s_net[i].rssi, sel, act, fg, bg);
     }
 
     c.drawFastHLine(L, WF_TOP - 1, W, fg);

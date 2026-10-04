@@ -16,6 +16,8 @@ struct Blade {
     uint8_t width;
     uint8_t kind;
     uint8_t shade;
+    uint16_t windPhase;
+    bool frontLayer;
 };
 
 struct DrawCtx {
