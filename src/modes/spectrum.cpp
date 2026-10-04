@@ -236,7 +236,7 @@ static SpectrumPalette seasonPalette() {
         case Season::SUMMER: return {0x07FF, 0xFFE0};
         case Season::AUTUMN: return {0xFD20, 0xF800};
         case Season::WINTER: return {0xBDF7, 0x07FF};
-        case Season::RETRO:  return {0xC618, 0xFFFF};
+        case Season::RETRO:  return {0xC618, 0xFBE0};
         case Season::NOIR:   return {0xFE60, 0xC480};
         case Season::CITY:   return {0x07FF, 0xFD20};
         case Season::DESERT: return {0xFEA0, 0x07E0};
@@ -892,20 +892,26 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         previousY = y;
     }
 
-    c.drawFastHLine(L, WF_TOP - 1, W, fg);
+    c.drawFastHLine(L, WF_TOP - 1, W, blend565(palette.signal, bg, 112));
     for (int row = 0; row < WF_ROWS; row++) {
         int br = (s_wfRow + row) % WF_ROWS;
         int y = WF_TOP + row;
         for (int x = 0; x < W; x++) {
             uint8_t in = s_wf[(size_t)br * W + x];
-            if (in <= 20) continue;
-            bool pix = false;
-            if (in > 200) pix = true;
-            else if (in > 150) pix = ((x + row) & 1) == 0;
-            else if (in > 100) pix = ((x & 1) == 0) && ((row & 1) == 0);
-            else if (in > 50) pix = ((x % 3) == 0) && ((row & 1) == 0);
-            else pix = ((x % 4) == 0) && ((row % 3) == 0);
-            if (pix) c.drawPixel(L + x, y, fg);
+            if (in <= 32) continue;
+
+            const int strength = in > 190 ? 4 : in > 140 ? 3 :
+                                 in > 90 ? 2 : 1;
+            const uint16_t stipple = (uint16_t)(x * 73u + row * 151u);
+            const uint8_t threshold = strength == 4 ? 1 :
+                                      strength == 3 ? 3 :
+                                      strength == 2 ? 5 : 7;
+            if ((stipple & 7u) >= threshold) continue;
+
+            const uint16_t color = strength >= 3
+                ? blend565(palette.accent, bg, strength == 4 ? 208 : 176)
+                : blend565(palette.signal, bg, strength == 2 ? 152 : 112);
+            c.drawPixel(L + x, y, color);
         }
     }
 
