@@ -4,6 +4,7 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../piglet/props.h"
+#include "../piglet/cards_table.h"
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
@@ -59,6 +60,7 @@ static const Item SCENE[] = {
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
     {"CPU HUD",   Kind::TOGGLE, 22, 0, 1, 1},
+    {"UNDERGROUND",Kind::TOGGLE,23, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
@@ -196,7 +198,7 @@ static const char* const H_SCENE[] = {
     "AUTO DUSK / DAY / NIGHT.",
     "WALK SPEED AT THE EDGES.",
     "SHE LIVES WHILE YOU WORK.",
-    "MASTER: FULL SCENE OR BLANK.",
+    "QUICK TOGGLE: ALL FARM VISUALS.",
     "RANDOM WOLF VISITOR.",
     "SEASONAL PROPS ON FARM.",
     "COMPANION PIG ON FARM.",
@@ -212,6 +214,7 @@ static const char* const H_SCENE[] = {
     "SEC BETWEEN MONOLOGUES.",
     "-/= CYCLE ANIMS ON FARM.",
     "FRAME LOAD VS 33MS BUDGET.",
+    "ROOTS, BURROWS AND CRAWLERS.",
     "TYPE CODE. ENT."
 };
 
@@ -325,8 +328,11 @@ static const Item* items(uint8_t* n) {
 }
 
 static bool allLayersOn() {
+    const PersonalityConfig& p = Config::personality();
     return SceneLayers::pig && SceneLayers::grassBack && SceneLayers::grassFront &&
-           SceneLayers::trees &&
+           SceneLayers::trees && p.fruitTreesAmbient &&
+           SceneLayers::underground && p.propsEnabled && p.friendEnabled &&
+           p.cardsEnabled && p.wolfEnabled &&
            SceneLayers::sky && SceneLayers::weather && SceneLayers::seasonFx &&
            SceneLayers::mood && SceneLayers::wolf;
 }
@@ -448,6 +454,7 @@ static int getValue(const Item& it) {
             case 13: return SceneLayers::mood ? 1 : 0;
             case 14: return p.animTest ? 1 : 0;
             case 22: return SceneLayers::cpuHud ? 1 : 0;
+            case 23: return SceneLayers::underground ? 1 : 0;
             case 18: return p.propsEnabled ? 1 : 0;
             case 19: return p.friendEnabled ? 1 : 0;
             case 20: return p.cardsEnabled ? 1 : 0;
@@ -721,7 +728,16 @@ static bool setValue(const Item& it, int v) {
             case 5: p.freeLife = v != 0; break;
             case 6:
                 SceneLayers::setAll(v != 0);
-                if (v == 0) Wolf::reset();
+                p.fruitTreesAmbient = v != 0;
+                p.propsEnabled = v != 0;
+                p.friendEnabled = v != 0;
+                p.cardsEnabled = v != 0;
+                p.wolfEnabled = v != 0;
+                if (v == 0) {
+                    Wolf::reset();
+                    Props::forceDemo(6);
+                    if (CardsTable::isActive()) CardsTable::end();
+                }
                 break;
             case 7:
                 p.wolfEnabled = v != 0;
@@ -772,6 +788,7 @@ static bool setValue(const Item& it, int v) {
                 if (v != 0) Display::showToast("ANIM TEST: -/= ON FARM", 1800);
                 break;
             case 22: SceneLayers::cpuHud = v != 0; break;
+            case 23: SceneLayers::underground = v != 0; break;
             default: return false;
         }
         Config::save();

@@ -16,8 +16,10 @@ namespace Ground {
 
 static Blade s_blades[BLADE_COUNT];
 static int16_t s_offset = 0;
+static uint16_t s_burrowScrollPhase = 0;
 static uint16_t s_speed = 80;
 static uint32_t s_lastUpdate = 0;
+static constexpr uint16_t BURROW_PATTERN_W = Trees::WORLD_SPAN;
 
 
 static constexpr int16_t PX = 3;
@@ -105,9 +107,29 @@ void setSpeed(uint16_t ms) {
 uint16_t getSpeed() { return s_speed; }
 
 int16_t offset() { return s_offset; }
+uint16_t burrowScrollPhase() { return s_burrowScrollPhase; }
+
+void drawUndergroundRoots(M5Canvas& canvas, uint16_t rootColor,
+                          uint16_t rootHighlight) {
+    for (int i = 0; i < BLADE_COUNT; i++) {
+        const Blade& blade = s_blades[i];
+        int16_t x = i * STRIDE + s_offset;
+        if (x < -STRIDE) x += 240 + STRIDE;
+        if (x >= 240 || blade.shade == 0) continue;
+
+        const int depth = blade.kind == 3 ? 2 : 3 + (blade.shade & 1);
+        canvas.drawFastVLine(x, 2, depth, rootColor);
+        if ((blade.shade & 2u) == 0) {
+            canvas.drawLine(x, 3, x - 1, 4, rootHighlight);
+            if (blade.kind != 3)
+                canvas.drawLine(x, 4, x + 1, 5, rootColor);
+        }
+    }
+}
 
 void resetBlades() {
     s_offset = 0;
+    s_burrowScrollPhase = 0;
     for (int i = 0; i < BLADE_COUNT; i++) {
         uint8_t r = (uint8_t)(esp_random() % 100);
         if (r < 10) {
@@ -154,6 +176,8 @@ void updateScroll(bool moving, bool directionRight, int steps) {
     for (int n = 0; n < steps; n++) {
         if (directionRight) {
             s_offset++;
+            s_burrowScrollPhase =
+                (uint16_t)((s_burrowScrollPhase + 1) % BURROW_PATTERN_W);
             Trees::scroll(+1);
             SeasonalFx::scroll(+1);
             Props::scroll(+1);
@@ -169,6 +193,9 @@ void updateScroll(bool moving, bool directionRight, int steps) {
             }
         } else {
             s_offset--;
+            s_burrowScrollPhase = s_burrowScrollPhase == 0
+                ? (uint16_t)(BURROW_PATTERN_W - 1)
+                : (uint16_t)(s_burrowScrollPhase - 1);
             Trees::scroll(-1);
             SeasonalFx::scroll(-1);
             Props::scroll(-1);

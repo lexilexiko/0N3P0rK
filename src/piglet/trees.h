@@ -67,6 +67,8 @@ void setStompShake(int8_t shake);
 
 // Draw all trees (+ falling fruit/berries). yOffset for top-bar bleed.
 void draw(M5Canvas& canvas, int16_t yOffset = 0);
+void drawUnderground(M5Canvas& canvas, uint16_t rootColor,
+                     uint16_t rootHighlight);
 // Draw falling drops/splashes in the foreground (call after front grass layer)
 void drawDropsForeground(M5Canvas& canvas);
 void drawBarOverflow(M5Canvas& bar);

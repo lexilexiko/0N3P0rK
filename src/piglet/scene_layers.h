@@ -10,6 +10,7 @@ namespace SceneLayers {
 extern bool pig;
 extern bool grassBack;
 extern bool grassFront;
+extern bool underground;
 extern bool trees;
 extern bool sky;       // sky gradient backdrop
 extern bool weather;   // rain/snow/clouds/birds/wind

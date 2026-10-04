@@ -859,10 +859,13 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 
 #### Living bottom bar
 
-- Added subtle animated burrows and a moving pixel-scale crawler to the
-  seasonal soil decoration.
-- Added quiet wet-soil and frost details during rain and snow while preserving
-  the status text and controls.
+- Replaced stationary seasonal specks with a scrolling underground ant-farm
+  layer: branching tunnels dug by independently wandering ants, which gradually
+  crumble before the ants open new paths.
+- Thick, branching roots follow actual trees and bushes through their growth,
+  collapse, and world-scroll animations; small roots also grow under grass.
+- The **PIG → UNDERGROUND** toggle controls the layer.
+- Kept the seasonal soil palette and status text readable above the animation.
 
 ### 1.3.6 (previous)
 

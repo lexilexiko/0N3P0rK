@@ -2043,4 +2043,68 @@ void drawBarOverflow(M5Canvas& bar) {
     draw(bar, (int16_t)TOP_BAR_H);
 }
 
+void drawUnderground(M5Canvas& canvas, uint16_t rootColor,
+                     uint16_t rootHighlight) {
+    for (uint8_t i = 0; i < 3; i++) {
+        const Slot& t = slots[i];
+        if (t.phase == Phase::HIDDEN || t.growth <= 0.01f) continue;
+        if (t.style == SeasonTree::LAMP || t.style == SeasonTree::STALL ||
+            t.style == SeasonTree::TRASH)
+            continue;
+
+        const int16_t x = screenX(t);
+        if (x < -12 || x > DISPLAY_W + 12) continue;
+
+        const float growth = t.growth > 1.0f ? 1.0f : t.growth;
+        const int maxDepth = t.kind == Kind::BERRY ? 9 : 13;
+        const int depth = (int)(maxDepth * growth);
+        if (depth < 2) continue;
+
+        auto rootStroke = [&canvas, rootColor](int x1, int y1,
+                                               int x2, int y2,
+                                               uint8_t thickness) {
+            for (int offset = 0; offset < thickness; offset++) {
+                const int centeredOffset = offset - (int)(thickness / 2);
+                canvas.drawLine(x1 + centeredOffset, y1,
+                                x2 + centeredOffset, y2, rootColor);
+            }
+        };
+
+        uint32_t seed = t.seed ^ ((uint32_t)i * 0x9E3779B9u);
+        auto randStep = [&seed](uint8_t max) -> uint8_t {
+            seed = seed * 1664525u + 1013904223u;
+            return (uint8_t)((seed >> 24) % max);
+        };
+
+        const int tapDepth = depth < 3 ? depth : depth - 1;
+        canvas.fillRect(x - 1, 1, 3, tapDepth, rootColor);
+        canvas.drawFastVLine(x - 2, 2, tapDepth - 1, rootHighlight);
+
+        const int branchCount = t.kind == Kind::BERRY ? 5 : 8;
+        for (int branch = 0; branch < branchCount; branch++) {
+            const int startY = 2 + (int)randStep((uint8_t)(depth > 2 ? depth - 1 : 1));
+            const int reach = 4 + (int)randStep(t.kind == Kind::BERRY ? 5 : 9);
+            const int direction = randStep(2) ? 1 : -1;
+            const int endX = x + direction * reach;
+            const int endY = startY + (int)randStep(3);
+            if (endY > depth + 1) continue;
+
+            const uint8_t thickness = branch % 3 == 0 ? 3 : 2;
+            const int midX = x + direction * (reach / 2);
+            const int midY = startY + (endY > startY ? 1 : 0);
+            rootStroke(x, startY, midX, midY, thickness);
+            rootStroke(midX, midY, endX, endY, thickness > 1 ? 2 : 1);
+
+            if (endY + 1 < depth && (branch & 1) == 0)
+                rootStroke(endX, endY, endX + direction * 2, endY + 1, 1);
+        }
+
+        if (t.kind != Kind::BERRY && growth > 0.35f) {
+            const int spread = 5 + (int)(t.seed % 5u);
+            rootStroke(x, 4, x - spread, 8, 3);
+            rootStroke(x, 5, x + spread + 1, 9, 3);
+        }
+    }
+}
+
 }  // namespace Trees

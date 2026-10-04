@@ -37,5 +37,8 @@ uint16_t getSpeed();
 void updateScroll(bool moving, bool directionRight, int steps);
 void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx);
 int16_t offset();
+uint16_t burrowScrollPhase();
+void drawUndergroundRoots(M5Canvas& canvas, uint16_t rootColor,
+                          uint16_t rootHighlight);
 
 }  // namespace Ground
