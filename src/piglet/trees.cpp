@@ -2043,4 +2043,120 @@ void drawBarOverflow(M5Canvas& bar) {
     draw(bar, (int16_t)TOP_BAR_H);
 }
 
+void drawUnderground(M5Canvas& canvas, uint16_t rootColor,
+                     uint16_t rootHighlight) {
+    const Season season = Weather::getActiveSeason();
+    if (season == Season::CITY) return;
+
+    for (uint8_t i = 0; i < 3; i++) {
+        const Slot& t = slots[i];
+        if (t.phase == Phase::HIDDEN || t.growth <= 0.01f) continue;
+        if (t.style == SeasonTree::LAMP || t.style == SeasonTree::STALL ||
+            t.style == SeasonTree::TRASH)
+            continue;
+
+        const int16_t x = screenX(t);
+        if (x < -12 || x > DISPLAY_W + 12) continue;
+
+        uint16_t bark = rootColor;
+        uint16_t barkDark = rootHighlight;
+        uint16_t barkLight = rootColor;
+        if (season == Season::RETRO) {
+            bark = R_TRUNK;
+            barkDark = R_TRUNK2;
+            barkLight = R_TRUNK_H;
+        } else if (season == Season::NOIR) {
+            bark = 0x4208;
+            barkDark = 0x2104;
+            barkLight = 0x630C;
+        } else if (season == Season::DESERT) {
+            if (t.style == SeasonTree::CACTUS) {
+                bark = 0x2C80;
+                barkDark = 0x1A40;
+                barkLight = 0x45A0;
+            } else {
+                bark = 0x9A40;
+                barkDark = 0x6180;
+                barkLight = 0xC4A0;
+            }
+        } else if (season == Season::SPRING &&
+                   t.style == SeasonTree::CHERRY) {
+            bark = C_CHERRY_TRUNK;
+            barkDark = C_CHERRY_TRUNK2;
+            barkLight = C_CHERRY_TRUNK_H;
+        } else if (season == Season::SPRING &&
+                   t.style == SeasonTree::WILLOW) {
+            bark = C_WILLOW_TRUNK;
+            barkDark = C_WILLOW_TRUNK2;
+            barkLight = C_WILLOW_TRUNK_H;
+        } else if (season == Season::AUTUMN &&
+                   t.style == SeasonTree::OLD_APPLE) {
+            bark = 0x6A00;
+            barkDark = 0x4100;
+            barkLight = 0x9B20;
+        } else if (season == Season::WINTER) {
+            bark = C_TRUNK;
+            barkDark = C_TRUNK2;
+            barkLight = C_TRUNK_H;
+        } else {
+            bark = C_TRUNK;
+            barkDark = C_TRUNK2;
+            barkLight = C_TRUNK_H;
+        }
+
+        const float growth = t.growth > 1.0f ? 1.0f : t.growth;
+        const int maxDepth = t.kind == Kind::BERRY ? 10 : 14;
+        const int depth = (int)(maxDepth * growth);
+        if (depth < 2) continue;
+
+        auto rootStroke = [&canvas](int x1, int y1, int x2, int y2,
+                                    uint16_t color, uint8_t thickness) {
+            for (int offset = 0; offset < thickness; offset++) {
+                const int centeredOffset = offset - (int)(thickness / 2);
+                canvas.drawLine(x1 + centeredOffset, y1,
+                                x2 + centeredOffset, y2, color);
+            }
+        };
+
+        uint32_t seed = t.seed ^ ((uint32_t)i * 0x9E3779B9u);
+        seed = seed * 1664525u + 1013904223u;
+        const int spread = (t.kind == Kind::BERRY ? 5 : 8) +
+                           (int)((seed >> 24) % 4u);
+        const int splitY = depth > 7 ? 4 : depth / 2;
+        const int leftEndY = depth > 9 ? 9 + (int)((seed >> 8) % 3u) : depth;
+        const int rightEndY = depth > 9 ? 9 + (int)((seed >> 16) % 3u) : depth;
+        const int leftX = x - spread;
+        const int rightX = x + spread;
+        const int trunkEndY = depth > 4 ? 4 : depth;
+
+        // A short taproot feeds two broad lateral roots which fork near their tips.
+        canvas.fillRect(x - 2, 1, 5, trunkEndY - 1, barkDark);
+        canvas.fillRect(x - 1, 1, 3, trunkEndY - 1, bark);
+        canvas.drawFastVLine(x - 1, 1, trunkEndY - 2, barkLight);
+
+        rootStroke(x, trunkEndY, x - 3, splitY + 1, barkDark, 5);
+        rootStroke(x, trunkEndY, x + 3, splitY + 1, barkDark, 5);
+        rootStroke(x, trunkEndY, x - 3, splitY + 1, bark, 3);
+        rootStroke(x, trunkEndY, x + 3, splitY + 1, bark, 3);
+        rootStroke(x - 3, splitY + 1, leftX, leftEndY, barkDark, 4);
+        rootStroke(x + 3, splitY + 1, rightX, rightEndY, barkDark, 4);
+        rootStroke(x - 3, splitY + 1, leftX, leftEndY, bark, 2);
+        rootStroke(x + 3, splitY + 1, rightX, rightEndY, bark, 2);
+        rootStroke(x - 1, trunkEndY, x - 4, splitY, barkLight, 1);
+        rootStroke(x + 1, trunkEndY, x + 2, splitY, barkLight, 1);
+
+        if (depth > 7) {
+            const int fork = depth > 10 ? 2 : 1;
+            rootStroke(x - spread / 2, splitY + 3,
+                       x - spread - fork, splitY + 5, barkDark, 3);
+            rootStroke(x - spread / 2, splitY + 3,
+                       x - spread - fork, splitY + 5, bark, 1);
+            rootStroke(x + spread / 2, splitY + 3,
+                       x + spread + fork, splitY + 5, barkDark, 3);
+            rootStroke(x + spread / 2, splitY + 3,
+                       x + spread + fork, splitY + 5, bark, 1);
+        }
+    }
+}
+
 }  // namespace Trees

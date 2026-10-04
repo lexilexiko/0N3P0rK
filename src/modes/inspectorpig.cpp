@@ -983,7 +983,7 @@ void InspectorPig::update() {
 
 void InspectorPig::getStatusLine(char* buf, size_t n) {
     if (!buf || !n) return;
-    bool help = ((millis() / 2500u) & 1u) != 0;
+    bool help = (millis() % 7500u) >= 5000u;
     if (phase == Phase::DETAIL) {
         if (help) snprintf(buf, n, "^/v SCROLL  ESC BACK");
         else snprintf(buf, n, "REPORT %u/%u", (unsigned)lineScroll, (unsigned)lineCount);

@@ -1,7 +1,5 @@
-// "SOFT" pack — light/quiet tuning paired with the ALL capture method.
-// Minimal TX: broadcast kick only, no bidir/EAPOL/PMKID/CSA. FOCUS extras
-// stay off (ALL does not score); strict lock still on so if a handshake
-// starts we do not wander.
+// "SOFT" pairs with ALL for passive capture: it disables kick, EAPOL TX,
+// PMKID probing and CSA. The sniffer still listens and saves captured data.
 #include "pack_ctx.h"
 
 namespace Cap {
@@ -20,7 +18,7 @@ static const Preset kOursPreset{
     /* jitterMs      */ 0,
     /* cooldownSec   */ 0,
     /* scoreThr      */ 0,
-    /* hsDepth       */ 0,      // PAIR is enough
+    /* hsDepth       */ 0,      // M1+M2; deeper capture is user-selected
     /* dataAct       */ 0,
     /* strictLock    */ true,
     /* depthHoldSec  */ 0,

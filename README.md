@@ -1,13 +1,15 @@
-# 0N3P0rK — Full project guide & history
+# 0N3P0rK — Project guide
 
-**Current version: 1.3.6**
+**Current version: 1.3.6f (FixFIxFIx)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
 
 > Think Tamagotchi first. The radio is in the barn.
 
-This document is the **full** project picture: what the device is, how to flash it, how to use the main menus, and **what changed from early builds through 1.3.6**.
+This guide covers the current device features, setup, and everyday use.
+For the chronological list of changes, see the
+[version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
 ---
@@ -24,13 +26,14 @@ Secret menu codes are **not** listed here (keep them private).
 8. [BadUSB and BadBLE](#badusb-and-badble)
 9. [LED indicator](#led-indicator)
 10. [XFER file transfer](#xfer-file-transfer)
-11. [Music (MP3 player)](#music-mp3-player)
-12. [InspectorPig](#inspectorpig-inspect)
-13. [PigPass](#pigpass)
-14. [SD layout](#sd-layout)
-15. [Web site](#web-site)
-16. [Version history](#version-history)
-17. [Legal & credits](#legal--credits)
+11. [FILES — SD File Manager](#files--sd-file-manager)
+12. [Music (MP3 player)](#music-mp3-player)
+13. [InspectorPig](#inspectorpig-inspect)
+14. [PigPass](#pigpass)
+15. [SD layout](#sd-layout)
+16. [Web site](#web-site)
+17. [Version history](#version-history)
+18. [Legal & credits](#legal--credits)
 
 ---
 
@@ -58,7 +61,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6b_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6f_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -88,7 +91,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.6b`.
+   `1.3.6f`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -101,7 +104,8 @@ newer fields.
 1. Insert a **FAT32** microSD before boot (loot / talk / wordlists).
 2. Device boots to the **farm** with the pig.
 3. Open **SETTINGS** from the menu.
-4. Use **RADIO** for capture, **PIGPASS** for offline crack, **LOOT** / file manager for SD files.
+4. Use **RADIO** for capture, **LOOT** for captures and service sync, and
+   **FILES** to browse and manage SD files.
 5. Play on the farm: walk, jump, seasons, wolf, XP — features unlock as the level grows.
 
 ## Basic controls
@@ -111,9 +115,9 @@ The exact key labels are shown in the bottom hint bar and may be changed under
 
 | Control | Typical action |
 | --- | --- |
-| `;` / `.` | Move the selection up / down |
-| `ENTER` | Open, confirm, or start the selected item |
-| `` ` `` | Go back or close the current page |
+| `^` / `v` | Move the selection up / down |
+| `ENT` | Open, confirm, or start the selected item |
+| `ESC` | Go back or close the current page |
 | `SPACE` | Farm attack-hop; in Spectrum, perform the current action |
 | `Z` | Skip the current radio target for this capture session |
 | `G` / `0` | Dim or suspend the farm presentation while supported radio work continues |
@@ -150,7 +154,7 @@ Z-order (back → front), modular files under `src/piglet/`:
 | **props** | Seasonal daily objects (hive, snowman, fox, fire, …) |
 | **avatar** | Player pig + movement |
 | **friend_pig** | Companion pig (lv 40+) |
-| **cards_table** | Farm table for future card game (lv 45+) |
+| **cards_table** | Playable card-duel table (lv 45+) |
 | **wolf** | Visitor; can target player or friend |
 | **mood** | Stats, speech bubbles, monologues |
 | **credits** | Level-50 thank-you roll |
@@ -168,7 +172,39 @@ Z-order (back → front), modular files under `src/piglet/`:
 - Layer toggles (grass, trees, weather, mood, wolf…)  
 - **TALK SEC** — monologue interval  
 - **PROPS** / **FRIEND** on/off (when unlocked)  
+- **UNDERGROUND** on/off for the animated ant-farm footer
 - **CODE** — private unlock strings (not documented publicly)
+
+### Living underground
+
+The bottom bar can show a scrolling underground scene with ants that wander
+through branching tunnels. Tunnels appear, age, and are dug again. Thick,
+forked tree and bush roots follow the plants as they grow, collapse, and scroll;
+small grass roots remain in every season. Seasonal soil colors match the scene.
+City props such as lamps, stalls, and trash cans have no roots. Toggle the whole
+scene under **PIG → UNDERGROUND**.
+
+### Card duel
+
+At level **45**, jump onto the farm card table to start a playable duel. Choose
+two cards from the five-card hand; the rival chooses its own pair. Attack,
+defense, healing, and occasional combo cards resolve in two exchanges. Win two
+rounds to win the match.
+
+The duel shows current/max HP, round and match score, card strength, and a
+mirrored combat summary for both sides. The previous turn's damage and healing
+remain visible while choosing the next hand. Cards animate with fire, shield,
+or healing-drop effects; attacks, defenses, and heals have distinct impact
+animations and sound cues.
+
+| Key shown in the duel hint | Action |
+| --- | --- |
+| `1`–`5` | Select or unselect a card; choose two |
+| `ENT` | Play the selected cards, continue after a round, or confirm the result |
+| `ESC` | Leave the duel |
+
+The on-screen hint changes with the duel phase, for example
+`1-5 PICK 2 CARDS`, `1-5 CARD ENT PLAY`, and `ENT NEXT`; press `ESC` to leave.
 
 ### XP
 
@@ -199,7 +235,7 @@ Z-order (back → front), modular files under `src/piglet/`:
 | **30** | **DESERT** |
 | **35** | Seasonal **props** system |
 | **40** | **Friend** pig |
-| **45** | **Cards table** (jump → stub: cards not ready) |
+| **45** | **Playable card duel** |
 | **50** | **Credits** (~10 s, cannot skip) |
 
 ### Seasonal props (once per **game-day** ≈ 360 s)
@@ -279,7 +315,7 @@ The third **LOOT** tab uploads captures to the public OnlineHashCrack WPA API.
 
 - The tab lists the same `.pcap` captures as **WPASEC**, but points at a
   different service, so a capture can be sent to both.
-- Switch tabs with `,` (back) and `/` (forward); the order is
+- Switch tabs with `<` (back) and `>` (forward); the order is
   WPASEC → PWNCRACK → OHC.
 - `S` uploads every capture that was not sent yet, `U` uploads the selected
   one. `D`, `R`, `T` and the paging keys work exactly as in the other tabs.
@@ -356,13 +392,25 @@ to the keyless capture endpoint.
 
 The **SET → RADIO** page contains the stable radio controls:
 
-- channel hop set and dwell timing;
+- channel hop set and timing: **HOP MS** sets the normal interval, while
+  **MIN DWELL** can be `OFF` or `50–600 ms` and acts as a lower bound;
 - lock timing and lock-on-handshake behavior;
 - handshake method and fallback selection;
 - deauthentication and EAPOL/PMKID options;
 - RSSI filtering and kick burst count;
 - PCAP format and maximum capture size;
-- handshake depth and target hold behavior.
+- handshake depth and target hold behavior. **HS DEPTH** is user-controlled:
+  `M1–M2` is the default; select `+M3` or `FULL` yourself when needed.
+
+Radio **PACK** presets do not force deeper handshake capture: their configured
+depth remains `M1–M2`. The **SOFT** pack performs passive capture without
+transmission actions; the sniffer still listens and saves captured data.
+**FOCUS** no longer double-counts successfully transmitted broadcast frames in
+its displayed frame total.
+
+For contributors, the [capture-method guide](src/cap/methods/README.md) and
+[radio-pack guide](src/cap/packs/README.md) explain how to add methods and
+presets, how RADIO → EDIT knobs map to a method, and how frame accounting works.
 
 The **PACK** selector applies a tested group of radio values. Editing
 individual values marks the profile as custom. **RADIO → RESET** restores the
@@ -372,27 +420,10 @@ stock radio profile without deleting files from the SD card.
 
 Open **ATTACK → SPECTRUM** to view nearby 2.4 GHz activity, detected access
 points, clients, channels, authentication type, and PMF information. Press
-`ENTER` on a network to lock its view. Spectrum can suspend the farm scene to
+`ENT` on a network to lock its view. The signal display uses seasonal colors,
+a more visible noise trace, and a dotted selected-network profile; the signal
+history uses horizontal density steps. Spectrum can suspend the farm scene to
 reduce CPU work while it is active.
-
-The band view can be panned and zoomed like a bench analyzer instead of always
-showing all 13 channels squeezed together:
-
-| Key | Action |
-| --- | --- |
-| `^` / `v` | Move the network selection up / down |
-| `</>` | Slide the band left / right (hold to keep panning) |
-| `-` / `=` | Zoom the band out / in |
-| `0` | Reset to the full band |
-
-Arrow notation matches the on-device hints: `^` / `v` are `;` / `.`, and `</>`
-are `,` / `/`.
-
-Zooming in shrinks the visible span (72 → 40 → 24 → 14 → 8 → 5 MHz) so a single
-channel fills the screen. The channel numbers along the axis only show the
-channels currently in view, and the radio hops only across those visible
-channels, so the highlighted channel always matches what you see. Selecting a
-network with `;` / `.` recentres the view if that network is off-screen.
 
 ## BadUSB and BadBLE
 
@@ -412,11 +443,10 @@ explicitly authorized to test.
 | `P` | Toggle PC / phone preset profile |
 | `C` | Connect or advertise the selected HID transport |
 | `R` | Rescan `/0N3P0rK/badusb/` for scripts |
-| `;` / `,` | Move selection up |
-| `.` / `/` | Move selection down |
-| `ENTER` | Run a script, arm Live typing, or execute a preset |
-| `FN` + `` ` `` | Disarm Live typing |
-| `` ` `` | Exit BadUSB |
+| `^` / `v` | Move selection up / down |
+| `ENT` | Run a script, arm Live typing, or execute a preset |
+| `FN` + `ESC` | Disarm Live typing |
+| `ESC` | Exit BadUSB |
 
 The screen shows the selected transport, profile, connection status, and a
 small status indicator. USB mode waits for a mounted USB HID host. BLE mode
@@ -483,7 +513,7 @@ SD card without removing it from the Cardputer.
 2. Connect a phone or computer to the Wi-Fi network shown on the Cardputer.
 3. Open `http://192.168.4.1` in a browser.
 4. Browse directories, download files, upload files, or delete files.
-5. Press `` ` `` on the Cardputer to stop XFER and turn off its access point.
+5. Press `ESC` on the Cardputer to stop XFER and turn off its access point.
 
 The default network credentials are:
 
@@ -516,6 +546,49 @@ important captures backed up before deleting or replacing them.
 Starting XFER stops an active capture session and suspends the farm scene to
 free radio and memory resources. Stop XFER before starting another Wi-Fi mode.
 
+## FILES — SD File Manager
+
+Open **FILES** from the main menu to browse and manage the microSD card. This
+manager works with SD storage; it does not expose internal flash as a user
+file system. Directories are navigable, the listing is sorted and scrollable,
+and low memory is reported if only a partial listing can be built.
+
+### Browse and manage
+
+| Key | Action |
+| --- | --- |
+| `^` / `v` | Select the previous / next entry |
+| `ENT` | Open a directory or file |
+| `BKSP` / `ESC` | Go to the parent directory; exit at the SD root |
+| `N` | Create a text file (opens it in the editor) |
+| `M` | Create a folder |
+| `R` | Rename the selected entry |
+| `C` | Copy the selected file or directory |
+| `V` | Mark the selected file or directory to move |
+| `P` | Paste the clipboard into the current directory |
+| `X` | Delete the selected entry after confirmation |
+| `T` | Refresh the directory listing |
+
+Pasting over an existing destination requires confirmation. Deleting a
+directory removes its contents recursively, so check the selected path before
+confirming.
+
+### Preview and edit
+
+- Text and configuration formats can be previewed, edited, and saved.
+- JPEG, PNG, and BMP images open in the image preview.
+- Other file types show file information; press `E` to try opening them as text.
+- In text preview, `^` / `v` scroll and `E` enters the editor.
+- In the editor, `ESC` saves changed text and returns to the list; Backspace
+  deletes the character before the cursor. Cursor and line movement use
+  `<`, `>`, `^`, and `v`.
+- Create, rename, delete, and overwrite actions report failures and ask before
+  destructive replacements.
+
+Working buffers and directory entries are allocated while FILES is open and
+released on exit. The text-edit buffer is allocated only for text preview or
+editing.
+
 ### Other modes
 
 | Mode | Role |
@@ -524,7 +597,7 @@ free radio and memory resources. Stop XFER before starting another Wi-Fi mode.
 | **PigPass** | Offline PSK try from captures + wordlist |
 | **EvilPig** | Portal-style lab tool |
 | **BLE / IR / USB SD** | Extra toys as implemented |
-| **Loot / File manager** | Browse SD; manager is SD-only |
+| **LOOT** | Browse captures and synchronize with supported services |
 
 ---
 
@@ -544,7 +617,7 @@ position, spinning reels and a VU meter. The bottom bar becomes the transport.
 | `4` | Next track |
 | `5` | Volume up 5% |
 | `R` | Rescan the music folder |
-| `` ` `` | Exit MP3 |
+| `ESC` | Exit MP3 |
 
 When a track ends the player starts the next one and wraps around at the end
 of the list. The volume is stored in the device configuration.
@@ -554,8 +627,8 @@ of the list. The volume is stored in the device configuration.
 Backspace hides the scene and gives the farm back to you — the song keeps
 playing (it also survives the G0 screen-off). The bottom bar then shows the
 transport state (`MIN PLAY 03/12 01:23`), and `1`..`5` still steer volume and
-tracks while you watch the pig. Backspace again brings the player back,
-`` ` `` stops the music and returns to the menu. Digits that you bound as farm
+tracks while you watch the pig. Backspace again brings the player back, `ESC` stops the music and returns to
+the menu. Digits that you bound as farm
 hotkeys in **SET → KEYS** keep their hotkey role instead.
 
 ### Files
@@ -610,12 +683,12 @@ never grows beyond those two buffers.
 
 | Key | Action |
 | --- | --- |
-| `;` / `,` | Move selection up |
-| `.` / `/` | Move selection down |
+| `^` / `v` | Move selection up / down |
+| `<` / `>` | Switch tabs |
 | `ENT` | Inspect the selected capture (opens the detailed report) |
 | `A` | Inspect **all** captures in `/0N3P0rK/handshakes/` |
 | `R` | Rescan the handshakes folder |
-| `` ` `` | Return to list (from report) or exit to main menu |
+| `ESC` | Return to list (from report) or exit to main menu |
 
 ### Reports on SD
 
@@ -685,215 +758,8 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-Approximate product line from early Methodik / handshake-first builds to current.  
-Patch numbers may match tags you used in git; the **story** is what matters.
-
-### Early line (pre–1.2 / Methodik roots)
-
-- Pig farm UI on Cardputer  
-- Wi‑Fi sniffer focused on **handshake** catch  
-- Loot on storage, basic menus  
-- Influence / parallel ideas from the wider Cardputer & handshake scene (including **Oct0sec / M5PORKCHOP**-class projects as reference for “catch HS first”)
-
-### 1.2.x radio focus
-
-- Handshake-first radio kept and tightened  
-- Methods / packs for different capture styles  
-- Hashcat **22000** path alongside classic PCAP  
-- Focus on **not deleting good captures**, less junk files  
-- Skip-network behavior, status bar clarity  
-
-### ~1.2.5–1.2.6
-
-- Stability passes on sniffer write path  
-- Settings / radio menu polish  
-- Pack & method pairs aimed at PCAP vs 22000  
-
-### 1.2.7
-
-- **SD-only** user storage (internal flash not a loot FS)  
-- LittleFS partition shrunk (~512 KB)  
-- Pig monologues refresh  
-- Web installer site: discover `.bin` by extension, tabs Information / Installation / Gallery / Donate  
-- Mood / scene quality-of-life  
-
-### 1.2.8
-
-- **Scene modularization:** `sky`, `ground`, trees, FX  
-- **CITY** & **DESERT** seasons  
-- **Seasonal props** + game-day / off-screen rules  
-- **Friend pig**, **cards table** stub, **lv50 credits**  
-- PigPass tabs + scene suspend  
-- Cleaner public site + automatic gallery loading   
-
-### 1.3.0
-
-#### Capture and stability
-
-- Reworked the continuous capture lifecycle so capture memory is allocated
-  when the radio starts and released when it stops.
-- Added bounded capture queues and deferred SD writes to reduce callback
-  pressure, watchdog resets, and screen corruption during radio operation.
-- Preserved the existing Light, Aggressive, and Pinned capture entry points.
-- Added safer frame, PMF, RSN, and handshake bounds checking.
-- Improved handshake assembly so M1/M2 and optional M3/M4 depth handling do not
-  create malformed output.
-- Kept capture files small and compatible with the WPASec upload limits.
-
-#### Loot and synchronization
-
-- Repaired WPASec multipart uploads, including the expected `webfile` field.
-- Streamed uploads with read validation and short-file checks.
-- Reworked the Loot entry path to stop the capture pipeline and reclaim heap
-  before synchronization.
-- Fixed Pwncrack result downloads to use the HTTPS endpoint directly instead of
-  depending on a redirect from HTTP.
-- Added clearer failure stages for connection, HTTP, empty-result, and HTML
-  responses.
-- Kept WPASec and Pwncrack files under the SD project directory so they remain
-  available offline.
-
-#### Radio and user interface
-
-- Added clearer RADIO method and pack handling while keeping saved method
-  numbering compatible with previous builds.
-- Added radio reset behavior that restores the stock profile without touching
-  SD captures.
-- Improved status bars, target locking, session skip behavior, and capture
-  lifecycle feedback.
-- Added runtime heap cleanup for offline 22000 conversion and synchronization.
-- Documented the BadUSB / BadBLE Scripts, Live, and Panel workflows, including
-  USB/BLE transport selection and SD script storage.
-- Documented the configurable WS2812 status LED, seasonal ambient indication,
-  and green handshake-capture flashes.
-- Documented the local XFER access point and browser-based SD file manager,
-  including its default address, credentials, upload/download actions, and
-  safe shutdown behavior.
-
-#### Compatibility and build
-
-- Updated the firmware version to `1.3.0`.
-- Verified the PlatformIO build for the M5Stack StampS3 target.
-- Kept the same firmware target for the original M5Cardputer and Cardputer
-  ADV hardware.
-
-
-### 1.3.2
----Soon__
-
-### 1.3.4
-
-- Added the **MP3 player**: SD music scene, cassette + VU meter, five-key
-  transport in the bottom bar (`1-` `2<<` `3 PLAY/STOP` `4>>` `5+`), position
-  and resume, auto-advance through the playlist.
-- New root menu entry **MP3** and the SD folder `/0N3P0rK/music/`.
-- Uses the Helix MP3 decoder (`codec-helix`) and streams PCM into the existing
-  M5Unified speaker path — no second I2S driver and no codec re-initialization.
-- SFX beeps are muted while music plays; playback volume is stored in the
-  device configuration (`mp3vol`).
-- Backspace minimizes the player over the live farm scene: the song keeps
-  playing, the bottom bar shows `MIN PLAY 03/12 01:23`, and `1`..`5` keep
-  working from the farm.
-- Starting the player stops an active capture session to free heap for the
-  decoder.
-
-### 1.3.5 (beta)
-
-#### OnlineHashCrack
-
-- New **OHC** tab in **LOOT**, next to WPASec and Pwncrack. It uploads the same
-  `.pcap` captures to the public OnlineHashCrack WPA API
-  (`POST https://api.onlinehashcrack.com`).
-- No API key: the credential is the email of an existing OnlineHashCrack
-  account, read from `/0N3P0rK/ohc/email.txt`. Requests are sent as
-  `email` + `file`, and the JSON batch summary is parsed for
-  `accepted` / `skipped` / `rejected`.
-- Tabs are switched with `,` and `/` and now cycle through three services.
-  `S`, `U`, `D`, `R`, `T` and paging behave as before.
-- `no_hash_found` captures stay listed as local; `already_sent` ones are marked
-  and never re-uploaded, so repeated runs stay cheap.
-- WPA captures (hashcat mode 22000) are exempt from the account's monthly task
-  quota.
-- Added `Net::setOhcEmail()`, the `ohcmail` NVS key, and the `/0N3P0rK/ohc/`
-  directory with `email.txt` and `uploaded.txt`.
-
-#### Memory recovery
-
-- `WPASec::freeCacheMemory()` and `Pwncrack::freeCacheMemory()` now release the
-  cache capacity instead of only clearing it, without `shrink_to_fit` (a failed
-  realloc aborts the firmware).
-- **LOOT** releases both caches, the WPASec/Pwncrack uploaded lists, the new OHC
-  cache, and compacts the heap when the view is closed.
-- **BLE** drains the advertiser, waits for Bluedroid to release its buffers, and
-  compacts the heap on exit.
-- **Capture** compacts the heap after the capture buffers are deleted, and the
-  release log now reports the largest free block instead of only the total.
-
----
-
-### 1.3.5f
-
-#### Handshake check in LOOT
-
-- New in **LOOT**: `i` vets the highlighted capture and `I` checks every capture
-  in `/0N3P0rK/handshakes/`. Both write a report to `/0N3P0rK/inspector/` and
-  answer with a verdict toast (`GOOD 92/100 SAVED`, `12 FILES  OK 9`). Both work
-  from the list and from the open card.
-- The check is **headless**: no mode switch, no file list, no report screen. The
-  INSPECT view keeps working exactly as before, it is just no longer required to
-  get an answer.
-- Meant to be pressed before `U` / `S`, so an upload only carries a capture that
-  really holds a handshake.
-
-#### Memory
-
-- **InspectorPig** no longer keeps its file list (`MAX_ENTRIES * sizeof(Entry)`,
-  ≈ 7 KB) and report buffer (`MAX_LINES * LINE_LEN`, ≈ 3.3 KB) in `.bss`: both
-  move to the heap on entry and are returned in `stop()`, so the module costs
-  nothing between visits. A failed allocation exits with a `LOW MEM` notice
-  instead of a half-built view.
-- **OHC** takes its 2 KB reply-scrape buffer from the heap per upload instead of
-  parking it in `.bss` as a function-local static; it is released on every exit
-  path.
-- `InspectorPig::checkAll()` walks the folder in two passes — names first, then
-  analysis — over a short-lived heap list, so no capture is opened while the
-  directory handle is still held.
-
-### 1.3.6 (current)
-
-#### File Manager
-
-- Reworked the SD File Manager with directory navigation, file details,
-  text preview/editing, and JPEG/BMP/PNG image preview.
-- Added create-file, create-folder, rename, copy, move, paste, and confirmed
-  delete operations. Backspace/ESC now navigate back; Backspace removes a
-  character while editing or entering a name.
-- File Manager working memory is allocated only while the mode is open.
-  The text buffer is allocated only for text preview/editing and released
-  when returning to the browser; browsing images and folders does not reserve
-  that 6 KB editor buffer.
-- Directory entries grow in heap-backed batches instead of using a fixed
-  small file limit. The list is sorted and scrollable; if memory runs out,
-  the UI reports that the displayed list is partial.
-
-#### Task Manager and memory
-
-- Reworked **TASKS** to show active services and current heap statistics:
-  free heap, largest free block, minimum free heap, internal free memory, and
-  available SD space.
-- Added scrollable service controls and status details for active tools.
-  WPA-Sec/Pwncrack synchronization is left to its normal shutdown path.
-- Reduced File Manager's static RAM footprint by moving its working buffers
-  and directory entries out of `.bss` and onto the heap for the duration of use.
-  The PlatformIO static RAM report is about 11 KB lower than the preceding
-  build; the main display canvas remains permanently allocated.
-
-#### Interface polish
-
-- Consolidated keyboard guidance in the bottom hint bar and improved the
-  displayed navigation symbols and Escape/Backspace labels.
-- Kept Loot's existing sync presentation while retaining the updated key
-  labels.
+For the chronological release notes from the early builds through 1.3.6f, see
+[README_HISTORY.md](README_HISTORY.md).
 
 ---
 

@@ -1,196 +1,210 @@
-﻿# capture methods / методики захвата
+# Методики захвата
 
-Эта папка — **plug-and-play** для методик захвата PMKID/handshake.
+Методика — это алгоритм обработки текущих данных захвата: выбор целей,
+обработка beacon/client-списков и, если это предусмотрено самой методикой и
+разрешено настройками, передача управляющих кадров или вызов probe.
 
-Чтобы добавить новую методику — **просто создай тут один `.cpp` файл**.
-Ничего больше править не нужно: ни `sniffer.cpp`, ни `method_ctx.h`,
-ни `method_registry.cpp`, ни настройки, ни `platformio.ini`.
+Состояние сеанса и таблицу точек доступа хранит `sniffer.cpp`. Методика
+получает доступ к ним через `const Ctx&`; напрямую обращаться к статическим
+переменным сниффера не нужно.
 
----
+Чтобы добавить методику, создай `method_имя.cpp` в этой папке. Файлы
+`method_*.cpp` автоматически собираются PlatformIO и регистрируются макросом
+`CAP_METHOD_REGISTER`.
 
 ## Минимальный шаблон
 
 ```cpp
 #include "method_ctx.h"
-// при необходимости:
-// #include "../hc22000.h"
-// #include "../../core/wsl_bypasser.h"
-// #include <Arduino.h>
 
 namespace Cap {
 namespace Methods {
 
-// точка входа — вызывается каждый kick-tick
-void mymethod(const Ctx& ctx) {
-    // ctx.beacons, ctx.beaconCount, ctx.channel, ...
-    // ctx.sendRawMgmt(0xC0, bssid, dest);   // deauth
-    // ctx.sendRawMgmt(0xA0, bssid, dest);   // disassoc
-    // ctx.isOwnAp(bssid), ctx.skipPin(bssid), ctx.bcast
-    // ctx.kickBurst, ctx.deauthReason, ctx.bidirKick
-    // ctx.eapolTx, ctx.csaHerd, ctx.authFlood, ctx.pmkidProbe
-    // *ctx.framesDeauth++;                   // счётчик отправленных фреймов
+// Основной обработчик вызывается диспетчером на текущем канале.
+void example(const Ctx& ctx) {
+    // Читай состояние из ctx.
+    // Если методике нужны ручки RADIO -> EDIT, объяви их ниже
+    // и добавь только действительно используемые поля.
 }
 
-// опционально: PMKID-зонд (вызывается параллельно с kick'ом, если ctx.pmkidProbe)
-// сигнатура: void probe(const Ctx& ctx)
-void myprobe(const Ctx& ctx) {
-    // например WSLBypasser::sendAuthentication(bssid);
-    //        WSLBypasser::sendAssociationRequest(bssid, ssid);
+// Эти функции необязательны. Если они не нужны, передай nullptr.
+void exampleProbe(const Ctx& ctx) {
+    // Дополнительная функция метода, если она предусмотрена.
 }
 
-// опционально: сброс внутреннего состояния при старте/стопе сессии
-// сигнатура: void reset()
-void myreset() {
-    // обнулить свои static-переменные
+void resetExample() {
+    // Сброс собственных статических счётчиков/индексов при старте сеанса.
 }
 
-// ОБЯЗАТЕЛЬНО: одна строка регистрации в самом конце файла.
-// Любой из PROBE/RESET может быть nullptr, если не нужен.
-// KNOBS — имя статического массива ручек метода (0-terminated список id
-// крутилок RADIO, которые метод реально читает), либо nullptr если таких
-// нет. Именно по нему меню RADIO→EDIT строит список настроек метода.
-static const uint8_t mymethodKnobs[] = {9, 10, 13, 14, 31, 0}; // KICK N BIDIR CSA AUTH FLOOD BURST
-CAP_METHOD_REGISTER("MYMETHOD", mymethod, myprobe, myreset, mymethodKnobs)
-// или без probe/reset/ручек:
-// CAP_METHOD_REGISTER("MYMETHOD", mymethod, nullptr, nullptr, nullptr)
+// Список ID ручек заканчивается нулём. nullptr означает, что ручек нет.
+static const uint8_t exampleKnobs[] = {9, 10, 0};
+
+CAP_METHOD_REGISTER("EXAMPLE", example, exampleProbe, resetExample, exampleKnobs)
 
 } // namespace Methods
 } // namespace Cap
 ```
 
----
-
-## Что обязательно
-
-1. **Файл лежит в этой папке** (`src/cap/methods/`) — PlatformIO сам его подхватит.
-2. **`#include "method_ctx.h"`** — даёт `Ctx`, `BeaconSlot`, макрос регистрации.
-3. **Тело функции kick** — принимает `const Ctx& ctx`. Сигнатура фиксированная.
-4. **`CAP_METHOD_REGISTER("NAME", kick, probe, reset, KNOBS)`** в namespace `Cap::Methods`, в самом конце файла, после тела функций. Без `;` в конце вызова — макрос сам её ставит. `KNOBS` — статический массив id ручек (что увидит юзер в RADIO→EDIT), или `nullptr`.
-5. **Имя (`NAME`)** — 4..7 символов, ASCII. Будет показано в UI как есть, поэтому лучше короткое и читаемое (`ALL`, `CLIENTS`, `FOCUS`, `HERD`...).
-
-## Что опционально
-
-- **`probe`** — отдельная функция для PMKID-зонда (open auth + assoc req).
-  Вызывается параллельно с `kick`, если `ctx.pmkidProbe == true`.
-  Если не нужна — `nullptr`.
-- **`reset`** — сброс своего внутреннего состояния (счётчики, индексы).
-  Вызывается при старте/стопе сессии захвата.
-  Если не нужна — `nullptr`.
-
-## Что нельзя
-
-- ❌ Менять сигнатуру `kick(const Ctx&)` — диспетчер не найдёт твою функцию.
-- ❌ Использовать то же `NAME` в двух файлах — таблица оставит последний
-  (по линк-ордеру), но для предсказуемости лучше давать уникальные имена.
-- ❌ Дёргать static'и `sniffer.cpp` напрямую — только через `ctx`.
-  Если нужно что-то, чего нет в `Ctx` — добавь поле в `Ctx` (см. `method_ctx.h`).
-
-## Что будет после добавления
-
-- Методика появится в меню **Settings → Capture method** автоматически.
-- Будет участвовать в **AUTO-ротации** (если в настройках выбран AUTO).
-- Будет доступна через `Methods::findByName("MYMETHOD")`.
-- Счётчик отправленных фреймов пишется через `*ctx.framesDeauth++`.
-
-## Доступные хелперы (через ctx)
-
-| Поле/метод | Что делает |
-|---|---|
-| `ctx.beacons[i]` | массив `BeaconSlot` (bssid, ch, rssi, ssid, clients[], pmfCapable) |
-| `ctx.beaconCount` | сколько AP в массиве сейчас |
-| `ctx.channel` | текущий радиоканал |
-| `ctx.bcast` | `FF:FF:FF:FF:FF:FF` для широковещательных фреймов |
-| `ctx.kickBurst` | сколько раз повторить deauth за тик (0 = 1) |
-| `ctx.deauthReason` | reason code в deauth/disassoc |
-| `ctx.bidirKick` | true → слать `WSLBypasser::sendBidirectionalKick` (AP→STA и STA→AP) |
-| `ctx.eapolTx` | true → дополнительно `EAPOL-Start`/`Logoff` |
-| `ctx.csaHerd` | true → пробовать CSA-beacon для PMF-AP |
-| `ctx.authFlood` | true → если нечего кикать, auth flood fallback |
-| `ctx.pmkidProbe` | true → диспетчер зовёт probe-функцию параллельно |
-| `ctx.minRssi` | порог по RSSI — не трогать AP слабее |
-| `ctx.isOwnAp(bssid)` | true → это наша AP, пропустить |
-| `ctx.skipPin(bssid)` | true → юзер пометил «не трогать» |
-| `ctx.sendRawMgmt(fc0, bssid, dest)` | отправить mgmt-фрейм (0xC0=deauth, 0xA0=disassoc) |
-| `ctx.framesDeauth` | указатель на счётчик — `(*ctx.framesDeauth)++` |
-
-Внешние хелперы (если нужно) — уже подключены в `method_pan.cpp`/`method_pmkid.cpp`
-как пример: `WSLBypasser::sendAuthentication`, `WSLBypasser::sendAssociationRequest`,
-`Hc22000::hasPair`, `yield()`.
-
----
-
-## Пример: методика «только PMKID-зонд, без deauth»
+Вызов регистрации принимает пять аргументов:
 
 ```cpp
-#include "method_ctx.h"
-#include "../../core/wsl_bypasser.h"
-
-namespace Cap {
-namespace Methods {
-
-static uint32_t s_lastMs = 0;
-static uint8_t  s_idx = 0;
-
-void probe_only(const Ctx& ctx) {
-    uint32_t now = millis();
-    if (now - s_lastMs < 2000) return;
-    uint8_t n = ctx.beaconCount;
-    if (!n) return;
-    for (uint8_t k = 0; k < n; k++) {
-        s_idx = (s_idx + 1) % n;
-        const BeaconSlot& b = ctx.beacons[s_idx];
-        if (b.channel != ctx.channel) continue;
-        if (ctx.isOwnAp(b.bssid)) continue;
-        if (b.rssi < ctx.minRssi) continue;
-        if (!b.ssid[0]) continue;
-        WSLBypasser::sendAuthentication(b.bssid);
-        WSLBypasser::sendAssociationRequest(b.bssid, b.ssid);
-        s_lastMs = now;
-        (*ctx.framesDeauth)++;
-        return;
-    }
-}
-
-void reset_probe_only() {
-    s_lastMs = 0;
-    s_idx = 0;
-}
-
-// kick = nullptr — диспетчер просто не будет нас кикать.
-// 5-й аргумент — ручки (nullptr = нет своих крутилок).
-CAP_METHOD_REGISTER("PMKIDONLY", nullptr, probe_only, reset_probe_only, nullptr)
-
-} // namespace Methods
-} // namespace Cap
+CAP_METHOD_REGISTER("ИМЯ", KICK, PROBE, RESET, KNOBS)
 ```
 
-Сохранил как `method_pmkidonly.cpp` → в меню появится пункт `PMKIDONLY`,
-AUTO будет по очереди крутить `OURS` → `PAN` → `PMKIDONLY`.
+- `ИМЯ` — короткое имя методики, которое показывается в меню.
+- `KICK` — обработчик основного шага или `nullptr`, если он не нужен.
+- `PROBE` — дополнительный обработчик или `nullptr`.
+- `RESET` — функция сброса внутреннего состояния или `nullptr`.
+- `KNOBS` — массив ID ручек `RADIO → EDIT` с завершающим `0` или `nullptr`.
 
----
+Макрос ставь один раз в конце файла, внутри `namespace Cap::Methods`. Точку с
+запятой после вызова добавлять не нужно.
 
-## PACK ↔ CUSTOM
+## Ручки RADIO → EDIT
 
-Методика — это **что** делать (алгоритм kick/probe).
-**PACK** — это **какую методику включить + как интенсивно** (готовый набор
-параметров kick'а). Паки — отдельный, такой же plug-and-play реестр:
-см. `src/cap/packs/README.md` — новый пак добавляется точно так же, одним
-`.cpp`-файлом в `src/cap/packs/`, без правки `config.cpp`/`settings_menu.cpp`.
+Меню формирует список настроек из массива `KNOBS`. Указывай только те ручки,
+значения которых методика действительно читает из `Ctx`.
 
-В настройках радио (`R`) пункт `PACK` показывает: `STOCK` (встроенный,
-дефолт без агрессии, методика `AUTO`) → все паки из `src/cap/packs/` по
-порядку → `CUSTOM` (встроенный, read-only флаг — взводится автоматически,
-когда крутишь любую ручку вручную).
+| ID | Название |
+|---:|---|
+| 9 | `KICK N` |
+| 10 | `BIDIR` |
+| 11 | `EAPOL TX` |
+| 12 | `PMKID` |
+| 13 | `CSA` |
+| 14 | `AUTH FLOOD` |
+| 15 | `REASON` |
+| 20 | `JITTER MS` |
+| 21 | `COOLDOWN` |
+| 22 | `SCORE THR` |
+| 25 | `DATA ACT` |
+| 26 | `STRICT LK` |
+| 31 | `BURST` |
 
-Если выбрать `STOCK` или любой пак — параметры перезаписываются по пресету.
-Если крутишь `BIDIR`, `EAPOL TX`, `KICK N`, `PAUSE MS`, `HOP MS` и т.п. —
-PACK автоматически переключается на `CUSTOM`, и пресет больше не
-перезапишет твои ручные настройки, пока ты сам не выберешь другой PACK.
+Например, если методика читает `KICK N`, `BIDIR` и `REASON`:
 
-Хочешь вернуться к дефолту — выбери `STOCK` (или пункт `RESET` в меню).
+```cpp
+static const uint8_t exampleKnobs[] = {9, 10, 15, 0};
+```
 
-Это значит, что твоя методика может **одинаково работать** под любым паком:
-юзер берёт агрессивный пак, тихий пак, или руками выкручивает `KICK N=6` +
-`EAPOL TX=on` — методика просто читает `ctx.bidirKick / ctx.eapolTx /
-ctx.kickBurst / ...` и решает что делать. Никакой логики пресетов внутри
-методики быть не должно.
+`HS DEPTH`, `MIN DWELL`, `HOP MS` и другие общие настройки находятся на
+странице RADIO, а не в списке ручек метода. `HS DEPTH` задаёт, насколько
+полным должен быть handshake для логики ожидания/перехода: `0` — M1–M2,
+`1` — M3, `2` — полный M1–M4. Пакеты в проекте оставляют глубину `0`;
+пользователь может вручную выбрать более глубокую.
+
+## Доступ к данным через `Ctx`
+
+`Ctx` передаётся методу на каждый вызов. Не сохраняй указатели на его поля
+для использования после возврата из функции.
+
+| Поле | Назначение |
+|---|---|
+| `ctx.beacons` | Текущая таблица `BeaconSlot` |
+| `ctx.beaconCount` | Число заполненных элементов таблицы |
+| `ctx.channel` | Текущий радиоканал |
+| `ctx.minRssi` | Минимальный RSSI для отбора точек доступа |
+| `ctx.kickBurst` | Настроенное число повторов |
+| `ctx.deauthReason` | Reason code для соответствующих кадров |
+| `ctx.bidirKick` | Настройка двусторонних действий |
+| `ctx.eapolTx` | Разрешение дополнительных EAPOL-действий |
+| `ctx.pmkidProbe` | Разрешение probe; probe-методика должна проверять этот флаг |
+| `ctx.csaHerd` | Настройка CSA-функции |
+| `ctx.authFlood` | Настройка auth-flood |
+| `ctx.kickBssid` | BSSID текущей цели, если он задан |
+| `ctx.kickSta` | MAC связанной станции, если она известна |
+| `ctx.kickStaOk` | Указывает, известен ли MAC станции |
+| `ctx.bcast` | MAC широковещательного адреса |
+| `ctx.isOwnAp(bssid)` | Проверка, является ли точка доступа своей |
+| `ctx.skipPin(bssid)` | Проверка пользовательского запрета для цели |
+| `ctx.isSkipped(bssid)` | Проверка временного списка пропуска; указатель может быть `nullptr` |
+| `ctx.sendRawMgmt(fc0, bssid, dest)` | Отправка поддерживаемого management-кадра |
+| `ctx.framesDeauth` | Указатель на общий счётчик отправленных кадров |
+| `ctx.lockedBssid` | Точка доступа, на которой сниффер удерживает канал |
+| `ctx.lockedBssidActive` | Действителен ли `lockedBssid` сейчас |
+| `ctx.dwellMinMs` | Нижняя граница времени на канале; применяется планировщиком сниффера |
+| `ctx.hsDepth` | Выбранная глубина handshake |
+| `ctx.dataAct` | Использовать ли data-активность в оценке FOCUS |
+| `ctx.strictLock` | Не менять заблокированную цель в методиках с оценкой |
+| `ctx.depthHoldSec` | Дополнительное удержание цели при большей глубине handshake |
+| `ctx.jitterMs` | Дополнительная задержка между кадрами |
+| `ctx.cooldownSec` | Пауза перед повторной обработкой цели |
+| `ctx.scoreThr` | Минимальный порог оценки цели в FOCUS |
+| `ctx.txPowerDb` | Настроенная мощность передачи |
+| `ctx.burstPattern` | Настроенный шаблон интервалов между кадрами |
+
+Флаги вроде `bidirKick`, `eapolTx`, `pmkidProbe`, `csaHerd` и `authFlood`
+передают настройки радио. Само наличие флага не означает, что любая методика
+обязана выполнять соответствующее действие: используй только то, что
+поддерживает алгоритм.
+
+### Учёт отправленных кадров
+
+При использовании `ctx.sendRawMgmt(...)` успешная отправка уже учитывается
+сниффером. Не увеличивай `*ctx.framesDeauth` дополнительно для того же кадра —
+иначе статистика задвоится.
+
+Если методика сама использует другой отправитель кадров, обновляй счётчик
+отдельно и только согласно фактической отправке. Проверяй указатель перед
+использованием:
+
+```cpp
+if (ctx.framesDeauth) {
+    (*ctx.framesDeauth)++;
+}
+```
+
+## `probe` и `reset`
+
+- `probe` — необязательный дополнительный обработчик метода. Если он не нужен,
+  укажи `nullptr`. Если методика использует probe-настройку, проверяй
+  `ctx.pmkidProbe` внутри обработчика.
+- `reset` — необязательная функция для очистки собственных статических
+  переменных; диспетчер вызывает её при старте сеанса захвата.
+- Если в методике есть статический индекс, таймер или кэш, сбрасывай его в
+  `reset`, чтобы состояние предыдущего сеанса не влияло на следующий.
+
+Важно: сейчас общий диспетчер сначала проверяет глобальный флаг разрешения
+передачи и состояние паузы. Если передача выключена, обработчики `kick` и
+`probe` не вызываются. Флаг `ctx.pmkidProbe` — дополнительное разрешение для
+методики, а не отдельный обход глобального выключателя диспетчера.
+
+## Ограничения и правила
+
+1. Подключай `method_ctx.h` и размещай файл в `src/cap/methods/`.
+2. Не меняй сигнатуры: обработчики принимают `const Ctx&`, `reset` не принимает
+   аргументов.
+3. Не используй напрямую статические переменные `sniffer.cpp`; если интерфейса
+   в `Ctx` не хватает, расширь его и отдельно подключи новое поле в диспетчере.
+4. Не регистрируй одинаковые имена: поиск методики по имени регистрозависимый.
+5. Не добавляй ID в `KNOBS`, если соответствующее значение не читается
+   методом.
+6. Выбор пакета — отдельная операция. Для привязки пакета к методике см.
+   [README пакетов](../packs/README.md).
+
+## Как методики попадают в меню и AUTO
+
+Регистрация выполняется статически через `CAP_METHOD_REGISTER`; отдельный
+список в `method_registry.cpp` для новой методики не нужен.
+
+- Зарегистрированные имена доступны в **RADIO → METHOD**.
+- При выборе `AUTO` сниффер перебирает зарегистрированные методики с интервалом
+  `fallbackSec`; полученная пара handshake сбрасывает таймер переключения.
+- Порядок методик задаётся порядком регистрации/линковки файлов сборки.
+- Методика доступна через `Methods::findByName("ИМЯ")`.
+- Если методу нужна собственная строка в `RADIO → EDIT`, перечисли ID в
+  `KNOBS`; меню использует эту регистрацию для построения списка.
+
+## Методики, зарегистрированные в проекте
+
+| Имя в меню | Назначение |
+|---|---|
+| `ALL` | Базовая методика обработки точек доступа |
+| `CLIENTS` | Методика с учётом известных клиентов |
+| `HERD` | CSA-функция |
+| `FOCUS` | Выбор и обработка одной цели по оценке |
+| `eViL` | Адаптивная методика с дополнительными параметрами |
+
+Фактическая доступность действий зависит от выбранных настроек RADIO и
+возможностей конкретной методики. Захват входящих кадров и запись файлов
+выполняются сниффером независимо от выбора конкретного метода.

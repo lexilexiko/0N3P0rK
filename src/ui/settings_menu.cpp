@@ -4,6 +4,7 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../piglet/props.h"
+#include "../piglet/cards_table.h"
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
@@ -59,6 +60,7 @@ static const Item SCENE[] = {
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
     {"CPU HUD",   Kind::TOGGLE, 22, 0, 1, 1},
+    {"UNDERGROUND",Kind::TOGGLE,23, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
@@ -80,9 +82,9 @@ static const Item RADIO[] = {
     {"PACK",    Kind::VALUE,  18, 0, 0, 1},   // max resolved at runtime
     {"METHOD",  Kind::VALUE,  7,  0, 0, 1},   // max resolved at runtime
     {"EDIT",    Kind::ACTION, 60, 0, 0, 0},   // open RADIO_EDIT for current method
-    {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
     // Sniffer-direct settings that affect CAPTURE not the method:
     {"HOP MS",  Kind::VALUE,  0,  50, 2000, 50},
+    {"MIN DWELL",Kind::VALUE, 23, 0, 600, 50},
     {"LOCK MS", Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS", Kind::TOGGLE, 2,  0, 1, 1},
     {"HS DEPTH",Kind::VALUE,  24, 0, 2, 1},
@@ -95,6 +97,7 @@ static const Item RADIO[] = {
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
     {"AUTO SKIP",Kind::VALUE, 50, 0, 60, 1},
+    {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
 };
 
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
@@ -196,7 +199,7 @@ static const char* const H_SCENE[] = {
     "AUTO DUSK / DAY / NIGHT.",
     "WALK SPEED AT THE EDGES.",
     "SHE LIVES WHILE YOU WORK.",
-    "MASTER: FULL SCENE OR BLANK.",
+    "QUICK TOGGLE: ALL FARM VISUALS.",
     "RANDOM WOLF VISITOR.",
     "SEASONAL PROPS ON FARM.",
     "COMPANION PIG ON FARM.",
@@ -212,6 +215,7 @@ static const char* const H_SCENE[] = {
     "SEC BETWEEN MONOLOGUES.",
     "-/= CYCLE ANIMS ON FARM.",
     "FRAME LOAD VS 33MS BUDGET.",
+    "ROOTS, BURROWS AND CRAWLERS.",
     "TYPE CODE. ENT."
 };
 
@@ -227,8 +231,8 @@ static const char* const H_RADIO[] = {
     "RADIO PRESET.",
     "CAPTURE METHOD.",
     "EDIT CURRENT METHOD OPTIONS.",
-    "RESTORE DEFAULT RADIO SETTINGS.",
     "TIME PER CHANNEL.",
+    "MIN TIME PER CHANNEL; OFF DISABLES IT.",
     "LOCK DURATION AFTER EAPOL.",
     "HOLD CHANNEL WHEN HANDSHAKE ARRIVES.",
     "PAIR / +M3 / FULL 4-WAY.",
@@ -241,6 +245,7 @@ static const char* const H_RADIO[] = {
     "TRANSMIT POWER SETTING.",
     "ATTACK BURST PATTERN.",
     "SECONDS AFTER PAIR BEFORE SKIPPING AP.",
+    "RESTORE DEFAULT RADIO SETTINGS.",
 };
 // Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
 static const char* const H_KNOBS[] = {
@@ -295,6 +300,7 @@ static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
 static bool s_bind = false;
+static bool s_resetConfirm = false;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
@@ -325,8 +331,11 @@ static const Item* items(uint8_t* n) {
 }
 
 static bool allLayersOn() {
+    const PersonalityConfig& p = Config::personality();
     return SceneLayers::pig && SceneLayers::grassBack && SceneLayers::grassFront &&
-           SceneLayers::trees &&
+           SceneLayers::trees && p.fruitTreesAmbient &&
+           SceneLayers::underground && p.propsEnabled && p.friendEnabled &&
+           p.cardsEnabled && p.wolfEnabled &&
            SceneLayers::sky && SceneLayers::weather && SceneLayers::seasonFx &&
            SceneLayers::mood && SceneLayers::wolf;
 }
@@ -448,6 +457,7 @@ static int getValue(const Item& it) {
             case 13: return SceneLayers::mood ? 1 : 0;
             case 14: return p.animTest ? 1 : 0;
             case 22: return SceneLayers::cpuHud ? 1 : 0;
+            case 23: return SceneLayers::underground ? 1 : 0;
             case 18: return p.propsEnabled ? 1 : 0;
             case 19: return p.friendEnabled ? 1 : 0;
             case 20: return p.cardsEnabled ? 1 : 0;
@@ -556,6 +566,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (isRadioPage() && it.id == 18) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (isRadioPage() && it.id == 23) {
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dMS", v);
     } else if (isRadioPage() && it.id == 24) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (isRadioPage() && it.id == 28) {
@@ -721,7 +735,17 @@ static bool setValue(const Item& it, int v) {
             case 5: p.freeLife = v != 0; break;
             case 6:
                 SceneLayers::setAll(v != 0);
-                if (v == 0) Wolf::reset();
+                p.fruitTreesAmbient = v != 0;
+                p.propsEnabled = v != 0;
+                p.friendEnabled = v != 0;
+                p.cardsEnabled = v != 0;
+                p.wolfEnabled = v != 0;
+                if (v == 0) {
+                    p.animTest = false;
+                    Wolf::reset();
+                    Props::forceDemo(6);
+                    if (CardsTable::isActive()) CardsTable::end();
+                }
                 break;
             case 7:
                 p.wolfEnabled = v != 0;
@@ -772,6 +796,7 @@ static bool setValue(const Item& it, int v) {
                 if (v != 0) Display::showToast("ANIM TEST: -/= ON FARM", 1800);
                 break;
             case 22: SceneLayers::cpuHud = v != 0; break;
+            case 23: SceneLayers::underground = v != 0; break;
             default: return false;
         }
         Config::save();
@@ -836,7 +861,9 @@ static bool setValue(const Item& it, int v) {
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;
             case 22: r.scoreThr = (int16_t)v; break;
-            case 23: r.dwellMinMs = (uint16_t)v; break;
+            case 23:
+                r.dwellMinMs = (uint16_t)((v > 0 && v < 50) ? 0 : v);
+                break;
             case 24: r.hsDepth = (uint8_t)v; break;
             case 25: r.dataAct = (uint8_t)(v != 0 ? 1 : 0); break;
             case 26: r.strictLock = v != 0; break;
@@ -907,6 +934,7 @@ void show(SettingsPage page) {
     s_editing = false;
     s_text = false;
     s_bind = false;
+    s_resetConfirm = false;
     s_keyWas = true;
     s_openMs = millis();
     if (page == SettingsPage::CONNECT) {
@@ -927,13 +955,15 @@ void hide() {
     s_editing = false;
     s_text = false;
     s_bind = false;
+    s_resetConfirm = false;
 }
 
 bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
-    const bool showHelp = ((millis() / 2500u) & 1u) != 0;
+    if (s_resetConfirm) return "ENT RESET  ESC CANCEL";
+    const bool showHelp = ((millis() - s_openMs) % 7500u) < 5000u;
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS)
             return showHelp ? "TYPE WIFI PASSWORD" : "TYPE  BS ERASE  ENT SAVE  ESC BACK";
@@ -943,8 +973,16 @@ const char* bottomHint() {
     }
     if (s_page == SettingsPage::STATUS)
         return showHelp ? "DEVICE AND STORAGE INFORMATION" : "^/v SCROLL  ESC BACK";
-    if (s_page == SettingsPage::RADIO_EDIT)
-        return showHelp ? "RADIO DETAIL SETTINGS" : "^/v PICK  ENT EDIT  ESC BACK";
+    if (s_page == SettingsPage::RADIO_EDIT) {
+        if (!showHelp) return "^/v PICK  ENT EDIT  ESC BACK";
+        if (s_idx < s_editN) {
+            for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+                if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id)
+                    return H_KNOBS[k];
+            }
+        }
+        return "RADIO DETAIL SETTINGS";
+    }
     if (s_text) return showHelp ? "ENTER TEXT VALUE" : "TYPE  ENT SAVE  BS ERASE  ESC CANCEL";
     if (s_bind) return showHelp ? "PRESS A KEY TO ASSIGN" : "PRESS KEY  BS CLEAR  ESC CANCEL";
     if (s_page == SettingsPage::KEYS) {
@@ -964,11 +1002,6 @@ const char* bottomHint() {
                 return H_BLE[s_idx];
             if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
                 return H_SCENE[s_idx];
-            if (s_page == SettingsPage::RADIO_EDIT && s_idx < ALL_KNOBS_N) {
-                for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
-                    if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) return H_KNOBS[k];
-                }
-            }
         }
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
         if (it[s_idx].kind == Kind::TEXT)
@@ -1100,6 +1133,19 @@ void update() {
     bool erase = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del;
     bool esc = tick;
 
+    if (s_resetConfirm) {
+        if (esc) {
+            s_resetConfirm = false;
+            SFX::play(SFX::BACK_NAV);
+        } else if (keys.enter) {
+            Config::resetRadio();
+            s_resetConfirm = false;
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("RADIO RESET", 1000);
+        }
+        return;
+    }
+
     uint8_t n = 0;
     const Item* list = items(&n);
     if (!list || n == 0) return;
@@ -1218,6 +1264,7 @@ void update() {
         if (s_page == SettingsPage::RADIO_EDIT) {
             s_page = SettingsPage::RADIO;
             s_idx = 2; s_scroll = 0;
+            s_openMs = millis();
             SFX::play(SFX::BACK_NAV);
             return;
         }
@@ -1232,8 +1279,10 @@ void update() {
             return;
         }
         s_editing = false;
+        const uint8_t oldIdx = s_idx;
         if (up && s_idx > 0) s_idx--;
         else if (down && s_idx + 1 < n) s_idx++;
+        if (s_idx != oldIdx) s_openMs = millis();
         keepVisible(n);
         SFX::play(SFX::MENU_CLICK);
         return;
@@ -1258,9 +1307,8 @@ void update() {
 
     if (cur.kind == Kind::ACTION) {
         if (s_page == SettingsPage::RADIO && cur.id == 19) {
-            Config::resetRadio();
-            SFX::play(SFX::CONFIRM);
-            Display::showToast("RADIO RESET", 1000);
+            s_resetConfirm = true;
+            SFX::play(SFX::MENU_CLICK);
         } else if (s_page == SettingsPage::RADIO && cur.id == 60) {
             // EDIT: build knob list for current method and open RADIO_EDIT
             buildEditItems();
@@ -1271,6 +1319,7 @@ void update() {
             }
             s_page = SettingsPage::RADIO_EDIT;
             s_idx = 0; s_scroll = 0;
+            s_openMs = millis();
             SFX::play(SFX::MENU_CLICK);
             char toast[24];
             snprintf(toast, sizeof(toast), "EDIT: %s", currentMethodName());
@@ -1279,6 +1328,7 @@ void update() {
             // Back from RADIO_EDIT
             s_page = SettingsPage::RADIO;
             s_idx = 2; s_scroll = 0; // land on EDIT row
+            s_openMs = millis();
             SFX::play(SFX::BACK_NAV);
         }
         return;
@@ -1303,6 +1353,7 @@ void update() {
         return;
     }
     s_editing = !s_editing;
+    s_openMs = millis();
     SFX::play(SFX::MENU_CLICK);
 }
 
@@ -1506,6 +1557,19 @@ void draw(M5Canvas& canvas) {
     canvas.setTextColor(UI_DIM);
     if (s_scroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
+
+    if (s_resetConfirm) {
+        const int16_t boxX = 20, boxY = 34, boxW = DISPLAY_W - 40, boxH = 42;
+        canvas.fillRoundRect(boxX, boxY, boxW, boxH, 4, 0x1082);
+        canvas.drawRoundRect(boxX, boxY, boxW, boxH, 4, 0xFFE0);
+        canvas.setTextDatum(top_center);
+        canvas.setTextColor(0xFFE0);
+        canvas.drawString("RESET RADIO SETTINGS?", DISPLAY_W / 2, boxY + 7);
+        canvas.setTextColor(UI_TEXT);
+        canvas.drawString("ENT = RESET   ESC = CANCEL",
+                          DISPLAY_W / 2, boxY + 23);
+        canvas.setTextDatum(top_left);
+    }
 
 }
 

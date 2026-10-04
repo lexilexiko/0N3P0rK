@@ -1,6 +1,7 @@
 // "NORMAL" pack — balanced aggressive tuning with CLIENTS method:
-// bidirectional kick, EAPOL-Start/Logoff, PMKID probe. Light jitter and a
-// short DEPTH HOLD so M3 has a chance after the pair lands.
+// bidirectional kick, EAPOL-Start/Logoff, PMKID probe and light jitter.
+// Deeper handshake capture is controlled by HS DEPTH; DEPTH HOLD applies
+// only when the user selects a depth above M1+M2.
 #include "pack_ctx.h"
 
 namespace Cap {
@@ -22,7 +23,7 @@ static const Preset kPanPreset{
     /* hsDepth       */ 0,      // pair is enough for NORMAL
     /* dataAct       */ 0,
     /* strictLock    */ true,
-    /* depthHoldSec  */ 5,      // short hold after pair for late M3
+    /* depthHoldSec  */ 5,      // used only if HS DEPTH is manually raised
 };
 
 CAP_PACK_REGISTER(pan, "NORMAL", "CLIENTS", kPanPreset)

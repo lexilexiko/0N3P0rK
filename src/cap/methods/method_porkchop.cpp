@@ -288,7 +288,6 @@ void porkchop(const Ctx& ctx) {
                     ctx.sendRawMgmt(0xA0, target.bssid, ctx.bcast);
                     if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
                 }
-                *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
             }
             // Pack knobs that any method must honor (AGGRO/WOLF + PORK).
             if (ctx.csaHerd) csaHerd(ctx);
@@ -375,7 +374,6 @@ void porkchop(const Ctx& ctx) {
             ctx.sendRawMgmt(0xA0, target.bssid, ctx.bcast);
             if (r + 1 < rounds) delay(WSLBypasser::burstRoundGapMs());
         }
-        *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
     }
 
     ScoreEntry* se = findOrCreateScore(target.bssid);

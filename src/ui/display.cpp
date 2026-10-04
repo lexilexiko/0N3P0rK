@@ -5,6 +5,7 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../piglet/avatar.h"
+#include "../piglet/ground.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/credits.h"
 #include "../piglet/mood.h"
@@ -34,6 +35,106 @@
 #include <M5Cardputer.h>
 #include <string.h>
 #include <stdio.h>
+
+namespace {
+
+struct BurrowAnt {
+    uint16_t worldX;
+    uint8_t y;
+    uint32_t nextStep;
+};
+
+static constexpr uint8_t kTunnelCellW = 4;
+static constexpr uint8_t kTunnelLanes = 3;
+static constexpr uint8_t kTunnelCols = Trees::WORLD_SPAN / kTunnelCellW;
+static constexpr uint8_t kTunnelLife = 180;
+static constexpr uint8_t kTunnelY[kTunnelLanes] = {4, 7, 10};
+static uint8_t tunnelLife[kTunnelCols][kTunnelLanes] = {};
+static uint32_t tunnelAgeTick = 0;
+
+static BurrowAnt burrowAnts[] = {
+    {42, 7, 0}, {186, 4, 0}, {347, 10, 0}, {528, 7, 0}
+};
+
+static uint16_t wrapWorldX(int32_t x) {
+    while (x < 0) x += Trees::WORLD_SPAN;
+    while (x >= Trees::WORLD_SPAN) x -= Trees::WORLD_SPAN;
+    return (uint16_t)x;
+}
+
+static int screenWorldX(uint16_t worldX, uint16_t scroll) {
+    return (worldX + scroll) % Trees::WORLD_SPAN;
+}
+
+static uint8_t tunnelLane(uint8_t y) {
+    uint8_t nearest = 0;
+    uint8_t distance = (uint8_t)abs((int)y - kTunnelY[0]);
+    for (uint8_t lane = 1; lane < kTunnelLanes; lane++) {
+        uint8_t nextDistance = (uint8_t)abs((int)y - kTunnelY[lane]);
+        if (nextDistance < distance) {
+            nearest = lane;
+            distance = nextDistance;
+        }
+    }
+    return nearest;
+}
+
+static void carveTunnel(uint16_t fromX, uint8_t fromY,
+                        uint16_t toX, uint8_t toY) {
+    int x0 = fromX / kTunnelCellW;
+    int x1 = toX / kTunnelCellW;
+    int y0 = tunnelLane(fromY);
+    const int y1 = tunnelLane(toY);
+    if (x1 - x0 > kTunnelCols / 2) x0 += kTunnelCols;
+    else if (x0 - x1 > kTunnelCols / 2) x1 += kTunnelCols;
+    int dx = abs(x1 - x0);
+    const int sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0);
+    const int sy = y0 < y1 ? 1 : -1;
+    int error = dx + dy;
+
+    for (;;) {
+        const uint16_t col =
+            (uint16_t)((x0 % kTunnelCols + kTunnelCols) % kTunnelCols);
+        tunnelLife[col][y0] = kTunnelLife;
+        if (x0 == x1 && y0 == y1) break;
+        const int twiceError = error * 2;
+        if (twiceError >= dy) {
+            error += dy;
+            x0 += sx;
+        }
+        if (twiceError <= dx) {
+            error += dx;
+            const int nextY = y0 + sy;
+            if (nextY >= 0 && nextY < kTunnelLanes) {
+                const uint16_t connector =
+                    (uint16_t)((x0 % kTunnelCols + kTunnelCols) % kTunnelCols);
+                tunnelLife[connector][nextY] = kTunnelLife;
+            }
+            y0 = nextY < 0 ? 0 : nextY >= kTunnelLanes
+                ? kTunnelLanes - 1 : nextY;
+        }
+    }
+}
+
+static void ageTunnels(uint32_t now) {
+    if (tunnelAgeTick == 0) {
+        tunnelAgeTick = now;
+        return;
+    }
+    const uint32_t elapsed = now - tunnelAgeTick;
+    if (elapsed < 2000u) return;
+    const uint32_t decay = elapsed / 2000u;
+    tunnelAgeTick += decay * 2000u;
+    for (uint16_t col = 0; col < kTunnelCols; col++) {
+        for (uint8_t lane = 0; lane < kTunnelLanes; lane++) {
+            uint8_t& life = tunnelLife[col][lane];
+            life = decay >= life ? 0 : (uint8_t)(life - decay);
+        }
+    }
+}
+
+}  // namespace
 
 uint16_t getColorFG() {
     if (Weather::getActiveSeason() == Season::RETRO) return 0xE73C;
@@ -606,6 +707,86 @@ void Display::drawBottomBar() {
 
     bottomBar.fillSprite(DIRT_MID);
     bottomBar.fillRect(0, 0, DISPLAY_W, 2, fringeTop);
+    auto blend565 = [](uint16_t fg, uint16_t bg, uint8_t weight) -> uint16_t {
+        uint16_t inv = (uint16_t)(255 - weight);
+        uint16_t r = (uint16_t)((((fg >> 11) & 0x1F) * weight +
+                                 ((bg >> 11) & 0x1F) * inv) / 255);
+        uint16_t g = (uint16_t)((((fg >> 5) & 0x3F) * weight +
+                                 ((bg >> 5) & 0x3F) * inv) / 255);
+        uint16_t b = (uint16_t)(((fg & 0x1F) * weight +
+                                 (bg & 0x1F) * inv) / 255);
+        return (uint16_t)((r << 11) | (g << 5) | b);
+    };
+    if (SceneLayers::underground) {
+        const uint16_t root = blend565(fringeTop, DIRT_MID, 242);
+        const uint16_t rootHighlight = blend565(0x2104, DIRT_MID, 232);
+        const uint16_t fineRoot = blend565(0x2104, DIRT_MID, 200);
+        const uint16_t crawler = blend565(
+            season == Season::WINTER ? 0xEF7D : 0xFBE0, DIRT_MID, 236);
+        const uint16_t tunnelGlow = blend565(fringeTop, DIRT_MID, 112);
+        const uint16_t scroll = Ground::burrowScrollPhase();
+
+        const uint32_t now = millis();
+        ageTunnels(now);
+        for (uint16_t col = 0; col < kTunnelCols; col++) {
+            const int x = screenWorldX((uint16_t)(col * kTunnelCellW), scroll);
+            if (x >= DISPLAY_W || x + kTunnelCellW <= 0) continue;
+            for (uint8_t lane = 0; lane < kTunnelLanes; lane++) {
+                const uint8_t life = tunnelLife[col][lane];
+                if (!life) continue;
+                const uint16_t tunnelColor = life > 120 ? tunnelGlow :
+                    blend565(fringeTop, DIRT_MID, (uint8_t)(80 + life / 3));
+                const int startX = x < 0 ? 0 : x;
+                const int endX = x + kTunnelCellW > DISPLAY_W
+                    ? DISPLAY_W : x + kTunnelCellW;
+                bottomBar.drawFastHLine(startX, kTunnelY[lane],
+                                        endX - startX, tunnelColor);
+                if (lane + 1 < kTunnelLanes && tunnelLife[col][lane + 1]) {
+                    bottomBar.drawFastVLine(x + 1, kTunnelY[lane],
+                        kTunnelY[lane + 1] - kTunnelY[lane] + 1, tunnelColor);
+                }
+            }
+        }
+
+        Ground::drawUndergroundRoots(bottomBar, fineRoot, root);
+        // City scenery has no roots; grass roots remain present in every season.
+        if (SceneLayers::trees)
+            Trees::drawUnderground(bottomBar, root, rootHighlight);
+
+        for (uint8_t i = 0; i < sizeof(burrowAnts) / sizeof(burrowAnts[0]); i++) {
+            BurrowAnt& ant = burrowAnts[i];
+            if ((int32_t)(now - ant.nextStep) >= 0) {
+                const uint16_t oldX = ant.worldX;
+                const uint8_t oldY = ant.y;
+                int direction = (int)random(0, 3) - 1;
+                if (direction == 0) direction = (esp_random() & 1u) ? -1 : 1;
+                const int step = (int)random(1, 4) * kTunnelCellW;
+                ant.worldX = wrapWorldX((int32_t)ant.worldX + direction * step);
+
+                int lane = (int)tunnelLane(ant.y);
+                if ((esp_random() & 3u) == 0)
+                    lane += (esp_random() & 1u) ? 1 : -1;
+                if (lane < 0) lane = 0;
+                if (lane >= kTunnelLanes) lane = kTunnelLanes - 1;
+                ant.y = kTunnelY[lane];
+                carveTunnel(oldX, oldY, ant.worldX, ant.y);
+                ant.nextStep = now + (uint32_t)random(90, 700);
+            }
+
+            const int x = screenWorldX(ant.worldX, scroll);
+            if (x < 2 || x > DISPLAY_W - 4) continue;
+            const int leg = ((now / 90u + i) & 1u) ? -1 : 1;
+            bottomBar.drawPixel(x, ant.y, crawler);
+            bottomBar.drawPixel(x + 1, ant.y, crawler);
+            bottomBar.drawPixel(x + 2, ant.y, rootHighlight);
+            if (ant.y > 3) bottomBar.drawPixel(x + 1, ant.y - 1, crawler);
+            if (ant.y < BOTTOM_BAR_H - 1) {
+                bottomBar.drawPixel(x, ant.y + 1, leg < 0 ? crawler : root);
+                bottomBar.drawPixel(x + 2, ant.y + 1, leg > 0 ? crawler : root);
+            }
+        }
+    }
+
     bottomBar.setTextColor(TEXT_COL);
     bottomBar.setTextSize(1);
     bottomBar.setTextDatum(top_left);

@@ -8,10 +8,8 @@
 //   - authFlood              -> the "attract" move on clientless APs
 //   - dataAct                -> rank busy rooms first
 //   - strictLock             -> never drift off the locked BSSID mid-capture
-//   - hsDepth 1              -> keep going until +M3 when possible
-//   - depthHoldSec 10        -> hold the lock so M3/M4 still land after a pair
-//     (hsDepth/depthHoldSec live on the RADIO page: this pack sets them, as
-//      every pack does — see Config::applyRadioPack())
+//   - HS DEPTH stays at M1+M2 in this preset; deeper capture requires the
+//     user to raise HS DEPTH in RADIO. DEPTH HOLD applies only above M1+M2.
 #include "pack_ctx.h"
 
 namespace Cap {
@@ -30,10 +28,10 @@ static const Preset kEvilPreset{
     /* jitterMs      */ 2,      // anti-WIDS spacing on the broadcast path
     /* cooldownSec   */ 6,      // let victims re-associate between strikes
     /* scoreThr      */ 0,      // attack anything that scores
-    /* hsDepth       */ 1,      // press on until +M3 when possible
+    /* hsDepth       */ 0,      // M1+M2; deeper capture is user-selected
     /* dataAct       */ 1,      // real data frames feed the hunger score
     /* strictLock    */ true,   // never drift off the locked BSSID
-    /* depthHoldSec  */ 10,     // hold after a pair so M3/M4 still land
+    /* depthHoldSec  */ 10,     // used only if HS DEPTH is manually raised
 };
 
 CAP_PACK_REGISTER(evil, "EVIL", "eViL", kEvilPreset)

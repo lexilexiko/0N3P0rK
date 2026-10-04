@@ -16,8 +16,10 @@ namespace Ground {
 
 static Blade s_blades[BLADE_COUNT];
 static int16_t s_offset = 0;
+static uint16_t s_burrowScrollPhase = 0;
 static uint16_t s_speed = 80;
 static uint32_t s_lastUpdate = 0;
+static constexpr uint16_t BURROW_PATTERN_W = Trees::WORLD_SPAN;
 
 
 static constexpr int16_t PX = 3;
@@ -105,9 +107,29 @@ void setSpeed(uint16_t ms) {
 uint16_t getSpeed() { return s_speed; }
 
 int16_t offset() { return s_offset; }
+uint16_t burrowScrollPhase() { return s_burrowScrollPhase; }
+
+void drawUndergroundRoots(M5Canvas& canvas, uint16_t rootColor,
+                          uint16_t rootHighlight) {
+    for (int i = 0; i < BLADE_COUNT; i++) {
+        const Blade& blade = s_blades[i];
+        int16_t x = i * STRIDE + s_offset;
+        if (x < -STRIDE) x += 240 + STRIDE;
+        if (x >= 240 || blade.shade == 0) continue;
+
+        const int depth = blade.kind == 3 ? 2 : 3 + (blade.shade & 1);
+        canvas.drawFastVLine(x, 2, depth, rootColor);
+        if ((blade.shade & 2u) == 0) {
+            canvas.drawLine(x, 3, x - 1, 4, rootHighlight);
+            if (blade.kind != 3)
+                canvas.drawLine(x, 4, x + 1, 5, rootColor);
+        }
+    }
+}
 
 void resetBlades() {
     s_offset = 0;
+    s_burrowScrollPhase = 0;
     for (int i = 0; i < BLADE_COUNT; i++) {
         uint8_t r = (uint8_t)(esp_random() % 100);
         if (r < 10) {
@@ -133,6 +155,9 @@ void resetBlades() {
         }
         s_blades[i].lean = (int8_t)random(-3, 4);
         s_blades[i].shade = (uint8_t)(esp_random() % 4);
+        s_blades[i].windPhase = (uint16_t)(i * 197);
+        s_blades[i].frontLayer =
+            s_blades[i].kind != 3 && random(0, 100) < 65;
     }
 }
 
@@ -151,6 +176,8 @@ void updateScroll(bool moving, bool directionRight, int steps) {
     for (int n = 0; n < steps; n++) {
         if (directionRight) {
             s_offset++;
+            s_burrowScrollPhase =
+                (uint16_t)((s_burrowScrollPhase + 1) % BURROW_PATTERN_W);
             Trees::scroll(+1);
             SeasonalFx::scroll(+1);
             Props::scroll(+1);
@@ -166,6 +193,9 @@ void updateScroll(bool moving, bool directionRight, int steps) {
             }
         } else {
             s_offset--;
+            s_burrowScrollPhase = s_burrowScrollPhase == 0
+                ? (uint16_t)(BURROW_PATTERN_W - 1)
+                : (uint16_t)(s_burrowScrollPhase - 1);
             Trees::scroll(-1);
             SeasonalFx::scroll(-1);
             Props::scroll(-1);
@@ -182,34 +212,6 @@ void updateScroll(bool moving, bool directionRight, int steps) {
         }
     }
 
-    // Organic mutation
-    if (random(0, 30) == 0) {
-        int idx = random(0, BLADE_COUNT);
-        uint8_t r = (uint8_t)(esp_random() % 100);
-        if (r < 10) {
-            s_blades[idx].kind = 4;
-            s_blades[idx].height = random(5, 9);
-            s_blades[idx].width = 2;
-        } else if (r < 55) {
-            s_blades[idx].kind = 0;
-            s_blades[idx].height = random(11, 20);
-            s_blades[idx].width = 2;
-        } else if (r < 85) {
-            s_blades[idx].kind = 1;
-            s_blades[idx].height = random(10, 18);
-            s_blades[idx].width = 2;
-        } else if (r < 95) {
-            s_blades[idx].kind = 2;
-            s_blades[idx].height = random(11, 16);
-            s_blades[idx].width = 1;
-        } else {
-            s_blades[idx].kind = 3;
-            s_blades[idx].height = 2;
-            s_blades[idx].width = 2;
-        }
-        s_blades[idx].lean = (int8_t)random(-3, 4);
-        s_blades[idx].shade = (uint8_t)(esp_random() % 4);
-    }
 }
 
 
@@ -412,31 +414,22 @@ void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx) {
         if (cx < -STRIDE) cx += 240 + STRIDE;
         if (cx >= 240) continue;
 
-        // Depth split — pig sits BETWEEN layers:
-        // near pig: ~half blades front (ankles only), half stay behind body
-        // far: occasional tall front pops for parallax
+        const Blade& b = s_blades[i];
+        // The back pass is the full grass field; marked blades get a separate
+        // foreground pass so the back layer stays dense when that pass is off.
         bool nearPig = (cx >= pigLeft - 6 && cx <= pigRight + 6);
-        bool frontBlade;
-        if (nearPig) {
-            // NOT all blades front (was hiding the whole body/legs)
-            frontBlade = ((i % 3) != 0);  // 2/3 front, 1/3 back
-        } else {
-            frontBlade = ((i % 5) == 0 && s_blades[i].height >= 12);
-        }
-        if (frontLayer && !frontBlade) continue;
-        if (!frontLayer && frontBlade) continue;
+        if (frontLayer && !b.frontLayer) continue;
 
         // Winter: only lightly thinned (keep density for "иней" look)
-        if (isWinter && ((i & 3) == 0)) continue;
+        if (isWinter && ((b.shade & 3) == 0)) continue;
         // Desert: sparse low sand tufts, not a full grass field
-        if (isDesert && ((i & 3) != 0)) continue;
+        if (isDesert && ((b.shade & 3) != 0)) continue;
 
-        int16_t xJit = (int16_t)(((i * 17) ^ (i >> 2)) & 1);
-        const Blade& b = s_blades[i];
+        int16_t xJit = (int16_t)(((uint8_t)b.lean ^ b.shade) & 1);
         // Spring: force more flower stems visually (without rewriting blade table)
         uint8_t kind = b.kind;
-        if (isSpring && kind == 0 && ((i % 3) == 0)) kind = 2;       // extra blooms
-        if (isSpring && kind == 4 && ((i % 2) == 0)) kind = 2;       // stubble → sprouts
+        if (isSpring && kind == 0 && ((b.shade % 3) == 0)) kind = 2;  // extra blooms
+        if (isSpring && kind == 4 && ((b.shade % 2) == 0)) kind = 2;  // stubble → sprouts
         int16_t drawHeight = (int16_t)(b.height + heightBoost);
         if (isDesert) drawHeight = (int16_t)(b.height / 2 + 2);  // short dunes of grit
         if (isSpring && kind == 2) drawHeight = (int16_t)(b.height + 5);  // flower stems taller
@@ -451,7 +444,7 @@ void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx) {
 
         // Wind sway — stronger so grass visibly waves
         {
-            uint32_t phase = now + (uint32_t)i * 197;
+            uint32_t phase = now + b.windPhase;
             int period = wetGrass ? 1400 : (isWinter ? 1800 : 2200);
             int wave = (int)(phase % period);
             int half = period / 2;

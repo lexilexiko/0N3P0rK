@@ -707,24 +707,24 @@ void getStatusLine(char* out, size_t n) {
         out[0] = 0;
         return;
     }
-    const uint8_t page = (uint8_t)((millis() / 2500u) % 3u);
-    if (page == 0) {
+    const uint8_t page = (uint8_t)((millis() % 10000u) / 2500u);
+    if (page < 2) {
         const char* tab = s_tab == Tab::Scripts ? "SCR" : (s_tab == Tab::Live ? "LIVE" : "PAD");
         snprintf(out, n, "BAD %s %s %s", s_tr == Transport::Usb ? "USB" : "BLE", tab, s_status);
     } else if (s_tab == Tab::Scripts) {
-        if (page == 1)
+        if (page == 2)
             snprintf(out, n, "1-3 TAB  ^/v MOVE  ENT RUN");
         else
             snprintf(out, n, "R SCAN  C LINK  U/B MODE  ESC EXIT");
     } else if (s_tab == Tab::Live) {
         if (s_liveArmed)
             snprintf(out, n, "FN+ESC DISARM  LIVE INPUT ACTIVE");
-        else if (page == 1)
+        else if (page == 2)
             snprintf(out, n, "ENT ARM  ESC EXIT");
         else
             snprintf(out, n, "C LINK  U/B MODE  1-3 TAB");
     } else {
-        if (page == 1)
+        if (page == 2)
             snprintf(out, n, "1-3 TAB  ^/v PICK  ENT RUN");
         else
             snprintf(out, n, "P PROFILE  C LINK  U/B MODE  ESC EXIT");

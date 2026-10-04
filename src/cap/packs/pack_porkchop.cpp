@@ -1,7 +1,7 @@
 // "FOCUS" pack - Porkchop-style tuning paired with the FOCUS capture method:
 // score-and-focus single-target bursts, bidirectional kick, EAPOL TX,
 // PMKID probe, long lock-on-BSSID, data-frame activity, strict lock, and
-// depth hold so M3/M4 still land after the pair.
+// depth hold (active only when HS DEPTH is manually set above M1+M2).
 //
 // Recommended setup for handshake hunting (closest to M5PORKCHOP OINK).
 #include "pack_ctx.h"
@@ -22,10 +22,10 @@ static const Preset kPorkchopPreset{
     /* jitterMs      */ 3,      // anti-WIDS spacing on broadcast path
     /* cooldownSec   */ 8,      // per-AP cooldown (FOCUS scoring)
     /* scoreThr      */ 0,      // attack anything that scores
-    /* hsDepth       */ 1,      // wait for +M3 when possible
+    /* hsDepth       */ 0,      // M1+M2; deeper capture is user-selected
     /* dataAct       */ 1,      // real data frames feed activity score
     /* strictLock    */ true,   // never drift off locked BSSID
-    /* depthHoldSec  */ 8,      // hold after pair to collect M3/M4
+    /* depthHoldSec  */ 8,      // used only if HS DEPTH is manually raised
 };
 
 CAP_PACK_REGISTER(porkchop, "FOCUS", "FOCUS", kPorkchopPreset)

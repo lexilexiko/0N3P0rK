@@ -262,7 +262,7 @@ void BlePigMode::update() {
 
 void BlePigMode::getStatusLine(char* out, size_t len) {
     if (!out || !len) return;
-    if ((millis() / 2500u) & 1u)
+    if ((millis() % 7500u) >= 5000u)
         snprintf(out, len, "^/v FAMILY  ESC EXIT");
     else
         snprintf(out, len, "BLE %s %lu", familyName(family), (unsigned long)bursts);
