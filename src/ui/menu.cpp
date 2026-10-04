@@ -399,6 +399,7 @@ bool isInModal() { return s_group != GroupId::NONE; }
 bool closeModal() {
     if (s_group == GroupId::NONE) return false;
     s_group = GroupId::NONE;
+    s_openMs = millis();
     SFX::play(SFX::BACK_NAV);
     return true;
 }
@@ -423,7 +424,7 @@ const char* hint() {
 }
 
 const char* selectedHint() {
-    if ((millis() % 7500u) >= 5000u) return hint();
+    if (((millis() - s_openMs) % 7500u) >= 5000u) return hint();
     if (s_group != GroupId::NONE) {
         const Item* it = groupItems(s_group);
         uint8_t n = groupSize(s_group);
@@ -496,6 +497,7 @@ void update() {
             if (s_modalIdx > 0) {
                 s_modalIdx--;
                 if (s_modalIdx < s_modalScroll) s_modalScroll = s_modalIdx;
+                s_openMs = millis();
                 SFX::play(SFX::MENU_CLICK);
             }
         }
@@ -504,6 +506,7 @@ void update() {
                 s_modalIdx++;
                 if (s_modalIdx >= s_modalScroll + MODAL_VIS)
                     s_modalScroll = (uint8_t)(s_modalIdx - MODAL_VIS + 1);
+                s_openMs = millis();
                 SFX::play(SFX::MENU_CLICK);
             }
         }
@@ -521,6 +524,7 @@ void update() {
         if (s_rootIdx > 0) {
             s_rootIdx--;
             if (s_rootIdx < s_rootScroll) s_rootScroll = s_rootIdx;
+            s_openMs = millis();
             SFX::play(SFX::MENU_CLICK);
         }
     }
@@ -529,6 +533,7 @@ void update() {
             s_rootIdx++;
             if (s_rootIdx >= s_rootScroll + VISIBLE)
                 s_rootScroll = (uint8_t)(s_rootIdx - VISIBLE + 1);
+            s_openMs = millis();
             SFX::play(SFX::MENU_CLICK);
         }
     }
@@ -539,6 +544,7 @@ void update() {
             s_group = it.groupId;
             s_modalIdx = 0;
             s_modalScroll = 0;
+            s_openMs = millis();
         } else {
             doAction(it.actionId);
         }

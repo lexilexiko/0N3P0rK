@@ -951,7 +951,7 @@ bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
-    const bool showHelp = ((millis() - s_openMs) % 7500u) >= 5000u;
+    const bool showHelp = ((millis() - s_openMs) % 7500u) < 5000u;
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS)
             return showHelp ? "TYPE WIFI PASSWORD" : "TYPE  BS ERASE  ENT SAVE  ESC BACK";
@@ -961,8 +961,16 @@ const char* bottomHint() {
     }
     if (s_page == SettingsPage::STATUS)
         return showHelp ? "DEVICE AND STORAGE INFORMATION" : "^/v SCROLL  ESC BACK";
-    if (s_page == SettingsPage::RADIO_EDIT)
-        return showHelp ? "RADIO DETAIL SETTINGS" : "^/v PICK  ENT EDIT  ESC BACK";
+    if (s_page == SettingsPage::RADIO_EDIT) {
+        if (!showHelp) return "^/v PICK  ENT EDIT  ESC BACK";
+        if (s_idx < s_editN) {
+            for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
+                if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id)
+                    return H_KNOBS[k];
+            }
+        }
+        return "RADIO DETAIL SETTINGS";
+    }
     if (s_text) return showHelp ? "ENTER TEXT VALUE" : "TYPE  ENT SAVE  BS ERASE  ESC CANCEL";
     if (s_bind) return showHelp ? "PRESS A KEY TO ASSIGN" : "PRESS KEY  BS CLEAR  ESC CANCEL";
     if (s_page == SettingsPage::KEYS) {
@@ -982,11 +990,6 @@ const char* bottomHint() {
                 return H_BLE[s_idx];
             if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
                 return H_SCENE[s_idx];
-            if (s_page == SettingsPage::RADIO_EDIT && s_idx < ALL_KNOBS_N) {
-                for (uint8_t k = 0; k < ALL_KNOBS_N; k++) {
-                    if (ALL_RADIO_KNOBS[k].id == s_editItems[s_idx].id) return H_KNOBS[k];
-                }
-            }
         }
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
         if (it[s_idx].kind == Kind::TEXT)
