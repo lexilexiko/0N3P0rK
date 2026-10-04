@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.3.6f**
+**Current version: 1.3.6f (FixFIxFIx)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -392,13 +392,25 @@ to the keyless capture endpoint.
 
 The **SET → RADIO** page contains the stable radio controls:
 
-- channel hop set and dwell timing;
+- channel hop set and timing: **HOP MS** sets the normal interval, while
+  **MIN DWELL** can be `OFF` or `50–600 ms` and acts as a lower bound;
 - lock timing and lock-on-handshake behavior;
 - handshake method and fallback selection;
 - deauthentication and EAPOL/PMKID options;
 - RSSI filtering and kick burst count;
 - PCAP format and maximum capture size;
-- handshake depth and target hold behavior.
+- handshake depth and target hold behavior. **HS DEPTH** is user-controlled:
+  `M1–M2` is the default; select `+M3` or `FULL` yourself when needed.
+
+Radio **PACK** presets do not force deeper handshake capture: their configured
+depth remains `M1–M2`. The **SOFT** pack performs passive capture without
+transmission actions; the sniffer still listens and saves captured data.
+**FOCUS** no longer double-counts successfully transmitted broadcast frames in
+its displayed frame total.
+
+For contributors, the [capture-method guide](src/cap/methods/README.md) and
+[radio-pack guide](src/cap/packs/README.md) explain how to add methods and
+presets, how RADIO → EDIT knobs map to a method, and how frame accounting works.
 
 The **PACK** selector applies a tested group of radio values. Editing
 individual values marks the profile as custom. **RADIO → RESET** restores the

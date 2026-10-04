@@ -180,7 +180,43 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   analysis — over a short-lived heap list, so no capture is opened while the
   directory handle is still held.
 
-### 1.3.6f (current)
+### 1.3.6 (previous)
+
+#### File Manager
+
+- Reworked the SD File Manager with directory navigation, file details,
+  text preview/editing, and JPEG/BMP/PNG image preview.
+- Added create-file, create-folder, rename, copy, move, paste, and confirmed
+  delete operations. Backspace/ESC now navigate back; Backspace removes a
+  character while editing or entering a name.
+- File Manager working memory is allocated only while the mode is open.
+  The text buffer is allocated only for text preview/editing and released
+  when returning to the browser; browsing images and folders does not reserve
+  that 6 KB editor buffer.
+- Directory entries grow in heap-backed batches instead of using a fixed
+  small file limit. The list is sorted and scrollable; if memory runs out,
+  the UI reports that the displayed list is partial.
+
+#### Task Manager and memory
+
+- Reworked **TASKS** to show active services and current heap statistics:
+  free heap, largest free block, minimum free heap, internal free memory, and
+  available SD space.
+- Added scrollable service controls and status details for active tools.
+  WPA-Sec/Pwncrack synchronization is left to its normal shutdown path.
+- Reduced File Manager's static RAM footprint by moving its working buffers
+  and directory entries out of `.bss` and onto the heap for the duration of use.
+  The PlatformIO static RAM report is about 11 KB lower than the preceding
+  build; the main display canvas remains permanently allocated.
+
+#### Interface polish
+
+- Consolidated keyboard guidance in the bottom hint bar and improved the
+  displayed navigation symbols and Escape/Backspace labels.
+- Kept Loot's existing sync presentation while retaining the updated key
+  labels.
+
+### 1.3.6f (FixFIxFIx, current)
 
 #### Farm and grass
 
@@ -223,40 +259,20 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Compact HP bars now show current/max health beside the centered match score and
   round number.
 
-### 1.3.6 (previous)
+#### Radio capture fixes
 
-#### File Manager
-
-- Reworked the SD File Manager with directory navigation, file details,
-  text preview/editing, and JPEG/BMP/PNG image preview.
-- Added create-file, create-folder, rename, copy, move, paste, and confirmed
-  delete operations. Backspace/ESC now navigate back; Backspace removes a
-  character while editing or entering a name.
-- File Manager working memory is allocated only while the mode is open.
-  The text buffer is allocated only for text preview/editing and released
-  when returning to the browser; browsing images and folders does not reserve
-  that 6 KB editor buffer.
-- Directory entries grow in heap-backed batches instead of using a fixed
-  small file limit. The list is sorted and scrollable; if memory runs out,
-  the UI reports that the displayed list is partial.
-
-#### Task Manager and memory
-
-- Reworked **TASKS** to show active services and current heap statistics:
-  free heap, largest free block, minimum free heap, internal free memory, and
-  available SD space.
-- Added scrollable service controls and status details for active tools.
-  WPA-Sec/Pwncrack synchronization is left to its normal shutdown path.
-- Reduced File Manager's static RAM footprint by moving its working buffers
-  and directory entries out of `.bss` and onto the heap for the duration of use.
-  The PlatformIO static RAM report is about 11 KB lower than the preceding
-  build; the main display canvas remains permanently allocated.
-
-#### Interface polish
-
-- Consolidated keyboard guidance in the bottom hint bar and improved the
-  displayed navigation symbols and Escape/Backspace labels.
-- Kept Loot's existing sync presentation while retaining the updated key
-  labels.
+- Added **MIN DWELL** to the RADIO menu with `OFF` and `50–600 ms` options.
+  When enabled, it is a lower bound on the channel-hop interval alongside
+  **HOP MS**.
+- Kept **HS DEPTH** under the user's control. Pack presets remain at `M1–M2`;
+  collecting `+M3` or the full `M1–M4` exchange requires selecting that depth
+  manually in RADIO.
+- Corrected the FOCUS frame counter so broadcast management frames sent through
+  the sniffer callback are not counted twice.
+- Clarified **SOFT** as passive capture: it disables kick, EAPOL TX, PMKID
+  probing, CSA and auth-flood actions while capture and file saving continue.
+- Updated the Russian contributor guides for [capture methods](src/cap/methods/README.md)
+  and [radio packs](src/cap/packs/README.md), including their registration
+  examples, RADIO settings and behavior notes.
 
 ---
