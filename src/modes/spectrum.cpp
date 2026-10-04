@@ -8,6 +8,7 @@
 #include "../core/wsl_bypasser.h"
 #include "../core/config.h"
 #include "../piglet/avatar.h"
+#include "../piglet/weather.h"
 #include "../audio/sfx.h"
 #include "../core/app.h"
 #include <M5Cardputer.h>
@@ -222,6 +223,25 @@ static uint16_t blend565(uint16_t foreground, uint16_t background,
     uint32_t b = ((foreground & 0x1F) * foregroundWeight +
                   (background & 0x1F) * backgroundWeight) / 255;
     return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+struct SpectrumPalette {
+    uint16_t signal;
+    uint16_t accent;
+};
+
+static SpectrumPalette seasonPalette() {
+    switch (Weather::getActiveSeason()) {
+        case Season::SPRING: return {0x07E0, 0xF81F};
+        case Season::SUMMER: return {0x07FF, 0xFFE0};
+        case Season::AUTUMN: return {0xFD20, 0xF800};
+        case Season::WINTER: return {0xBDF7, 0x07FF};
+        case Season::RETRO:  return {0xC618, 0xFFFF};
+        case Season::NOIR:   return {0xFE60, 0xC480};
+        case Season::CITY:   return {0x07FF, 0xFD20};
+        case Season::DESERT: return {0xFEA0, 0x07E0};
+    }
+    return {UiStyle::CYAN, UiStyle::GOLD};
 }
 
 // --- band view: pan / zoom ------------------------------------------------
@@ -794,6 +814,7 @@ static void upName(const char* in, char* out, size_t n) {
 
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextWrap(false);
+    const SpectrumPalette palette = seasonPalette();
     uint8_t tot = 0;
     for (uint8_t i = 0; i < s_nNet; i++) if (passFilt(s_net[i])) tot++;
     const char* fn = "ALL";
@@ -825,9 +846,9 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     for (int y = TOP + 8; y < BOT; y += 8)
         c.drawFastHLine(L + 1, y, W - 2, grid);
 
-    const uint16_t noiseColor = blend565(fg, bg, 112);
+    const uint16_t noiseColor = blend565(palette.signal, bg, 176);
     for (int x = 0; x < W; x += 2) {
-        const int height = 1 + noise7() / 2;
+        const int height = 1 + noise7();
         c.drawFastVLine(L + x, BOT - height, height, noiseColor);
     }
 
@@ -838,7 +859,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int right = freqToX(selected.freq + 22.0f);
         if (left < L) left = L;
         if (right > R) right = R;
-        const uint16_t selectedFill = blend565(UiStyle::GOLD, bg, 112);
+        const uint16_t selectedFill = blend565(palette.accent, bg, 160);
         uint16_t noise = (uint16_t)(millis() / 38u);
         for (int x = left; x <= right; x++) {
             float freq = s_center - s_width * 0.5f +
@@ -846,27 +867,28 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
             float amp = sincAmp(freq - selected.freq);
             int top = BOT - (int)(height * amp);
             if (top < TOP) top = TOP;
+            if (top > BOT) top = BOT;
             if (top >= BOT) continue;
-            c.drawFastVLine(x, top, BOT - top, selectedFill);
 
             uint16_t hash = (uint16_t)(x * 251u + (uint16_t)(top * 37u));
             hash ^= (uint16_t)(hash << 7);
             hash ^= (uint16_t)(hash >> 9);
             hash ^= noise;
-            if ((hash & 3u) != 0) {
-                const uint16_t edgeColor = (hash & 4u)
-                    ? UiStyle::GOLD : UiStyle::CYAN;
-                c.drawPixel(x, top, edgeColor);
-                if (x > left && (hash & 8u))
-                    c.drawPixel(x - 1, top, UiStyle::GOLD);
+            for (int y = top; y < BOT; y++) {
+                const uint16_t dash = (uint16_t)(hash + y * 13u);
+                if ((dash & 3u) == 0)
+                    c.drawPixel(x, y, selectedFill);
             }
+            c.drawPixel(x, top, palette.accent);
+            if (x > left && (hash & 8u))
+                c.drawPixel(x - 1, top, palette.accent);
         }
     }
 
     int previousY = rssiToY(s_persist[0]);
     for (int x = 1; x < W; x++) {
         int y = rssiToY(s_persist[x]);
-        c.drawLine(L + x - 1, previousY, L + x, y, UiStyle::CYAN);
+        c.drawLine(L + x - 1, previousY, L + x, y, palette.signal);
         previousY = y;
     }
 
@@ -897,7 +919,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         bool selected = (ch == selectedChannel);
         char lb[4];
         snprintf(lb, sizeof(lb), "%u", ch);
-        c.setTextColor(selected ? UiStyle::PINK : fg);
+        c.setTextColor(selected ? palette.accent : fg);
         c.drawString(lb, x, CH_Y);
         c.setTextColor(fg);
     }
