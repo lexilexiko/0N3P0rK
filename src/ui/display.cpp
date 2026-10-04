@@ -748,12 +748,10 @@ void Display::drawBottomBar() {
             }
         }
 
-        if (season != Season::CITY) {
-            Ground::drawUndergroundRoots(bottomBar, fineRoot, root);
-            // Roots use the real flora slots and their growth/collapse progress.
-            if (SceneLayers::trees)
-                Trees::drawUnderground(bottomBar, root, rootHighlight);
-        }
+        Ground::drawUndergroundRoots(bottomBar, fineRoot, root);
+        // City scenery has no roots; grass roots remain present in every season.
+        if (SceneLayers::trees)
+            Trees::drawUnderground(bottomBar, root, rootHighlight);
 
         for (uint8_t i = 0; i < sizeof(burrowAnts) / sizeof(burrowAnts[0]); i++) {
             BurrowAnt& ant = burrowAnts[i];

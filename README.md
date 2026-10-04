@@ -862,8 +862,9 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Replaced stationary seasonal specks with a scrolling underground ant-farm
   layer: branching tunnels dug by independently wandering ants, which gradually
   crumble before the ants open new paths.
-- Thick, branching roots follow actual trees and bushes through their growth,
+- Thick, forked roots match each tree's bark palette and follow its growth,
   collapse, and world-scroll animations; small roots also grow under grass.
+- City scenes keep the ant tunnels and grass roots, but omit roots under city props.
 - The **PIG → UNDERGROUND** toggle controls the layer.
 - Kept the seasonal soil palette and status text readable above the animation.
 
