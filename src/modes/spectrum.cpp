@@ -20,16 +20,16 @@
 
 namespace SpectrumMode {
 
-static const int L = 20;
+static const int L = 4;
 static const int R = 236;
 static const int W = R - L;
-static const int TOP = 2;
-static const int BOT = 46;
-static const int WF_TOP = 48;
+static const int TOP = 12;
+static const int BOT = 48;
+static const int WF_TOP = 50;
 static const int WF_ROWS = 12;
-static const int CH_Y = 62;
-static const int INFO_Y = 72;
-static const int LIST_Y = 82;
+static const int CH_Y = 63;
+static const int INFO_Y = 1;
+static const int LIST_Y = 76;
 static const uint32_t BAR_FLIP_MS = 2200;
 
 static const int8_t RSSI_MIN = -95;
@@ -38,6 +38,13 @@ static const int8_t NOISE = -92;
 
 static const float CENTER0 = 2442.0f;
 static const float WIDTH0 = 72.0f;
+
+// Band view window. WIDTH0 = the whole 2.4 GHz band (all 13 channels).
+// Smaller span = zoomed in; s_center pans. Kept inside [BAND_LO, BAND_HI].
+static const float BAND_LO = 2406.0f;
+static const float BAND_HI = 2478.0f;
+static const float ZOOMS[] = {72.0f, 40.0f, 24.0f, 14.0f, 8.0f, 5.0f};
+static const uint8_t ZOOM_N = 6;
 
 static const uint8_t MAX_NETS = 24;
 static const uint8_t MAX_CLI = 8;
@@ -96,6 +103,8 @@ static int8_t s_sel = -1;
 static uint8_t s_selMac[6];
 static bool s_hasSel = false;
 static float s_center = CENTER0;
+static float s_width = WIDTH0;
+static uint8_t s_zoomI = 0;
 static uint8_t s_hopI = 0;
 static uint8_t s_ch = 6;
 static uint32_t s_lastHop = 0;
@@ -189,8 +198,8 @@ static float chToFreq(uint8_t ch) {
 }
 
 static int freqToX(float f) {
-    float left = s_center - WIDTH0 * 0.5f;
-    float t = (f - left) / WIDTH0;
+    float left = s_center - s_width * 0.5f;
+    float t = (f - left) / s_width;
     return L + (int)(t * (float)W);
 }
 
@@ -202,6 +211,68 @@ static int rssiToY(int8_t rssi) {
     if (y < TOP) y = TOP;
     if (y > BOT) y = BOT;
     return y;
+}
+
+// --- band view: pan / zoom ------------------------------------------------
+static void clearWaterfall() {
+    if (s_wf) memset(s_wf, 0, (size_t)WF_ROWS * W);
+}
+
+static void clampView() {
+    if (s_width > ZOOMS[0]) s_width = ZOOMS[0];
+    if (s_width < ZOOMS[ZOOM_N - 1]) s_width = ZOOMS[ZOOM_N - 1];
+    float half = s_width * 0.5f;
+    if (s_center < BAND_LO + half) s_center = BAND_LO + half;
+    if (s_center > BAND_HI - half) s_center = BAND_HI - half;
+}
+
+static void panView(int dir) {
+    if (s_width >= ZOOMS[0]) {
+        Display::showToast("FULL BAND", 700);
+        return;
+    }
+    s_center += (float)dir * (s_width * 0.25f);
+    clampView();
+    clearWaterfall();
+}
+
+static void zoomView(int dir) {
+    int ni = (int)s_zoomI + dir;
+    if (ni < 0) ni = 0;
+    if (ni > (int)ZOOM_N - 1) ni = (int)ZOOM_N - 1;
+    if (ni == (int)s_zoomI) return;
+    s_zoomI = (uint8_t)ni;
+    s_width = ZOOMS[s_zoomI];
+    clampView();
+    clearWaterfall();
+    char m[20];
+    snprintf(m, sizeof(m), "SPAN %.0fMHZ", s_width);
+    Display::showToast(m, 700);
+}
+
+static void resetView() {
+    s_zoomI = 0;
+    s_width = WIDTH0;
+    s_center = CENTER0;
+    clampView();
+    clearWaterfall();
+    Display::showToast("FULL BAND", 700);
+}
+
+// Recenter only if a network would fall outside the current window.
+static void ensureVisible(float freq) {
+    float half = s_width * 0.5f;
+    if (freq < s_center - half + 1.0f || freq > s_center + half - 1.0f) {
+        s_center = freq;
+        clampView();
+        clearWaterfall();
+    }
+}
+
+static bool chVisible(uint8_t ch) {
+    float f = chToFreq(ch);
+    float half = s_width * 0.5f;
+    return f >= s_center - half - 2.5f && f <= s_center + half + 2.5f;
 }
 
 static float sincAmp(float dist) {
@@ -267,16 +338,20 @@ static bool netHeld(int i) {
     return false;
 }
 
-static int nextSel(int dir) {
+static int nextFiltered(int start, int dir) {
     if (s_nNet == 0) return -1;
-    int start = s_sel < 0 ? 0 : s_sel;
+    if (start < 0) start = dir > 0 ? -1 : 0;
     for (uint8_t k = 0; k < s_nNet; k++) {
         int i = start + dir * ((int)k + 1);
         while (i < 0) i += s_nNet;
         while (i >= s_nNet) i -= s_nNet;
         if (passFilt(s_net[i])) return i;
     }
-    return s_sel;
+    return start;
+}
+
+static int nextSel(int dir) {
+    return nextFiltered(s_sel, dir);
 }
 
 static void parseAuth(const uint8_t* p, uint16_t len, Auth& auth, bool& pmf) {
@@ -472,9 +547,37 @@ static void hopTick() {
     uint32_t now = millis();
     if (now - s_lastHop < HOP_MS) return;
     s_lastHop = now;
-    s_hopI = (uint8_t)((s_hopI + 1) % HOP_N);
-    s_ch = HOP[s_hopI];
+    // Keep the radio hopping only across the channels currently in view.
+    for (uint8_t k = 0; k < HOP_N; k++) {
+        s_hopI = (uint8_t)((s_hopI + 1) % HOP_N);
+        uint8_t cc = HOP[s_hopI];
+        if (chVisible(cc)) { s_ch = cc; break; }
+    }
     esp_wifi_set_channel(s_ch, WIFI_SECOND_CHAN_NONE);
+}
+
+// Hold [,] / [/] to slide the band. Uses raw key state (not the one-shot
+// latch) so it repeats while held — that's what makes it feel like a pan.
+static uint32_t s_viewT0 = 0;
+static void viewTick() {
+    if (s_phase != SWEEP) return;
+    if (s_width >= ZOOMS[0]) {  // full band on screen: nothing to pan
+        s_viewT0 = 0;
+        return;
+    }
+    bool left = M5Cardputer.Keyboard.isKeyPressed(',');
+    bool right = M5Cardputer.Keyboard.isKeyPressed('/');
+    left = left || M5Cardputer.Keyboard.isKeyPressed('<');
+    right = right || M5Cardputer.Keyboard.isKeyPressed('>');
+    if (!left && !right) {
+        s_viewT0 = 0;
+        return;
+    }
+    uint32_t now = millis();
+    if (s_viewT0 && now - s_viewT0 < 90) return;
+    s_viewT0 = now;
+    if (left) panView(-1);
+    else panView(+1);
 }
 
 static void prune() {
@@ -624,8 +727,8 @@ static void revealTick() {
 static void updateBuf() {
     for (int i = 0; i < W; i++)
         s_col[i] = (int8_t)(NOISE + (int)(noise7() % 4) - 2);
-    float leftF = s_center - WIDTH0 * 0.5f;
-    float px = WIDTH0 / (float)W;
+    float leftF = s_center - s_width * 0.5f;
+    float px = s_width / (float)W;
     for (uint8_t i = 0; i < s_nNet; i++) {
         if (!passFilt(s_net[i])) continue;
         float c = s_net[i].freq;
@@ -674,11 +777,11 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t
     if (rx < L || lx > R) return;
     if (lx < L) lx = L;
     if (rx > R) rx = R;
-    float leftF = s_center - WIDTH0 * 0.5f;
+    float leftF = s_center - s_width * 0.5f;
     (void)act;
     int prevY = BOT;
     for (int x = lx; x <= rx; x++) {
-        float f = leftF + (float)(x - L) * WIDTH0 / (float)W;
+        float f = leftF + (float)(x - L) * s_width / (float)W;
         float amp = sincAmp(f - freq);
         int y = BOT - (int)(h * amp);
         if (y < TOP) y = TOP;
@@ -709,18 +812,41 @@ static void upName(const char* in, char* out, size_t n) {
 
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextWrap(false);
-    c.drawFastVLine(L - 2, TOP, BOT - TOP, fg);
+    uint8_t tot = 0;
+    for (uint8_t i = 0; i < s_nNet; i++) if (passFilt(s_net[i])) tot++;
+    const char* fn = "ALL";
+    if (s_filt == F_VULN) fn = "VULN";
+    else if (s_filt == F_SOFT) fn = "SOFT";
+    else if (s_filt == F_HIDDEN) fn = "HID";
+
     c.setTextSize(1);
+    c.setTextDatum(top_left);
+    c.fillRoundRect(2, INFO_Y, 158, 9, 2, UiStyle::PANEL);
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString("F FILTER", 5, INFO_Y + 1);
     c.setTextColor(fg);
-    c.setTextDatum(middle_right);
-    for (int8_t db = -30; db >= -90; db -= 20) {
-        int y = rssiToY(db);
-        c.drawFastHLine(L - 4, y, 3, fg);
-        char lb[6];
-        snprintf(lb, sizeof(lb), "%d", db);
-        c.drawString(lb, L - 5, y < 6 ? 6 : y);
+    char filterInfo[24];
+    snprintf(filterInfo, sizeof(filterInfo), "%s %uAP %u/s",
+             fn, (unsigned)tot, (unsigned)s_pps);
+    c.drawString(filterInfo, 55, INFO_Y + 1);
+
+    char zoomInfo[24];
+    unsigned zoom = (unsigned)(WIDTH0 / s_width + 0.5f);
+    snprintf(zoomInfo, sizeof(zoomInfo), "%uX  %.0fMHz", zoom, s_width);
+    c.fillRoundRect(163, INFO_Y, 75, 9, 2, UiStyle::PANEL);
+    c.setTextDatum(top_right);
+    c.setTextColor(UiStyle::CYAN);
+    c.drawString(zoomInfo, 234, INFO_Y + 1);
+
+    const uint16_t grid = (bg == UiStyle::BG) ? UiStyle::PANEL : UiStyle::DIM;
+    c.drawRect(L, TOP, W, BOT - TOP + 1, grid);
+    for (uint8_t ch = 1; ch <= 13; ch++) {
+        int x = freqToX(chToFreq(ch));
+        if (x <= L || x >= R) continue;
+        c.drawFastVLine(x, TOP + 1, BOT - TOP - 1, grid);
     }
-    c.drawFastHLine(L, BOT, R - L, fg);
+    for (int y = TOP + 8; y < BOT; y += 8)
+        c.drawFastHLine(L + 1, y, W - 2, grid);
 
     for (int x = L; x < R; x++) {
         uint8_t n = noise7();
@@ -754,61 +880,54 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
 
     c.setTextDatum(top_center);
     c.setTextColor(fg);
+    int selectedChannel = (s_sel >= 0 && s_sel < s_nNet &&
+                           passFilt(s_net[s_sel])) ? s_net[s_sel].ch : 0;
     for (uint8_t ch = 1; ch <= 13; ch++) {
         int x = freqToX(chToFreq(ch));
         if (x < L || x > R) continue;
-        bool hop = (ch == s_ch);
+        bool selected = (ch == selectedChannel);
         c.drawFastVLine(x, BOT, 3, fg);
-        if (hop) c.fillRect(x - 5, CH_Y - 1, 11, 9, fg);
+        if (selected) c.fillRoundRect(x - 6, CH_Y - 1, 13, 9, 2, UiStyle::PINK);
         char lb[4];
         snprintf(lb, sizeof(lb), "%u", ch);
-        c.setTextColor(hop ? bg : fg);
+        c.setTextColor(selected ? bg : fg);
         c.drawString(lb, x, CH_Y);
         c.setTextColor(fg);
     }
 
-    uint8_t tot = 0;
-    for (uint8_t i = 0; i < s_nNet; i++) if (passFilt(s_net[i])) tot++;
-    const char* fn = "ALL";
-    if (s_filt == F_VULN) fn = "VULN";
-    else if (s_filt == F_SOFT) fn = "SOFT";
-    else if (s_filt == F_HIDDEN) fn = "HID";
-    char info[40];
-    snprintf(info, sizeof(info), "[F] %s  %u AP  %upps  CH%u",
-             fn, tot, (unsigned)s_pps, s_ch);
-    c.setTextDatum(top_left);
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString(info, 2, INFO_Y);
-
-    uint8_t shown = 0;
-    int y = LIST_Y;
-    if (s_sel >= 0 && s_sel < s_nNet && passFilt(s_net[s_sel])) {
-        const Net& n = s_net[s_sel];
-        char name[14];
-        upName(n.ssid, name, sizeof(name));
-        char line[40];
-        snprintf(line, sizeof(line), "> %s  CH%u %s %+d",
-                 name, n.ch, authStr(n.auth), n.rssi);
-        c.setTextColor(UiStyle::PINK);
-        c.drawString(line, 2, y);
-        shown++;
-        y += 9;
-    }
-    for (uint8_t i = 0; i < s_nNet && shown < 2; i++) {
-        if (!passFilt(s_net[i])) continue;
-        if ((int)i == s_sel) continue;
-        char name[14];
-        upName(s_net[i].ssid, name, sizeof(name));
-        char line[40];
-        snprintf(line, sizeof(line), "  %s  CH%u %+d", name, s_net[i].ch, s_net[i].rssi);
-        c.setTextColor(fg);
-        c.drawString(line, 2, y);
-        shown++;
-        y += 9;
-    }
-    if (!shown) {
+    const bool hasSelection = s_sel >= 0 && s_sel < s_nNet &&
+                              passFilt(s_net[s_sel]);
+    const int center = hasSelection ? s_sel : nextFiltered(-1, 1);
+    if (center < 0) {
+        c.fillRoundRect(2, LIST_Y - 1, DISPLAY_W - 4, 25, 3, UiStyle::PANEL);
+        c.setTextDatum(top_left);
         c.setTextColor(UiStyle::DIM);
-        c.drawString("scanning 1-13...", 2, LIST_Y);
+        c.drawString("SCANNING FOR NETWORKS...", 7, LIST_Y + 7);
+        return;
+    }
+
+    const int prev = nextFiltered(center, -1);
+    const int next = nextFiltered(center, 1);
+    const int rows[3] = {prev, center, next};
+    const uint16_t rowY[3] = {76, 85, 94};
+    c.setTextDatum(top_left);
+    for (uint8_t slot = 0; slot < 3; slot++) {
+        const int idx = rows[slot];
+        if (idx < 0 || (slot != 1 && idx == center) ||
+            (slot == 2 && idx == prev)) continue;
+        const Net& net = s_net[idx];
+        const bool selected = slot == 1;
+        const uint16_t y = rowY[slot];
+        const uint16_t rowColor = selected ? UiStyle::PINK : UiStyle::PANEL;
+        c.fillRoundRect(2, y - 1, DISPLAY_W - 4, 9, 2, rowColor);
+
+        char name[15];
+        upName(net.ssid, name, sizeof(name));
+        char line[40];
+        snprintf(line, sizeof(line), "%u %s  CH%u %-4s %+ddB",
+                 (unsigned)(slot + 1), name, net.ch, authStr(net.auth), net.rssi);
+        c.setTextColor(selected ? bg : fg);
+        c.drawString(line, 6, y);
     }
 }
 
@@ -949,6 +1068,8 @@ void start() {
     s_phase = SWEEP;
     s_filt = F_ALL;
     s_center = CENTER0;
+    s_width = WIDTH0;
+    s_zoomI = 0;
     s_reveal = false;
     s_busy = false;
     memset(s_col, RSSI_MIN, sizeof(s_col));
@@ -1010,10 +1131,8 @@ void getStatusLine(char* out, size_t n) {
             snprintf(out, n, "LOCK CH%u  %u STA",
                      s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
         }
-    } else if (keys) {
-        snprintf(out, n, "^/v SEL  ENT LOCK  A HUNT  F  ESC");
     } else {
-        snprintf(out, n, "SPEC  %u AP  CH%u  %upps", s_nNet, s_ch, (unsigned)s_pps);
+        snprintf(out, n, "^/v AP  </> PAN  -/= ZOOM  ENT LOCK  A HUNT");
     }
 }
 
@@ -1022,6 +1141,7 @@ static void handleSweep() {
         int n = nextSel(-1);
         if (n >= 0) {
             setSel(n);
+            ensureVisible(s_net[n].freq);
             SFX::play(SFX::MENU_CLICK);
         }
     }
@@ -1029,9 +1149,13 @@ static void handleSweep() {
         int n = nextSel(+1);
         if (n >= 0) {
             setSel(n);
+            ensureVisible(s_net[n].freq);
             SFX::play(SFX::MENU_CLICK);
         }
     }
+    if (M5Cardputer.Keyboard.isKeyPressed('-')) zoomView(-1);
+    if (M5Cardputer.Keyboard.isKeyPressed('=')) zoomView(+1);
+    if (M5Cardputer.Keyboard.isKeyPressed('0')) resetView();
     if (M5Cardputer.Keyboard.isKeyPressed('f') || M5Cardputer.Keyboard.isKeyPressed('F')) {
         s_filt = (Filt)((s_filt + 1) & 3);
         if (s_sel < 0 || s_sel >= s_nNet || !passFilt(s_net[s_sel]))
@@ -1110,6 +1234,7 @@ void update() {
     if (s_phase == HUNT) {
         Cap::loop();
     } else {
+        viewTick();
         hopTick();
         prune();
         updateBuf();
