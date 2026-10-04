@@ -1015,10 +1015,50 @@ static void drawActionEffect(M5Canvas& canvas, const PlaySum& play,
 }
 
 static const char* actionLabel(const PlaySum& play) {
-    if (play.atk) return "STRIKE!";
-    if (play.def) return "GUARD UP";
-    if (play.heal) return "RECOVER";
-    return "NO EFFECT";
+    if (play.atk) return "ATTACK";
+    if (play.def) return "DEFEND";
+    if (play.heal) return "HEAL";
+    return "REST";
+}
+
+static void drawDuelIcon(M5Canvas& canvas, CType type, int16_t cx,
+                         int16_t cy, uint16_t color, int16_t size) {
+    const int16_t half = size / 2;
+    if (type == CType::ATK) {
+        canvas.drawLine(cx - half / 2, cy + half / 2,
+                        cx + half / 2, cy - half / 2, color);
+        canvas.drawLine(cx - half / 2 - 2, cy + half / 2 - 2,
+                        cx - half / 2 + 2, cy + half / 2 + 2, color);
+        canvas.drawLine(cx + half / 2 - 2, cy - half / 2 - 2,
+                        cx + half / 2 + 2, cy - half / 2 + 2, color);
+        canvas.fillCircle(cx + half / 2, cy - half / 2, 1, color);
+    } else if (type == CType::DEF) {
+        canvas.drawLine(cx - half / 2, cy - half / 2,
+                        cx + half / 2, cy - half / 2, color);
+        canvas.drawLine(cx - half / 2, cy - half / 2,
+                        cx - half / 2 + 1, cy + half / 4, color);
+        canvas.drawLine(cx + half / 2, cy - half / 2,
+                        cx + half / 2 - 1, cy + half / 4, color);
+        canvas.drawLine(cx - half / 2 + 1, cy + half / 4,
+                        cx, cy + half / 2, color);
+        canvas.drawLine(cx + half / 2 - 1, cy + half / 4,
+                        cx, cy + half / 2, color);
+        canvas.drawFastVLine(cx, cy - half / 3, half / 2, color);
+    } else {
+        const int16_t left = cx - half / 3;
+        const int16_t right = cx + half / 3;
+        const int16_t neck = cy - half / 2;
+        canvas.drawFastHLine(cx - 2, neck, 5, color);
+        canvas.drawFastVLine(cx - 1, neck, 3, color);
+        canvas.drawFastVLine(cx + 1, neck, 3, color);
+        canvas.drawFastHLine(left, cy - 1, right - left + 1, color);
+        canvas.drawFastVLine(left, cy - 1, half / 2, color);
+        canvas.drawFastVLine(right, cy - 1, half / 2, color);
+        canvas.drawFastHLine(left, cy + half / 2 - 1,
+                             right - left + 1, color);
+        canvas.drawFastHLine(cx - 2, cy + 2, 5, color);
+        canvas.drawFastVLine(cx, cy, 5, color);
+    }
 }
 
 // Sized card face for duel UI (fits MAIN_H)
@@ -1028,16 +1068,14 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
     const CType primary = c.empty ? CType::DEF : c.e0.type;
     const uint16_t bg = c.empty ? 0x18E3 : cardShade(primary);
     const uint16_t ink = cardInk(primary);
-    const uint16_t bd = selected ? 0xFFE0 : ink;
     if (selected) {
-        canvas.drawRoundRect(x - 2, y - 2, W + 4, H + 4, 4, 0xFCA0);
-        canvas.drawRoundRect(x - 1, y - 1, W + 2, H + 2, 3, 0x7BEF);
+        canvas.drawRoundRect(x - 2, y - 2, W + 4, H + 4, 4, 0xFFE0);
+        canvas.drawRoundRect(x - 1, y - 1, W + 2, H + 2, 3, 0xFCA0);
     }
-    canvas.fillRect(x, y, W, H, bg);
-    canvas.drawRect(x, y, W, H, bd);
-    canvas.drawRect(x + 1, y + 1, W - 2, H - 2,
-                    selected ? 0xFFE0 : tint565(ink, bg, 132));
-    canvas.fillRect(x + 2, y + 2, W - 4, 2, tint565(ink, bg, 190));
+    canvas.fillRoundRect(x, y, W, H, 3, bg);
+    canvas.drawRoundRect(x, y, W, H, 3, selected ? 0xFFE0 : ink);
+    canvas.drawRoundRect(x + 2, y + 2, W - 4, H - 4, 2,
+                         tint565(ink, bg, 132));
     if (c.empty) {
         canvas.setTextSize(1);
         canvas.setTextColor(0x8410, bg);
@@ -1048,39 +1086,37 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
     }
     canvas.setTextSize(1);
     if (c.combo) {
-        canvas.fillRect(x + 2, y + 5, W - 4, 12, cardShade(c.e0.type));
-        canvas.setTextColor(cardInk(c.e0.type), cardShade(c.e0.type));
-        canvas.setCursor(x + 3, y + 8);
-        canvas.printf("%c%u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
-        blitIcon(canvas, x + W - 12, y + 1, iconFor(c.e0.type), c.e0.type, 1);
-        canvas.drawFastHLine(x + 3, y + H / 2, W - 6,
-                             tint565(ink, bg, 150));
-        canvas.fillRect(x + 2, y + H / 2 + 1, W - 4, H / 2 - 4,
-                        cardShade(c.e1.type));
-        canvas.setTextColor(cardInk(c.e1.type), cardShade(c.e1.type));
-        canvas.setCursor(x + 3, y + H / 2 + 5);
-        canvas.printf("%c%u", typeLetter(c.e1.type), (unsigned)c.e1.pow);
-        blitIcon(canvas, x + W - 12, y + H / 2 + 2,
-                 iconFor(c.e1.type), c.e1.type, 1);
-        canvas.fillCircle(x + W - 4, y + 4, 2, 0xF81F);
+        const int16_t halfH = (H - 5) / 2;
+        const int16_t firstY = y + 2;
+        const int16_t secondY = firstY + halfH + 1;
+        canvas.fillRoundRect(x + 3, firstY, W - 6, halfH, 2,
+                             cardShade(c.e0.type));
+        canvas.fillRoundRect(x + 3, secondY, W - 6, halfH, 2,
+                             cardShade(c.e1.type));
+        canvas.setTextColor(cardInk(c.e0.type));
+        canvas.setCursor(x + 5, firstY + 4);
+        canvas.printf("%c %u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        drawDuelIcon(canvas, c.e0.type, x + W - 7,
+                     firstY + halfH / 2, cardInk(c.e0.type), 8);
+        canvas.setTextColor(cardInk(c.e1.type));
+        canvas.setCursor(x + 5, secondY + 4);
+        canvas.printf("%c %u", typeLetter(c.e1.type), (unsigned)c.e1.pow);
+        drawDuelIcon(canvas, c.e1.type, x + W - 7,
+                     secondY + halfH / 2, cardInk(c.e1.type), 8);
+        canvas.fillCircle(x + W - 5, y + 4, 2, 0xFFE0);
     } else {
-        canvas.setTextColor(cardInk(c.e0.type), bg);
-        canvas.setCursor(x + 3, y + 5);
-        canvas.printf("%s", typeName(c.e0.type));
-        canvas.fillCircle(x + W - 6, y + 8, 4, ink);
-        canvas.setTextColor(0x0841, ink);
-        canvas.setCursor(x + W - 8, y + 5);
-        canvas.printf("%u", (unsigned)c.e0.pow);
-
-        const int scale = (H >= 40) ? 2 : 1;
-        const int iw = 10 * scale;
-        const int iconY = y + (H >= 40 ? 12 : 11);
-        blitIcon(canvas, x + (W - iw) / 2, iconY,
-                 iconFor(c.e0.type), c.e0.type, scale);
-        canvas.fillRect(x + 2, y + H - 8, W - 4, 6, cardShade(c.e0.type));
-        canvas.setTextColor(0xEF7D, cardShade(c.e0.type));
-        canvas.setCursor(x + 4, y + H - 7);
-        canvas.printf("%c+%u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        const char* label = typeName(c.e0.type);
+        canvas.fillRoundRect(x + 3, y + 3, W - 6, 10, 2, ink);
+        canvas.setTextColor(0x0841);
+        canvas.setTextDatum(top_center);
+        canvas.drawString(label, x + W / 2, y + 5);
+        canvas.setTextDatum(top_left);
+        drawDuelIcon(canvas, c.e0.type, x + W / 2, y + 24, ink, 16);
+        canvas.fillRoundRect(x + 3, y + H - 10, W - 6, 7, 2,
+                             tint565(ink, bg, 175));
+        canvas.setTextColor(0xFFFF);
+        canvas.setCursor(x + W / 2 - 6, y + H - 9);
+        canvas.printf("P%u", (unsigned)c.e0.pow);
     }
 }
 
@@ -1139,7 +1175,8 @@ void drawActive(M5Canvas& canvas) {
     canvas.setTextDatum(top_center);
     if (s_phase == Phase::SELECT) {
         canvas.setTextColor(0xEF7D, 0x0841);
-        canvas.drawString(s_youFirst ? "YOUR TURN FIRST" : "YOUR TURN SECOND",
+        canvas.drawString(s_youFirst ? "PICK TWO  /  YOU FIRST"
+                                     : "PICK TWO  /  YOU SECOND",
                           W / 2, 18);
     } else if (s_phase == Phase::RESOLVE) {
         const bool firstAction = elapsed < 900 || !s_secondExchange;
@@ -1169,26 +1206,28 @@ void drawActive(M5Canvas& canvas) {
     canvas.fillRect(0, 89, W, H - 89, 0x1082);
     canvas.fillRect(0, 88, W, 1, 0x2104);
 
-    const int16_t CW = 32, CH = 38;
+    const int16_t CW = 36, CH = 41;
 
     if (s_phase == Phase::SELECT) {
-        const int16_t gap = 4;
+        const int16_t gap = 5;
         const int16_t total = (int16_t)(HAND_N * CW + (HAND_N - 1) * gap);
         const int16_t x0 = (int16_t)((W - total) / 2);
         for (uint8_t i = 0; i < HAND_N; i++) {
             int16_t x = (int16_t)(x0 + i * (CW + gap));
-            const int16_t cardY = s_sel[i] ? 23 : 27;
+            const int16_t cardY = s_sel[i] ? 32 : 35;
             drawCardFaceSized(canvas, x, cardY, CW, CH, s_hand[i], s_sel[i]);
-            canvas.setTextColor(s_sel[i] ? 0xFFE0 : 0x8410, 0x0841);
-            canvas.setCursor(x + CW / 2 - 3, cardY + CH + 2);
+            canvas.setTextColor(s_sel[i] ? 0xFFE0 : 0x9CD3, 0x0841);
+            canvas.setCursor(x + CW / 2 - 2, 78);
             canvas.printf("%u", (unsigned)(i + 1));
         }
-        canvas.setTextColor(0x9CD3, 0x1082);
         canvas.setTextDatum(top_center);
-        canvas.drawString("ATK HIT  DEF BLOCK  HEAL +HP", W / 2, 91);
         canvas.setTextColor(0xFFE0, 0x1082);
-        canvas.setCursor(104, 100);
-        canvas.printf("%u/2", (unsigned)s_selCount);
+        canvas.drawString("SELECTED", 48, 91);
+        canvas.setTextColor(s_selCount == PICK_N ? 0x07E0 : 0xFFE0, 0x1082);
+        canvas.drawString(s_selCount == PICK_N ? "2 / 2" :
+                          s_selCount == 1 ? "1 / 2" : "0 / 2", 94, 91);
+        canvas.setTextColor(0xC618, 0x1082);
+        canvas.drawString("1-5 SELECT   ENTER PLAY   ESC EXIT", W / 2, 100);
         canvas.setTextDatum(top_left);
         return;
     }
@@ -1209,7 +1248,7 @@ void drawActive(M5Canvas& canvas) {
         if (actionStart) {
             const uint32_t actionElapsed = elapsed - actionStart;
             const int16_t travel = actionElapsed < 300
-                ? (int16_t)(22 * actionElapsed / 300) : 22;
+                ? (int16_t)(10 * actionElapsed / 300) : 10;
             if (actionYou) {
                 youShift = travel;
             } else {
@@ -1234,42 +1273,53 @@ void drawActive(M5Canvas& canvas) {
 
     canvas.setTextDatum(top_center);
     canvas.setTextColor(0x07E0, 0x0841);
-    canvas.drawString("YOUR PLAY", 45 + youShift / 2, 29);
+    canvas.drawString("YOU", 60 + youShift / 2, 29);
     canvas.setTextColor(0xFCA0, 0x0841);
-    canvas.drawString("RIVAL PLAY", 166 + aiShift / 2, 29);
+    canvas.drawString("RIVAL", 180 + aiShift / 2, 29);
     canvas.setTextDatum(top_left);
 
     for (uint8_t i = 0; i < PICK_N; i++) {
-        drawCardFaceSized(canvas, (int16_t)(8 + i * (CW + 6) + youShift), 38, CW, CH,
+        drawCardFaceSized(canvas, (int16_t)(22 + i * (CW + 4) + youShift), 36, CW, CH,
                           s_youPlay[i], false);
-        const int16_t aiX = (int16_t)(130 + i * (CW + 6) + aiShift);
+        const int16_t aiX = (int16_t)(142 + i * (CW + 4) + aiShift);
         if (s_phase == Phase::RESOLVE && elapsed < 180) {
-            drawCardBack(canvas, aiX, 38, CW, CH, elapsed);
+            drawCardBack(canvas, aiX, 36, CW, CH, elapsed);
         } else {
-            drawCardFaceSized(canvas, aiX, 38, CW, CH, s_aiPlay[i], false);
+            drawCardFaceSized(canvas, aiX, 36, CW, CH, s_aiPlay[i], false);
         }
     }
 
     // Stats band 79..87 — one short line each side
     canvas.fillRect(0, 78, W, 10, 0x0841);
+    canvas.drawFastVLine(119, 79, 8, 0x315A);
     canvas.setTextColor(0x07E0, 0x0841);
-    canvas.setCursor(4, 79);
-    canvas.printf("ATK%u DEF%u HP+%u", (unsigned)s_youSum.atk,
+    canvas.setCursor(3, 79);
+    canvas.printf("ATK %u DEF %u HEAL %u", (unsigned)s_youSum.atk,
                   (unsigned)s_youSum.def, (unsigned)s_youSum.heal);
     canvas.setTextColor(0xFCA0, 0x0841);
-    canvas.setCursor(130, 79);
-    canvas.printf("ATK%u DEF%u HP+%u", (unsigned)s_aiSum.atk,
+    canvas.setCursor(123, 79);
+    canvas.printf("ATK %u DEF %u HEAL %u", (unsigned)s_aiSum.atk,
                   (unsigned)s_aiSum.def, (unsigned)s_aiSum.heal);
 
-    canvas.setTextColor(0xEF7D, 0x1082);
-    canvas.setCursor(4, 94);
+    canvas.setTextDatum(top_center);
+    canvas.setTextColor(0x9CD3, 0x1082);
     if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
-        canvas.printf("YOU -%d +%d    RIVAL -%d +%d",
-                      (int)s_dmgYou, (int)s_healYou,
-                      (int)s_dmgAi, (int)s_healAi);
+        char youResult[20];
+        char aiResult[20];
+        snprintf(youResult, sizeof(youResult), "YOU  -%d  +%d",
+                 (int)s_dmgYou, (int)s_healYou);
+        snprintf(aiResult, sizeof(aiResult), "RIVAL  -%d  +%d",
+                 (int)s_dmgAi, (int)s_healAi);
+        canvas.fillRoundRect(4, 91, 108, 12, 3, 0x1843);
+        canvas.fillRoundRect(128, 91, 108, 12, 3, 0x1843);
+        canvas.setTextColor(0x07E0, 0x1843);
+        canvas.drawString(youResult, 58, 93);
+        canvas.setTextColor(0xFCA0, 0x1843);
+        canvas.drawString(aiResult, 182, 93);
     } else {
-        canvas.print("—");
+        canvas.drawString("TURN RESOLUTION", W / 2, 94);
     }
+    canvas.setTextDatum(top_left);
 }
 
 
