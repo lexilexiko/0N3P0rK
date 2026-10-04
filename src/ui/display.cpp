@@ -606,6 +606,59 @@ void Display::drawBottomBar() {
 
     bottomBar.fillSprite(DIRT_MID);
     bottomBar.fillRect(0, 0, DISPLAY_W, 2, fringeTop);
+    auto blend565 = [](uint16_t fg, uint16_t bg, uint8_t weight) -> uint16_t {
+        uint16_t inv = (uint16_t)(255 - weight);
+        uint16_t r = (uint16_t)((((fg >> 11) & 0x1F) * weight +
+                                 ((bg >> 11) & 0x1F) * inv) / 255);
+        uint16_t g = (uint16_t)((((fg >> 5) & 0x3F) * weight +
+                                 ((bg >> 5) & 0x3F) * inv) / 255);
+        uint16_t b = (uint16_t)(((fg & 0x1F) * weight +
+                                 (bg & 0x1F) * inv) / 255);
+        return (uint16_t)((r << 11) | (g << 5) | b);
+    };
+    const uint16_t motif = blend565(fringeTop, DIRT_MID, 112);
+    const uint16_t petal = blend565(0xFDB6, DIRT_MID, 120);
+    for (int x = 9; x < DISPLAY_W - 5; x += 24) {
+        switch (season) {
+            case Season::SPRING:
+                bottomBar.drawPixel(x, 12, motif);
+                bottomBar.drawPixel(x + 1, 11, petal);
+                bottomBar.drawPixel(x + 2, 12, petal);
+                bottomBar.drawPixel(x + 1, 13, motif);
+                break;
+            case Season::SUMMER:
+                bottomBar.drawFastVLine(x + 1, 11, 3, motif);
+                bottomBar.drawPixel(x, 12, motif);
+                bottomBar.drawPixel(x + 2, 12, motif);
+                break;
+            case Season::AUTUMN:
+                bottomBar.fillRect(x, 12, 2, 2, motif);
+                bottomBar.drawPixel(x + 1, 11, fringeTop);
+                break;
+            case Season::WINTER:
+                bottomBar.drawPixel(x + 1, 11, motif);
+                bottomBar.drawFastHLine(x, 12, 3, motif);
+                bottomBar.drawPixel(x + 1, 13, motif);
+                break;
+            case Season::DESERT:
+                bottomBar.drawPixel(x, 13, motif);
+                bottomBar.drawPixel(x + 2, 12, motif);
+                bottomBar.drawPixel(x + 4, 13, fringeTop);
+                break;
+            case Season::CITY:
+                bottomBar.drawFastHLine(x, 13, 4, motif);
+                bottomBar.drawPixel(x + 2, 11, fringeTop);
+                break;
+            case Season::RETRO:
+                bottomBar.drawFastHLine(x, 12, 3, motif);
+                bottomBar.drawPixel(x + 1, 13, fringeTop);
+                break;
+            case Season::NOIR:
+                bottomBar.drawPixel(x + 1, 12, motif);
+                bottomBar.drawPixel(x + 3, 13, motif);
+                break;
+        }
+    }
     bottomBar.setTextColor(TEXT_COL);
     bottomBar.setTextSize(1);
     bottomBar.setTextDatum(top_left);

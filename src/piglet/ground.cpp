@@ -135,8 +135,7 @@ void resetBlades() {
         s_blades[i].shade = (uint8_t)(esp_random() % 4);
         s_blades[i].windPhase = (uint16_t)(i * 197);
         s_blades[i].frontLayer =
-            s_blades[i].kind != 3 && s_blades[i].height >= 12 &&
-            random(0, 100) < 30;
+            s_blades[i].kind != 3 && random(0, 100) < 65;
     }
 }
 
@@ -389,10 +388,10 @@ void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx) {
         if (cx >= 240) continue;
 
         const Blade& b = s_blades[i];
-        // Layer ownership belongs to the blade and travels with it.
+        // The back pass is the full grass field; marked blades get a separate
+        // foreground pass so the back layer stays dense when that pass is off.
         bool nearPig = (cx >= pigLeft - 6 && cx <= pigRight + 6);
         if (frontLayer && !b.frontLayer) continue;
-        if (!frontLayer && b.frontLayer) continue;
 
         // Winter: only lightly thinned (keep density for "иней" look)
         if (isWinter && ((b.shade & 3) == 0)) continue;

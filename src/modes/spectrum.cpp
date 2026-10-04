@@ -24,10 +24,10 @@ static const int L = 4;
 static const int R = 236;
 static const int W = R - L;
 static const int TOP = 12;
-static const int BOT = 59;
-static const int WF_TOP = 61;
-static const int WF_ROWS = 7;
-static const int CH_Y = 68;
+static const int BOT = 56;
+static const int WF_TOP = 58;
+static const int WF_ROWS = 8;
+static const int CH_Y = 67;
 static const int INFO_Y = 1;
 static const int LIST_Y = 77;
 static const uint32_t BAR_FLIP_MS = 2200;
@@ -149,7 +149,6 @@ static uint8_t s_apMac[6];
 
 static int8_t s_col[W];
 static int8_t s_persist[W];
-static int8_t s_peak[W];
 static uint8_t* s_wf = nullptr;
 static uint8_t s_wfRow = 0;
 static uint32_t s_wfT0 = 0;
@@ -754,8 +753,6 @@ static void updateBuf() {
     }
     for (int i = 0; i < W; i++) {
         s_persist[i] = (int8_t)((s_persist[i] * 3 + s_col[i]) / 4);
-        if (s_col[i] > s_peak[i]) s_peak[i] = s_col[i];
-        else if (s_peak[i] > RSSI_MIN) s_peak[i]--;
     }
     uint32_t now = millis();
     if (now - s_wfT0 >= 100) {
@@ -777,34 +774,6 @@ static void updateBuf() {
         }
         s_pps = s_pktN;
         s_pktN = 0;
-    }
-}
-
-static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool selected,
-                     uint16_t act, uint16_t fg, uint16_t bg) {
-    int peakY = rssiToY(rssi);
-    int h = BOT - peakY;
-    if (h <= 0) return;
-    int lx = freqToX(freq - 22.0f);
-    int rx = freqToX(freq + 22.0f);
-    if (rx < L || lx > R) return;
-    if (lx < L) lx = L;
-    if (rx > R) rx = R;
-    float leftF = s_center - s_width * 0.5f;
-    (void)act;
-    int prevY = BOT;
-    const uint16_t fillColor = blend565(UiStyle::PINK, bg, 56);
-    for (int x = lx; x <= rx; x++) {
-        float f = leftF + (float)(x - L) * s_width / (float)W;
-        float amp = sincAmp(f - freq);
-        int y = BOT - (int)(h * amp);
-        if (y < TOP) y = TOP;
-        if (y > BOT) y = BOT;
-        if (selected && y < BOT)
-            c.drawFastVLine(x, y, BOT - y, fillColor);
-        uint16_t lineColor = selected ? UiStyle::PINK : fg;
-        if (x > lx) c.drawLine(x - 1, prevY, x, y, lineColor);
-        prevY = y;
     }
 }
 
@@ -853,19 +822,45 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
 
     const uint16_t grid = (bg == UiStyle::BG) ? UiStyle::PANEL : UiStyle::DIM;
     c.drawRect(L, TOP, W, BOT - TOP + 1, grid);
-    for (uint8_t ch = 1; ch <= 13; ch++) {
-        int x = freqToX(chToFreq(ch));
-        if (x <= L || x >= R) continue;
-        c.drawFastVLine(x, TOP + 1, BOT - TOP - 1, grid);
-    }
     for (int y = TOP + 8; y < BOT; y += 8)
         c.drawFastHLine(L + 1, y, W - 2, grid);
 
-    const uint16_t noiseColor = blend565(fg, bg, 72);
+    const uint16_t noiseColor = blend565(fg, bg, 112);
     for (int x = 0; x < W; x += 2) {
-        const int height = noise7() / 2;
-        if (height > 0)
-            c.drawFastVLine(L + x, BOT - height, height, noiseColor);
+        const int height = 1 + noise7() / 2;
+        c.drawFastVLine(L + x, BOT - height, height, noiseColor);
+    }
+
+    if (s_sel >= 0 && s_sel < s_nNet && passFilt(s_net[s_sel])) {
+        const Net& selected = s_net[s_sel];
+        int height = BOT - rssiToY(selected.rssi);
+        int left = freqToX(selected.freq - 22.0f);
+        int right = freqToX(selected.freq + 22.0f);
+        if (left < L) left = L;
+        if (right > R) right = R;
+        const uint16_t selectedFill = blend565(UiStyle::GOLD, bg, 112);
+        uint16_t noise = (uint16_t)(millis() / 38u);
+        for (int x = left; x <= right; x++) {
+            float freq = s_center - s_width * 0.5f +
+                         (float)(x - L) * s_width / (float)W;
+            float amp = sincAmp(freq - selected.freq);
+            int top = BOT - (int)(height * amp);
+            if (top < TOP) top = TOP;
+            if (top >= BOT) continue;
+            c.drawFastVLine(x, top, BOT - top, selectedFill);
+
+            uint16_t hash = (uint16_t)(x * 251u + (uint16_t)(top * 37u));
+            hash ^= (uint16_t)(hash << 7);
+            hash ^= (uint16_t)(hash >> 9);
+            hash ^= noise;
+            if ((hash & 3u) != 0) {
+                const uint16_t edgeColor = (hash & 4u)
+                    ? UiStyle::GOLD : UiStyle::CYAN;
+                c.drawPixel(x, top, edgeColor);
+                if (x > left && (hash & 8u))
+                    c.drawPixel(x - 1, top, UiStyle::GOLD);
+            }
+        }
     }
 
     int previousY = rssiToY(s_persist[0]);
@@ -873,18 +868,6 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int y = rssiToY(s_persist[x]);
         c.drawLine(L + x - 1, previousY, L + x, y, UiStyle::CYAN);
         previousY = y;
-    }
-    for (int x = 0; x < W; x += 3) {
-        if (s_peak[x] <= NOISE + 4) continue;
-        int peakY = rssiToY(s_peak[x]);
-        c.drawFastHLine(L + x, peakY, 2, UiStyle::GOLD);
-    }
-
-    for (uint8_t i = 0; i < s_nNet; i++) {
-        if (!passFilt(s_net[i])) continue;
-        bool sel = (i == (uint8_t)s_sel);
-        uint16_t act = (s_net[i].ch <= 13) ? s_chRate[s_net[i].ch] : 0;
-        drawLobe(c, s_net[i].freq, s_net[i].rssi, sel, act, fg, bg);
     }
 
     c.drawFastHLine(L, WF_TOP - 1, W, fg);
@@ -1098,7 +1081,6 @@ void start() {
     s_busy = false;
     memset(s_col, RSSI_MIN, sizeof(s_col));
     memset(s_persist, RSSI_MIN, sizeof(s_persist));
-    memset(s_peak, RSSI_MIN, sizeof(s_peak));
     memset(s_wf, 0, (size_t)WF_ROWS * W);
     memset(s_chHit, 0, sizeof(s_chHit));
     memset(s_chSnap, 0, sizeof(s_chSnap));
