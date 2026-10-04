@@ -27,10 +27,21 @@ bool isRunning();
 RunMode runMode();
 bool isLocked();
 
-// Session-only: stop attacking this BSSID until Cap::stop()/start.
+// Skip the focused BSSID now and persist it when SD storage is available.
 // Prefer locked target, else last kicked. Returns true if a BSSID was skipped.
 bool skipCurrent();
 bool isSkipped(const uint8_t* bssid);
+
+struct SkipEntry {
+    uint8_t bssid[6];
+    char ssid[33];
+    bool enabled;
+};
+bool skipMenuOpen();
+uint16_t skipMenuCount();
+uint16_t skipMenuSelected();
+uint16_t skipMenuScroll();
+bool skipMenuEntry(uint16_t index, SkipEntry& out);
 
 // Live HS depth while Cap runs (0=PAIR 1=+M3 2=FULL). Spectrum hunt cycles this.
 void setHsDepth(uint8_t depth);

@@ -416,6 +416,15 @@ The **PACK** selector applies a tested group of radio values. Editing
 individual values marks the profile as custom. **RADIO → RESET** restores the
 stock radio profile without deleting files from the SD card.
 
+During capture, press `Q` to open the persistent network skip list. The list
+contains saved entries and networks seen during the current session. Use `;` /
+`.` to move, `ENT` to enable or disable skipping, and `ESC` to return; capture
+reception pauses while the list is open and resumes in the same session.
+Pressing `Z` skips the focused network immediately and saves it as enabled.
+The list is stored in `/0N3P0rK/radio_skip.csv` (up to 64 networks); when the
+SD card is unavailable, `Z` only skips for the current capture session and
+shows that the persistent save did not succeed.
+
 ### Spectrum
 
 Open **ATTACK → SPECTRUM** to view nearby 2.4 GHz activity, detected access
