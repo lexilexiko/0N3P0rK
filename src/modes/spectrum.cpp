@@ -1135,7 +1135,7 @@ void getStatusLine(char* out, size_t n) {
                      s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
         }
     } else {
-        snprintf(out, n, "^/v AP  </> PAN  -/= ZOOM  ENT LOCK  A HUNT");
+        snprintf(out, n, "^/v AP  </> MOVE  -/= ZOOM  ENT LOCK  A HUNT");
     }
 }
 
