@@ -12,8 +12,6 @@
 #include "../core/xp.h"
 #include "../core/wsl_bypasser.h"
 #include "../ui/display.h"
-#include "../ui/keys.h"
-#include "../audio/sfx.h"
 #include <M5Cardputer.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
@@ -189,252 +187,11 @@ static uint32_t s_lockBssidUntil = 0;     // millis() deadline; 0 = not armed
 // repeat EAPOL/M1. Backs the hard cap below.
 static uint32_t s_lockBssidArmedMs = 0;
 
-// Session-only fallback skips; persistent skips are stored separately on SD.
+// Session-only skip list: Z drops a stuck target until Cap::stop()/start.
 static const uint8_t SKIP_MAX = 16;
 static uint8_t s_skipList[SKIP_MAX][6];
 static uint8_t s_skipN = 0;
 static bool    s_skipKeyWas = false;
-static const uint8_t STORED_SKIP_MAX = 64;
-static const uint8_t MENU_ENTRY_MAX = STORED_SKIP_MAX + BEACON_SLOTS;
-static const char* const SKIP_TMP_PATH = "/0N3P0rK/radio_skip.tmp";
-static const char* const SKIP_BAK_PATH = "/0N3P0rK/radio_skip.bak";
-struct StoredSkip {
-    uint8_t bssid[6];
-    char ssid[33];
-    bool enabled;
-};
-static StoredSkip s_storedSkips[STORED_SKIP_MAX];
-static uint8_t s_storedSkipCount = 0;
-static bool s_storedSkipsLoaded = false;
-static SkipEntry s_menuEntries[MENU_ENTRY_MAX];
-static uint16_t s_menuEntryCount = 0;
-static uint16_t s_menuSelected = 0;
-static uint16_t s_menuScroll = 0;
-static bool s_skipMenuOpen = false;
-static bool s_skipMenuQWas = false;
-static bool s_skipMenuKeyWas = false;
-static bool s_skipMenuDownWas = false;
-static bool s_skipMenuEnterWas = false;
-
-static bool isZeroMac(const uint8_t* m);
-
-static int findStoredSkip(const uint8_t* bssid) {
-    for (uint8_t i = 0; i < s_storedSkipCount; i++) {
-        if (memcmp(s_storedSkips[i].bssid, bssid, 6) == 0) return i;
-    }
-    return -1;
-}
-
-static bool parseMac(const char* text, uint8_t out[6]) {
-    unsigned v[6];
-    if (!text || strlen(text) != 17 ||
-        sscanf(text, "%02x:%02x:%02x:%02x:%02x:%02x",
-               &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
-        return false;
-    for (uint8_t i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
-    return !isZeroMac(out);
-}
-
-static int hexValue(char ch) {
-    if (ch >= '0' && ch <= '9') return ch - '0';
-    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
-    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
-    return -1;
-}
-
-static void loadStoredSkips() {
-    if (!Storage::available()) {
-        s_storedSkipsLoaded = false;
-        return;
-    }
-    s_storedSkipCount = 0;
-    if (!SD.exists(Storage::FILE_RADIO_SKIP) && SD.exists(SKIP_BAK_PATH)) {
-        if (!SD.rename(SKIP_BAK_PATH, Storage::FILE_RADIO_SKIP)) {
-            s_storedSkipsLoaded = false;
-            Serial.println("[CAP] cannot recover persistent radio skip backup");
-            return;
-        }
-    } else if (SD.exists(Storage::FILE_RADIO_SKIP) && SD.exists(SKIP_BAK_PATH)) {
-        if (!SD.remove(SKIP_BAK_PATH))
-            Serial.println("[CAP] stale radio skip backup could not be removed");
-    }
-    if (SD.exists(SKIP_TMP_PATH)) SD.remove(SKIP_TMP_PATH);
-    File file = SD.open(Storage::FILE_RADIO_SKIP, FILE_READ);
-    if (!file) {
-        s_storedSkipsLoaded = !SD.exists(Storage::FILE_RADIO_SKIP);
-        return;
-    }
-    char line[96];
-    bool validFile = true;
-    while (file.available()) {
-        if (s_storedSkipCount >= STORED_SKIP_MAX) {
-            validFile = false;
-            break;
-        }
-        size_t n = file.readBytesUntil('\n', line, sizeof(line) - 1);
-        if (n >= sizeof(line) - 1) {
-            validFile = false;
-            break;
-        }
-        line[n] = '\0';
-        if (n && line[n - 1] == '\r') line[--n] = '\0';
-        if (!n || line[0] == '#') continue;
-        char* first = strchr(line, ',');
-        if (!first) { validFile = false; break; }
-        *first++ = '\0';
-        char* second = strchr(first, ',');
-        if (!second) { validFile = false; break; }
-        *second++ = '\0';
-        uint8_t mac[6];
-        if (!parseMac(line, mac) || (first[0] != '0' && first[0] != '1') ||
-            first[1] != '\0' || (strlen(second) & 1u) || strlen(second) > 64) {
-            validFile = false;
-            break;
-        }
-        for (uint8_t i = 0; i < s_storedSkipCount; i++) {
-            if (memcmp(s_storedSkips[i].bssid, mac, 6) == 0) {
-                validFile = false;
-                break;
-            }
-        }
-        if (!validFile) break;
-        StoredSkip& entry = s_storedSkips[s_storedSkipCount];
-        memset(&entry, 0, sizeof(entry));
-        memcpy(entry.bssid, mac, sizeof(mac));
-        entry.enabled = first[0] == '1';
-        size_t ssidLen = strlen(second) / 2;
-        for (size_t i = 0; i < ssidLen; i++) {
-            int hi = hexValue(second[i * 2]);
-            int lo = hexValue(second[i * 2 + 1]);
-            if (hi < 0 || lo < 0 || (hi == 0 && lo == 0)) {
-                validFile = false;
-                break;
-            }
-            entry.ssid[i] = (char)((hi << 4) | lo);
-        }
-        if (!validFile) break;
-        s_storedSkipCount++;
-    }
-    file.close();
-    s_storedSkipsLoaded = validFile;
-    if (!validFile) {
-        s_storedSkipCount = 0;
-        Serial.println("[CAP] invalid persistent radio skip file; refusing to overwrite");
-    }
-}
-
-static bool saveStoredSkips() {
-    if (!Storage::available() || !Storage::ensureDir(Storage::DIR_ROOT)) return false;
-    if (SD.exists(SKIP_TMP_PATH) && !SD.remove(SKIP_TMP_PATH)) return false;
-    File file = SD.open(SKIP_TMP_PATH, FILE_WRITE);
-    if (!file) return false;
-    bool ok = file.println("#MAC,SKIP,SSID_HEX") > 0;
-    for (uint8_t i = 0; ok && i < s_storedSkipCount; i++) {
-        const StoredSkip& entry = s_storedSkips[i];
-        char mac[18];
-        snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 entry.bssid[0], entry.bssid[1], entry.bssid[2],
-                 entry.bssid[3], entry.bssid[4], entry.bssid[5]);
-        ok = file.print(mac) > 0 && file.print(',') > 0 &&
-             file.print(entry.enabled ? '1' : '0') > 0 && file.print(',') > 0;
-        for (size_t j = 0; ok && entry.ssid[j] && j < 32; j++) {
-            char hex[3];
-            snprintf(hex, sizeof(hex), "%02X", (uint8_t)entry.ssid[j]);
-            ok = file.print(hex) == 2;
-        }
-        if (ok) ok = file.println() > 0;
-    }
-    file.flush();
-    file.close();
-    if (!ok) {
-        SD.remove(SKIP_TMP_PATH);
-        return false;
-    }
-    const bool hadOriginal = SD.exists(Storage::FILE_RADIO_SKIP);
-    if (SD.exists(SKIP_BAK_PATH) && !SD.remove(SKIP_BAK_PATH)) {
-        SD.remove(SKIP_TMP_PATH);
-        return false;
-    }
-    if (hadOriginal && !SD.rename(Storage::FILE_RADIO_SKIP, SKIP_BAK_PATH)) {
-        SD.remove(SKIP_TMP_PATH);
-        return false;
-    }
-    if (!SD.rename(SKIP_TMP_PATH, Storage::FILE_RADIO_SKIP)) {
-        if (hadOriginal) SD.rename(SKIP_BAK_PATH, Storage::FILE_RADIO_SKIP);
-        SD.remove(SKIP_TMP_PATH);
-        return false;
-    }
-    if (hadOriginal) SD.remove(SKIP_BAK_PATH);
-    return true;
-}
-
-static bool setStoredSkip(const uint8_t* bssid, const char* ssid, bool enabled) {
-    if (isZeroMac(bssid) || !Storage::available()) return false;
-    if (!s_storedSkipsLoaded) loadStoredSkips();
-    if (!s_storedSkipsLoaded) return false;
-    int index = findStoredSkip(bssid);
-    bool added = index < 0;
-    if (added) {
-        if (s_storedSkipCount >= STORED_SKIP_MAX) return false;
-        index = s_storedSkipCount++;
-        memset(&s_storedSkips[index], 0, sizeof(s_storedSkips[index]));
-        memcpy(s_storedSkips[index].bssid, bssid, 6);
-    }
-    StoredSkip old = s_storedSkips[index];
-    if (ssid && ssid[0]) {
-        strncpy(s_storedSkips[index].ssid, ssid, sizeof(s_storedSkips[index].ssid) - 1);
-        s_storedSkips[index].ssid[sizeof(s_storedSkips[index].ssid) - 1] = '\0';
-    }
-    s_storedSkips[index].enabled = enabled;
-    if (saveStoredSkips()) return true;
-    if (added) s_storedSkipCount--;
-    else s_storedSkips[index] = old;
-    return false;
-}
-
-static bool isPersistentlySkipped(const uint8_t* bssid) {
-    int index = findStoredSkip(bssid);
-    return index >= 0 && s_storedSkips[index].enabled;
-}
-
-static void appendMenuEntry(const uint8_t* bssid, const char* ssid) {
-    if (isZeroMac(bssid)) return;
-    for (uint16_t i = 0; i < s_menuEntryCount; i++) {
-        if (memcmp(s_menuEntries[i].bssid, bssid, 6) == 0) {
-            if (ssid && ssid[0])
-                strncpy(s_menuEntries[i].ssid, ssid, sizeof(s_menuEntries[i].ssid) - 1);
-            return;
-        }
-    }
-    if (s_menuEntryCount >= MENU_ENTRY_MAX) return;
-    SkipEntry& entry = s_menuEntries[s_menuEntryCount++];
-    memset(&entry, 0, sizeof(entry));
-    memcpy(entry.bssid, bssid, 6);
-    if (ssid) strncpy(entry.ssid, ssid, sizeof(entry.ssid) - 1);
-    int stored = findStoredSkip(bssid);
-    if (stored >= 0) {
-        if (!entry.ssid[0]) strncpy(entry.ssid, s_storedSkips[stored].ssid,
-                                    sizeof(entry.ssid) - 1);
-        entry.enabled = s_storedSkips[stored].enabled;
-    }
-}
-
-static void buildSkipMenu() {
-    s_menuEntryCount = 0;
-    for (uint8_t i = 0; i < s_storedSkipCount; i++)
-        appendMenuEntry(s_storedSkips[i].bssid, s_storedSkips[i].ssid);
-    for (uint8_t i = 0; i < s_beaconCount; i++)
-        appendMenuEntry(s_beacons[i].bssid, s_beacons[i].ssid);
-    if (s_menuSelected >= s_menuEntryCount)
-        s_menuSelected = s_menuEntryCount ? s_menuEntryCount - 1 : 0;
-}
-
-static bool keyEdge(char key, bool& wasPressed) {
-    bool pressed = M5Cardputer.Keyboard.isKeyPressed(key);
-    bool edge = pressed && !wasPressed;
-    wasPressed = pressed;
-    return edge;
-}
 
 static bool allocateCaptureMemory() {
     if (s_ring && s_pending && s_beacons) return true;
@@ -464,7 +221,6 @@ static bool isZeroMac(const uint8_t* m) {
 
 static bool isSessionSkipped(const uint8_t* bssid) {
     if (isZeroMac(bssid)) return false;
-    if (isPersistentlySkipped(bssid)) return true;
     for (uint8_t i = 0; i < s_skipN; i++) {
         if (memcmp(s_skipList[i], bssid, 6) == 0) return true;
     }
@@ -486,17 +242,6 @@ static bool addSkip(const uint8_t* bssid) {
     }
     memcpy(s_skipList[s_skipN++], bssid, 6);
     return true;
-}
-
-static void removeSessionSkip(const uint8_t* bssid) {
-    for (uint8_t i = 0; i < s_skipN; i++) {
-        if (memcmp(s_skipList[i], bssid, 6) != 0) continue;
-        if (i + 1 < s_skipN)
-            memmove(&s_skipList[i], &s_skipList[i + 1],
-                    (size_t)(s_skipN - i - 1) * sizeof(s_skipList[0]));
-        s_skipN--;
-        return;
-    }
 }
 
 // Parse "AA:BB:CC:DD:EE:FF" from counters.currentBssid into out[6].
@@ -625,8 +370,7 @@ static bool hopLocked() {
 // the rest of its 4-way handshake (M2/M3/M4). Callers should treat this as
 // 'do not hop away'.
 static bool bssidLocked() {
-    if (isZeroMac(s_lockBssid) || isSessionSkipped(s_lockBssid) ||
-        s_lockBssidUntil == 0) return false;
+    if (isZeroMac(s_lockBssid) || s_lockBssidUntil == 0) return false;
     if (lockStreakExpired()) return false;
     return millis() < s_lockBssidUntil;
 }
@@ -1625,7 +1369,6 @@ static Methods::Ctx buildMethodCtx() {
 static void kickOnThisChannel() {
     if (!s_deauthEnabled) return;
     if (Hc22000::shouldPauseDeauth()) return;
-    if (s_pinOk && isSessionSkipped(s_pinBssid)) return;
     const Methods::Entry* tbl = methodTable();
     uint8_t idx = s_activeMethod < s_methodCount ? s_activeMethod : 0;
     const Methods::Entry& m = tbl[idx];
@@ -1697,16 +1440,13 @@ void begin() {
     s_write = 0;
     s_read  = 0;
     s_running = false;
-    s_skipMenuOpen = false;
     s_mode = RunMode::Off;
     s_beaconCount = 0;
-    loadStoredSkips();
     Hc22000::reset();
 }
 
 static void startCommon(RunMode mode) {
     bool sdOk = Storage::begin();
-    if (!s_storedSkipsLoaded || sdOk) loadStoredSkips();
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
     if (s_running) stop();
@@ -1758,8 +1498,6 @@ static void startCommon(RunMode mode) {
     s_beaconClock = 0;
     clearSkipList();
     s_skipKeyWas = false;
-    s_skipMenuOpen = false;
-    s_skipMenuQWas = false;
     s_mode = mode;
     s_hopEnabled = (mode == RunMode::Light || mode == RunMode::Aggressive);
     s_deauthEnabled = (mode != RunMode::Light) && Config::radio().deauth;
@@ -1964,28 +1702,6 @@ bool isSkipped(const uint8_t* bssid) {
     return isSessionSkipped(bssid);
 }
 
-bool skipMenuOpen() {
-    return s_skipMenuOpen;
-}
-
-uint16_t skipMenuCount() {
-    return s_menuEntryCount;
-}
-
-uint16_t skipMenuSelected() {
-    return s_menuSelected;
-}
-
-uint16_t skipMenuScroll() {
-    return s_menuScroll;
-}
-
-bool skipMenuEntry(uint16_t index, SkipEntry& out) {
-    if (index >= s_menuEntryCount) return false;
-    out = s_menuEntries[index];
-    return true;
-}
-
 void setHsDepth(uint8_t depth) {
     s_hsDepth = (depth > 2) ? 2 : depth;
 }
@@ -2023,27 +1739,19 @@ bool skipCurrent() {
         Display::showToast("SKIP NONE", 900);
         return false;
     }
-    uint8_t target[6];
-    memcpy(target, t, sizeof(target));
-    if (!addSkip(target)) {
+    if (!addSkip(t)) {
         Display::showToast("SKIP FAIL", 900);
         return false;
     }
-    char ssid[33] = {0};
-    ssidForBssid(target, ssid);
-    if (!ssid[0] && s_pinOk && memcmp(target, s_pinBssid, 6) == 0 && s_pinSsid[0])
-        strncpy(ssid, s_pinSsid, sizeof(ssid) - 1);
-    ssid[32] = '\0';
-    bool saved = setStoredSkip(target, ssid, true);
 
     // Full release so the bar and radio stop sitting on this target.
     disarmLockOnBssid();
     s_lockUntil = 0;
-    if (s_fileOpen && sameBssid(s_fileBssid, target)) closeFile();
+    if (s_fileOpen && sameBssid(s_fileBssid, t)) closeFile();
     memset(s_kickBssid, 0, 6);
     memset(s_kickSta, 0, 6);
     s_kickStaOk = false;
-    if (memcmp(s_lastHsBssid, target, 6) == 0) memset(s_lastHsBssid, 0, 6);
+    if (memcmp(s_lastHsBssid, t, 6) == 0) memset(s_lastHsBssid, 0, 6);
     s_cnt.currentBssid[0] = '\0';
     s_cnt.currentSsid[0] = '\0';
     s_cnt.lastHsSsid[0] = '\0';
@@ -2052,7 +1760,7 @@ bool skipCurrent() {
     // rediscover it until a fresh beacon arrives — and even then
     // isSessionSkipped() still blocks kick/lock/pcap for the session.
     for (uint8_t i = 0; i < s_beaconCount; ) {
-        if (memcmp(s_beacons[i].bssid, target, 6) == 0) {
+        if (memcmp(s_beacons[i].bssid, t, 6) == 0) {
             if (i + 1 < s_beaconCount) {
                 memmove(&s_beacons[i], &s_beacons[i + 1],
                         (size_t)(s_beaconCount - i - 1) * sizeof(s_beacons[0]));
@@ -2064,6 +1772,13 @@ bool skipCurrent() {
     }
     // Next hop ASAP — don't stay parked on the skipped AP's channel.
     s_lastHopMs = 0;
+
+    // Prefer network name over MAC on the toast.
+    char ssid[33];
+    ssidForBssid(t, ssid);
+    if (!ssid[0] && s_pinOk && memcmp(t, s_pinBssid, 6) == 0 && s_pinSsid[0])
+        strncpy(ssid, s_pinSsid, sizeof(ssid) - 1);
+    ssid[32] = '\0';
 
     char msg[28];
     if (ssid[0]) {
@@ -2077,141 +1792,20 @@ bool skipCurrent() {
         shortSsid[n] = '\0';
         snprintf(msg, sizeof(msg), "SKIP %s", shortSsid);
     } else {
-        snprintf(msg, sizeof(msg), "SKIP %02X:%02X:%02X", target[3], target[4], target[5]);
+        snprintf(msg, sizeof(msg), "SKIP %02X:%02X:%02X", t[3], t[4], t[5]);
     }
-    if (!saved) strncat(msg, " TEMP", sizeof(msg) - strlen(msg) - 1);
     Display::showToast(msg, 1200);
-    Serial.printf("[CAP] %s skip %s (%02X:%02X:%02X:%02X:%02X:%02X) n=%u\n",
-                  saved ? "persistent" : "temporary",
+    Serial.printf("[CAP] session skip %s (%02X:%02X:%02X:%02X:%02X:%02X) n=%u\n",
                   ssid[0] ? ssid : "?",
-                  target[0], target[1], target[2], target[3], target[4], target[5],
+                  t[0], t[1], t[2], t[3], t[4], t[5],
                   (unsigned)s_skipN);
     return true;
-}
-
-static bool openSkipMenu() {
-    loadStoredSkips();
-    if (!s_storedSkipsLoaded)
-        Display::showToast("SKIP LIST READ FAIL", 1200);
-    buildSkipMenu();
-    esp_err_t err = esp_wifi_set_promiscuous(false);
-    if (err != ESP_OK) {
-        Serial.printf("[CAP] cannot pause promiscuous RX for skip menu: %d\n", (int)err);
-        Display::showToast("RADIO PAUSE FAIL", 1200);
-        return false;
-    }
-    s_skipMenuOpen = true;
-    s_menuSelected = 0;
-    s_menuScroll = 0;
-    s_skipMenuKeyWas = false;
-    s_skipMenuDownWas = false;
-    s_skipMenuEnterWas = false;
-    SFX::play(SFX::MENU_CLICK);
-    return true;
-}
-
-static void closeSkipMenu() {
-    esp_err_t err = esp_wifi_set_promiscuous(true);
-    if (err != ESP_OK) {
-        Serial.printf("[CAP] cannot resume promiscuous RX after skip menu: %d\n", (int)err);
-        Display::showToast("RADIO RESUME FAIL", 1500);
-        return;
-    }
-    s_skipMenuOpen = false;
-    s_skipMenuKeyWas = false;
-    s_skipMenuDownWas = false;
-    s_skipMenuEnterWas = false;
-    s_lastHopMs = millis();
-    SFX::play(SFX::BACK_NAV);
-}
-
-static void releaseSkippedTarget(const uint8_t* bssid) {
-    if (memcmp(s_lockBssid, bssid, 6) == 0) {
-        disarmLockOnBssid();
-        s_lockUntil = 0;
-    }
-    if (s_fileOpen && sameBssid(s_fileBssid, bssid)) closeFile();
-    if (memcmp(s_kickBssid, bssid, 6) == 0) {
-        memset(s_kickBssid, 0, sizeof(s_kickBssid));
-        memset(s_kickSta, 0, sizeof(s_kickSta));
-        s_kickStaOk = false;
-    }
-    if (memcmp(s_lastHsBssid, bssid, 6) == 0) {
-        memset(s_lastHsBssid, 0, sizeof(s_lastHsBssid));
-        s_cnt.lastHsSsid[0] = '\0';
-    }
-    uint8_t barBssid[6];
-    if (parseColonMac(s_cnt.targetBssid, barBssid) &&
-        memcmp(barBssid, bssid, 6) == 0)
-        clearBarTarget();
-    if (parseColonMac(s_cnt.currentBssid, barBssid) &&
-        memcmp(barBssid, bssid, 6) == 0) {
-        s_cnt.currentBssid[0] = '\0';
-        s_cnt.currentSsid[0] = '\0';
-    }
-    for (uint8_t i = 0; i < s_beaconCount; ) {
-        if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) {
-            if (i + 1 < s_beaconCount)
-                memmove(&s_beacons[i], &s_beacons[i + 1],
-                        (size_t)(s_beaconCount - i - 1) * sizeof(s_beacons[0]));
-            s_beaconCount--;
-        } else {
-            i++;
-        }
-    }
-    s_lastHopMs = 0;
-}
-
-static void updateSkipMenu() {
-    bool up = keyEdge(';', s_skipMenuKeyWas);
-    bool down = keyEdge('.', s_skipMenuDownWas);
-    // Separate key latches: keyNewPress is intentionally not used here because
-    // navigation, Enter and Escape can be pressed in the same keyboard frame.
-    bool enter = keyEdge(KEY_ENTER, s_skipMenuEnterWas);
-    if (keyEsc()) {
-        closeSkipMenu();
-        return;
-    }
-    const uint16_t visibleRows = 5;
-    if (up && s_menuSelected > 0) s_menuSelected--;
-    if (down && s_menuSelected + 1 < s_menuEntryCount) s_menuSelected++;
-    if (s_menuSelected < s_menuScroll) s_menuScroll = s_menuSelected;
-    else if (s_menuSelected >= s_menuScroll + visibleRows)
-        s_menuScroll = s_menuSelected - visibleRows + 1;
-    if (up || down) SFX::play(SFX::MENU_CLICK);
-    if (!enter || !s_menuEntryCount) return;
-    SkipEntry& entry = s_menuEntries[s_menuSelected];
-    const bool next = !entry.enabled;
-    if (!setStoredSkip(entry.bssid, entry.ssid, next)) {
-        Display::showToast("SD SAVE FAILED", 1200);
-        Serial.println("[CAP] failed to save persistent radio skip list");
-        return;
-    }
-    entry.enabled = next;
-    if (next) releaseSkippedTarget(entry.bssid);
-    else removeSessionSkip(entry.bssid);
-    SFX::play(SFX::CONFIRM);
-    Display::showToast(next ? "SKIP ENABLED" : "SKIP DISABLED", 800);
 }
 
 void loop() {
     if (!s_running) return;
 
-    if (s_skipMenuOpen) {
-        updateSkipMenu();
-        return;
-    }
-
-    bool qPressed = M5Cardputer.Keyboard.isKeyPressed('q') ||
-                    M5Cardputer.Keyboard.isKeyPressed('Q');
-    bool qEdge = qPressed && !s_skipMenuQWas;
-    s_skipMenuQWas = qPressed;
-    if (qEdge) {
-        openSkipMenu();
-        return;
-    }
-
-    // Z immediately skips the focused AP and persists it when SD is available.
+    // Z = skip current stuck target (session only, cleared on stop/start).
     {
         bool z = M5Cardputer.Keyboard.isKeyPressed('z') ||
                  M5Cardputer.Keyboard.isKeyPressed('Z');

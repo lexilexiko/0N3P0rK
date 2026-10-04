@@ -69,7 +69,6 @@ const char* const FILE_PWNCRACK_UPLOADED = "/0N3P0rK/pwncrack/uploaded.txt";
 // the service has no potfile endpoint, results live in the web dashboard.
 const char* const FILE_OHC_EMAIL         = "/0N3P0rK/ohc/email.txt";
 const char* const FILE_OHC_UPLOADED      = "/0N3P0rK/ohc/uploaded.txt";
-const char* const FILE_RADIO_SKIP        = "/0N3P0rK/radio_skip.csv";
 
 bool ensureDir(const char* path);
 bool removeFile(const char* path);

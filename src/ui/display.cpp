@@ -538,45 +538,6 @@ void Display::drawFarm() {
     Credits::update();
     if (Credits::isPlaying()) Credits::draw(mainCanvas);
 
-    if (Cap::skipMenuOpen()) {
-        const uint16_t panel = 0x2104;
-        const uint16_t accent = 0x07FF;
-        const uint16_t enabled = 0x07E0;
-        const uint16_t disabled = 0x8410;
-        const int panelX = 8;
-        const int panelY = 21;
-        const int panelW = DISPLAY_W - 16;
-        const int panelH = 87;
-        mainCanvas.fillRoundRect(panelX, panelY, panelW, panelH, 5, panel);
-        mainCanvas.drawRoundRect(panelX, panelY, panelW, panelH, 5, accent);
-        mainCanvas.setTextSize(1);
-        mainCanvas.setTextDatum(top_left);
-        mainCanvas.setTextColor(accent);
-        char title[32];
-        uint16_t count = Cap::skipMenuCount();
-        uint16_t selected = Cap::skipMenuSelected();
-        snprintf(title, sizeof(title), "SKIP LIST %u/%u",
-                 count ? (unsigned)(selected + 1) : 0u, (unsigned)count);
-        mainCanvas.drawString(title, panelX + 7, panelY + 5);
-        for (uint8_t row = 0; row < 5; row++) {
-            const uint16_t index = Cap::skipMenuScroll() + row;
-            if (index >= count) break;
-            Cap::SkipEntry entry{};
-            if (!Cap::skipMenuEntry(index, entry)) continue;
-            const int y = panelY + 20 + row * 12;
-            if (index == selected)
-                mainCanvas.fillRect(panelX + 3, y - 1, panelW - 6, 11, 0x4208);
-            mainCanvas.setTextColor(entry.enabled ? enabled : disabled);
-            char label[40];
-            const char* name = entry.ssid[0] ? entry.ssid : "(hidden)";
-            snprintf(label, sizeof(label), "%c %c %-13.13s %02X:%02X:%02X",
-                     index == selected ? '>' : ' ',
-                     entry.enabled ? 'X' : ' ',
-                     name, entry.bssid[3], entry.bssid[4], entry.bssid[5]);
-            mainCanvas.drawString(label, panelX + 7, y);
-        }
-    }
-
     if (SceneLayers::cpuHud && App::mode() == AppMode::FARM &&
         !App::windowHidden() && sceneLive) {
         char hud[20];
@@ -746,14 +707,6 @@ void Display::drawBottomBar() {
 
     bottomBar.fillSprite(DIRT_MID);
     bottomBar.fillRect(0, 0, DISPLAY_W, 2, fringeTop);
-    if (Cap::skipMenuOpen()) {
-        bottomBar.setTextColor(TEXT_COL);
-        bottomBar.setTextSize(1);
-        bottomBar.setTextDatum(top_left);
-        bottomBar.drawString("</> MOVE  ENT TOGGLE", 3, 3);
-        bottomBar.drawString("Z ADD/SKIP  ESC BACK", 3, 13);
-        return;
-    }
     auto blend565 = [](uint16_t fg, uint16_t bg, uint8_t weight) -> uint16_t {
         uint16_t inv = (uint16_t)(255 - weight);
         uint16_t r = (uint16_t)((((fg >> 11) & 0x1F) * weight +
