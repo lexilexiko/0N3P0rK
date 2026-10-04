@@ -24,12 +24,12 @@ static const int L = 4;
 static const int R = 236;
 static const int W = R - L;
 static const int TOP = 12;
-static const int BOT = 48;
-static const int WF_TOP = 50;
-static const int WF_ROWS = 12;
-static const int CH_Y = 63;
+static const int BOT = 59;
+static const int WF_TOP = 61;
+static const int WF_ROWS = 7;
+static const int CH_Y = 68;
 static const int INFO_Y = 1;
-static const int LIST_Y = 76;
+static const int LIST_Y = 77;
 static const uint32_t BAR_FLIP_MS = 2200;
 
 static const int8_t RSSI_MIN = -95;
@@ -768,7 +768,7 @@ static void updateBuf() {
     }
 }
 
-static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t act, uint16_t fg) {
+static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool selected, uint16_t act, uint16_t fg) {
     int peakY = rssiToY(rssi);
     int h = BOT - peakY;
     if (h <= 0) return;
@@ -786,11 +786,8 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t
         int y = BOT - (int)(h * amp);
         if (y < TOP) y = TOP;
         if (y > BOT) y = BOT;
-        if (filled) {
-            if (y < BOT) c.drawFastVLine(x, y, BOT - y, fg);
-        } else if (x > lx) {
-            c.drawLine(x - 1, prevY, x, y, fg);
-        }
+        uint16_t lineColor = selected ? UiStyle::PINK : fg;
+        if (x > lx) c.drawLine(x - 1, prevY, x, y, lineColor);
         prevY = y;
     }
 }
@@ -821,19 +818,19 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
 
     c.setTextSize(1);
     c.setTextDatum(top_left);
-    c.fillRoundRect(2, INFO_Y, 158, 9, 2, UiStyle::PANEL);
+    c.fillRoundRect(2, INFO_Y, 165, 9, 2, UiStyle::PANEL);
     c.setTextColor(UiStyle::GOLD);
     c.drawString("F FILTER", 5, INFO_Y + 1);
     c.setTextColor(fg);
     char filterInfo[24];
     snprintf(filterInfo, sizeof(filterInfo), "%s %uAP %u/s",
              fn, (unsigned)tot, (unsigned)s_pps);
-    c.drawString(filterInfo, 55, INFO_Y + 1);
+    c.drawString(filterInfo, 63, INFO_Y + 1);
 
     char zoomInfo[24];
     unsigned zoom = (unsigned)(WIDTH0 / s_width + 0.5f);
     snprintf(zoomInfo, sizeof(zoomInfo), "%uX  %.0fMHz", zoom, s_width);
-    c.fillRoundRect(163, INFO_Y, 75, 9, 2, UiStyle::PANEL);
+    c.fillRoundRect(170, INFO_Y, 68, 9, 2, UiStyle::PANEL);
     c.setTextDatum(top_right);
     c.setTextColor(UiStyle::CYAN);
     c.drawString(zoomInfo, 234, INFO_Y + 1);
@@ -848,10 +845,16 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     for (int y = TOP + 8; y < BOT; y += 8)
         c.drawFastHLine(L + 1, y, W - 2, grid);
 
-    for (int x = L; x < R; x++) {
-        uint8_t n = noise7();
-        int up = n / 3;
-        if (up) c.drawFastVLine(x, BOT - up, up, fg);
+    int previousY = rssiToY(s_persist[0]);
+    for (int x = 1; x < W; x++) {
+        int y = rssiToY(s_persist[x]);
+        c.drawLine(L + x - 1, previousY, L + x, y, UiStyle::CYAN);
+        previousY = y;
+    }
+    for (int x = 0; x < W; x += 3) {
+        if (s_peak[x] <= NOISE + 8) continue;
+        int peakY = rssiToY(s_peak[x]);
+        c.drawFastHLine(L + x, peakY, 2, UiStyle::GOLD);
     }
 
     for (uint8_t i = 0; i < s_nNet; i++) {
@@ -909,7 +912,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     const int prev = nextFiltered(center, -1);
     const int next = nextFiltered(center, 1);
     const int rows[3] = {prev, center, next};
-    const uint16_t rowY[3] = {76, 85, 94};
+    const uint16_t rowY[3] = {77, 86, 95};
     c.setTextDatum(top_left);
     for (uint8_t slot = 0; slot < 3; slot++) {
         const int idx = rows[slot];
