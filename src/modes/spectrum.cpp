@@ -845,6 +845,16 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     for (int y = TOP + 8; y < BOT; y += 8)
         c.drawFastHLine(L + 1, y, W - 2, grid);
 
+    const uint16_t noiseColor = (uint16_t)(
+        (((((fg >> 11) & 0x1F) * 2 + ((bg >> 11) & 0x1F) * 6) / 8) << 11) |
+        (((((fg >> 5) & 0x3F) * 2 + ((bg >> 5) & 0x3F) * 6) / 8) << 5) |
+        (((fg & 0x1F) * 2 + (bg & 0x1F) * 6) / 8));
+    for (int x = 0; x < W; x += 2) {
+        const int height = noise7() / 2;
+        if (height > 0)
+            c.drawFastVLine(L + x, BOT - height, height, noiseColor);
+    }
+
     int previousY = rssiToY(s_persist[0]);
     for (int x = 1; x < W; x++) {
         int y = rssiToY(s_persist[x]);
@@ -889,11 +899,9 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int x = freqToX(chToFreq(ch));
         if (x < L || x > R) continue;
         bool selected = (ch == selectedChannel);
-        c.drawFastVLine(x, BOT, 3, fg);
-        if (selected) c.fillRoundRect(x - 6, CH_Y - 1, 13, 9, 2, UiStyle::PINK);
         char lb[4];
         snprintf(lb, sizeof(lb), "%u", ch);
-        c.setTextColor(selected ? bg : fg);
+        c.setTextColor(selected ? UiStyle::PINK : fg);
         c.drawString(lb, x, CH_Y);
         c.setTextColor(fg);
     }
