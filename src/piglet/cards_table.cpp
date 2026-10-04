@@ -70,7 +70,13 @@ static Card    s_aiPlay[PICK_N];
 static PlaySum s_youSum, s_aiSum;
 static int8_t  s_dmgYou, s_dmgAi;
 static int8_t  s_healYou, s_healAi;
+static int8_t s_firstDamage, s_secondDamage;
 static uint32_t s_phaseUntil;
+static uint32_t s_resolveStart;
+static uint8_t s_youHpBefore, s_aiHpBefore;
+static bool s_resolveYouFirst;
+static bool s_firstHitCuePlayed, s_secondHitCuePlayed;
+static bool s_secondExchange, s_roundEndPending;
 static char    s_msg[28];
 
 bool unlocked() {
@@ -235,12 +241,17 @@ static void startMatch() {
     s_youWins = s_aiWins = 0;
     s_round = 1;
     s_youWonLastRound = false;
+    s_roundEndPending = false;
+    s_secondExchange = false;
     s_firstWasYou = (esp_random() & 1) != 0;
     beginRound(s_firstWasYou);
     snprintf(s_msg, sizeof(s_msg), "R%d GO", s_round);
 }
 
 static void resolveTurn() {
+    s_youHpBefore = s_youHp;
+    s_aiHpBefore = s_aiHp;
+    s_resolveYouFirst = s_youFirst;
     uint8_t p = 0;
     for (uint8_t i = 0; i < HAND_N && p < PICK_N; i++) {
         if (s_sel[i]) s_youPlay[p++] = s_hand[i];
@@ -251,11 +262,13 @@ static void resolveTurn() {
     s_youSum = sumPlay(s_youPlay, PICK_N);
     s_aiSum  = sumPlay(s_aiPlay, PICK_N);
     s_dmgYou = s_dmgAi = s_healYou = s_healAi = 0;
+    s_firstDamage = s_secondDamage = 0;
 
     auto actFirst = [&](bool youAreFirst) {
         if (youAreFirst) {
             int8_t dT = 0, dA = 0;
             applyAttack(s_youSum.atk, s_aiSum.def, s_aiHp, s_youHp, dT, dA);
+            s_firstDamage = dT;
             s_dmgAi  = (int8_t)(s_dmgAi + dT);
             s_dmgYou = (int8_t)(s_dmgYou + dA);
             int8_t h = 0;
@@ -264,6 +277,7 @@ static void resolveTurn() {
         } else {
             int8_t dT = 0, dA = 0;
             applyAttack(s_aiSum.atk, s_youSum.def, s_youHp, s_aiHp, dT, dA);
+            s_firstDamage = dT;
             s_dmgYou = (int8_t)(s_dmgYou + dT);
             s_dmgAi  = (int8_t)(s_dmgAi + dA);
             int8_t h = 0;
@@ -277,6 +291,7 @@ static void resolveTurn() {
         if (youAreFirst) {
             int8_t dT = 0, dA = 0;
             applyAttack(s_aiSum.atk, s_youSum.def, s_youHp, s_aiHp, dT, dA);
+            s_secondDamage = dT;
             s_dmgYou = (int8_t)(s_dmgYou + dT);
             s_dmgAi  = (int8_t)(s_dmgAi + dA);
             int8_t h = 0;
@@ -285,6 +300,7 @@ static void resolveTurn() {
         } else {
             int8_t dT = 0, dA = 0;
             applyAttack(s_youSum.atk, s_aiSum.def, s_aiHp, s_youHp, dT, dA);
+            s_secondDamage = dT;
             s_dmgAi  = (int8_t)(s_dmgAi + dT);
             s_dmgYou = (int8_t)(s_dmgYou + dA);
             int8_t h = 0;
@@ -295,30 +311,50 @@ static void resolveTurn() {
 
     actFirst(s_youFirst);
     // Defender's DEF was spent on the first exchange — second hit faces 0 DEF
-    if (s_youHp > 0 && s_aiHp > 0) {
+    s_secondExchange = s_youHp > 0 && s_aiHp > 0;
+    if (s_secondExchange) {
         if (s_youFirst) s_aiSum.def = 0;
         else             s_youSum.def = 0;
         actSecond(s_youFirst);
     }
 
     s_youFirst = !s_youFirst;
+    s_roundEndPending = s_youHp == 0 || s_aiHp == 0;
+    s_phase = Phase::RESOLVE;
+    s_resolveStart = millis();
+    s_phaseUntil = s_resolveStart + 2200;
+    s_firstHitCuePlayed = false;
+    s_secondHitCuePlayed = false;
+    s_msg[0] = '\0';
+}
 
-    if (s_youHp == 0 || s_aiHp == 0) {
-        s_phase = Phase::ROUND_OVER;
-        s_phaseUntil = millis() + 2200;
+void end(); // fwd
+
+static void advanceAfterPause() {
+    if (s_phase == Phase::MATCH_OVER) {
+        end();
+        return;
+    }
+    if (s_phase == Phase::RESOLVE) {
+        if (!s_roundEndPending) {
+            beginTurn();
+            return;
+        }
+
         if (s_youHp == 0 && s_aiHp == 0) {
             s_youWonLastRound = false;
-            snprintf(s_msg, sizeof(s_msg), "DRAW R%d", s_round);
+            snprintf(s_msg, sizeof(s_msg), "DRAW R%u", (unsigned)s_round);
         } else if (s_aiHp == 0) {
             s_youWins++;
             s_youWonLastRound = true;
-            snprintf(s_msg, sizeof(s_msg), "YOU WIN R%d", s_round);
+            snprintf(s_msg, sizeof(s_msg), "YOU WIN R%u", (unsigned)s_round);
             SFX::play(SFX::MENU_CLICK);
         } else {
             s_aiWins++;
             s_youWonLastRound = false;
-            snprintf(s_msg, sizeof(s_msg), "AI WIN R%d", s_round);
+            snprintf(s_msg, sizeof(s_msg), "AI WIN R%u", (unsigned)s_round);
         }
+
         if (s_youWins >= 2 || s_aiWins >= 2) {
             s_phase = Phase::MATCH_OVER;
             s_phaseUntil = millis() + 3500;
@@ -331,19 +367,11 @@ static void resolveTurn() {
                 Mood::say("LOST...");
                 Avatar::setState(AvatarState::SAD);
             }
+        } else {
+            s_phase = Phase::ROUND_OVER;
+            s_phaseUntil = millis() + 2200;
         }
-    } else {
-        s_phase = Phase::RESOLVE;
-        s_phaseUntil = millis() + 1400;
-        snprintf(s_msg, sizeof(s_msg), "A%d/D%d/H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
-    }
-}
-
-void end(); // fwd
-
-static void advanceAfterPause() {
-    if (s_phase == Phase::MATCH_OVER) {
-        end();
+        s_roundEndPending = false;
         return;
     }
     if (s_phase == Phase::ROUND_OVER) {
@@ -378,7 +406,6 @@ static void advanceAfterPause() {
         snprintf(s_msg, sizeof(s_msg), "R%d GO", s_round);
         return;
     }
-    if (s_phase == Phase::RESOLVE) beginTurn();
 }
 
 void begin() {
@@ -441,12 +468,32 @@ void update() {
 
         uint32_t now = millis();
 
+        if (s_phase == Phase::RESOLVE) {
+            const uint32_t elapsed = now - s_resolveStart;
+            if (!s_firstHitCuePlayed && elapsed >= 510) {
+                s_firstHitCuePlayed = true;
+                const PlaySum& first = s_resolveYouFirst ? s_youSum : s_aiSum;
+                if (first.atk) SFX::play(SFX::ATTACK_HOP);
+                else if (first.heal) SFX::play(SFX::CONFIRM);
+                else if (first.def) SFX::play(SFX::MENU_CLICK);
+            }
+            if (s_secondExchange && !s_secondHitCuePlayed && elapsed >= 1260) {
+                s_secondHitCuePlayed = true;
+                const PlaySum& second = s_resolveYouFirst ? s_aiSum : s_youSum;
+                if (second.atk) SFX::play(SFX::ATTACK_HOP);
+                else if (second.heal) SFX::play(SFX::CONFIRM);
+                else if (second.def) SFX::play(SFX::MENU_CLICK);
+            }
+        }
+
         if (s_phase == Phase::RESOLVE || s_phase == Phase::ROUND_OVER ||
             s_phase == Phase::MATCH_OVER) {
             // Timer OR Enter — never both in one frame (would skip a phase)
             if (now >= s_phaseUntil) {
                 advanceAfterPause();
-            } else if (keyNewPress(s_entLatch) && keyEnter()) {
+            } else if ((s_phase != Phase::RESOLVE ||
+                        now - s_resolveStart >= 1750u) &&
+                       keyNewPress(s_entLatch) && keyEnter()) {
                 s_phaseUntil = 0;
                 advanceAfterPause();
             }
@@ -812,6 +859,35 @@ static char typeLetter(CType t) {
     return 'H';
 }
 
+static const char* typeName(CType t) {
+    if (t == CType::ATK) return "ATK";
+    if (t == CType::DEF) return "DEF";
+    return "HEAL";
+}
+
+static uint16_t cardInk(CType t) {
+    if (t == CType::ATK) return 0xFCA0;
+    if (t == CType::DEF) return 0x4DFF;
+    return 0xF96A;
+}
+
+static uint16_t cardShade(CType t) {
+    if (t == CType::ATK) return 0x5108;
+    if (t == CType::DEF) return 0x112B;
+    return 0x5009;
+}
+
+static uint16_t tint565(uint16_t color, uint16_t bg, uint8_t amount) {
+    const uint16_t inverse = (uint16_t)(255 - amount);
+    const uint16_t red = (uint16_t)((((color >> 11) & 0x1F) * amount +
+        ((bg >> 11) & 0x1F) * inverse) / 255);
+    const uint16_t green = (uint16_t)((((color >> 5) & 0x3F) * amount +
+        ((bg >> 5) & 0x3F) * inverse) / 255);
+    const uint16_t blue = (uint16_t)(((color & 0x1F) * amount +
+        (bg & 0x1F) * inverse) / 255);
+    return (uint16_t)((red << 11) | (green << 5) | blue);
+}
+
 // Card face: 36x44 — icon + letter so type is obvious
 static void drawCardFace(M5Canvas& canvas, int16_t x, int16_t y,
                          const Card& c, bool selected) {
@@ -865,36 +941,165 @@ static void drawHpBar(M5Canvas& canvas, int16_t x, int16_t y,
     canvas.drawRect(bx, y + 1, bw, 6, 0x8410);
 }
 
+static uint8_t animatedHp(uint8_t before, uint8_t after, uint32_t elapsed) {
+    uint8_t progress = elapsed < 620 ? 0 : elapsed < 1320 ? 1 :
+                       elapsed < 1780 ? 2 : 3;
+    int value = before + ((int)after - (int)before) * progress / 3;
+    if (value < 0) value = 0;
+    if (value > MAX_HP) value = MAX_HP;
+    return (uint8_t)value;
+}
+
+static void drawImpact(M5Canvas& canvas, int16_t cx, int16_t cy,
+                       uint16_t color, uint32_t age, uint8_t power) {
+    if (age > 240u) return;
+    const int radius = 3 + (int)(age / 24u);
+    for (int ray = 0; ray < 8; ray++) {
+        const int dx = (ray & 1) ? radius / 2 : radius;
+        const int dy = (ray & 1) ? radius : radius / 2;
+        const int sx = (ray & 2) ? -dx : dx;
+        const int sy = (ray & 4) ? -dy : dy;
+        canvas.drawLine(cx + sx / 2, cy + sy / 2, cx + sx, cy + sy, color);
+    }
+    canvas.fillCircle(cx, cy, 2, 0xFFFF);
+    canvas.setTextDatum(top_center);
+    canvas.setTextColor(color);
+    canvas.setCursor(cx - 6, cy - radius - 8);
+    canvas.printf("-%u", (unsigned)power);
+    canvas.setTextDatum(top_left);
+}
+
+static void drawActionEffect(M5Canvas& canvas, const PlaySum& play,
+                             bool actorYou, uint32_t age, uint8_t power) {
+    if (!play.atk && !play.def && !play.heal) return;
+    const int16_t targetX = actorYou ? 194 : 46;
+    const int16_t selfX = actorYou ? 46 : 194;
+    if (play.atk) {
+        if (power == 0 && age < 240u) {
+            const int radius = 4 + (int)(age / 24u);
+            const uint16_t color = actorYou ? 0x4DFF : 0x7BEF;
+            canvas.drawCircle(targetX, 53, radius, color);
+            canvas.drawFastHLine(targetX - 4, 53, 9, color);
+            canvas.drawFastVLine(targetX, 49, 9, color);
+            canvas.setTextColor(color);
+            canvas.setCursor(targetX - 14, 53 - radius - 9);
+            canvas.print("BLOCK");
+            return;
+        }
+        drawImpact(canvas, targetX, 53, actorYou ? 0xFCA0 : 0xFC60,
+                   age, power);
+        return;
+    }
+
+    if (age > 240u) return;
+    const int radius = 3 + (int)(age / 28u);
+    const uint16_t color = play.def ? 0x4DFF : 0x5FEA;
+    const int16_t cx = selfX;
+    const int16_t cy = 54;
+    canvas.drawCircle(cx, cy, radius, color);
+    if (radius > 3) canvas.drawCircle(cx, cy, radius - 2, color);
+    if (play.def) {
+        canvas.drawFastVLine(cx, cy - radius + 2, radius, color);
+        canvas.drawLine(cx - 4, cy, cx, cy + 4, color);
+        canvas.drawLine(cx, cy + 4, cx + 5, cy - 5, color);
+        canvas.setTextColor(color);
+        canvas.setCursor(cx - 9, cy - radius - 8);
+        canvas.print("BLOCK");
+    } else if (play.heal) {
+        canvas.fillRect(cx - 1, cy - 5, 3, 11, color);
+        canvas.fillRect(cx - 5, cy - 1, 11, 3, color);
+        canvas.setTextColor(color);
+        canvas.setCursor(cx - 7, cy - radius - 8);
+        canvas.printf("+%u", (unsigned)power);
+    }
+}
+
+static const char* actionLabel(const PlaySum& play) {
+    if (play.atk) return "STRIKE!";
+    if (play.def) return "GUARD UP";
+    if (play.heal) return "RECOVER";
+    return "NO EFFECT";
+}
 
 // Sized card face for duel UI (fits MAIN_H)
 static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
                               int16_t W, int16_t H,
                               const Card& c, bool selected) {
-    uint16_t bg = selected ? 0xFFE0 : 0xFFFF;
-    uint16_t bd = selected ? 0xFD20 : 0x4A49;
+    const CType primary = c.empty ? CType::DEF : c.e0.type;
+    const uint16_t bg = c.empty ? 0x18E3 : cardShade(primary);
+    const uint16_t ink = cardInk(primary);
+    const uint16_t bd = selected ? 0xFFE0 : ink;
+    if (selected) {
+        canvas.drawRoundRect(x - 2, y - 2, W + 4, H + 4, 4, 0xFCA0);
+        canvas.drawRoundRect(x - 1, y - 1, W + 2, H + 2, 3, 0x7BEF);
+    }
     canvas.fillRect(x, y, W, H, bg);
     canvas.drawRect(x, y, W, H, bd);
-    if (selected) canvas.drawRect(x + 1, y + 1, W - 2, H - 2, 0xC480);
-    if (c.empty) return;
+    canvas.drawRect(x + 1, y + 1, W - 2, H - 2,
+                    selected ? 0xFFE0 : tint565(ink, bg, 132));
+    canvas.fillRect(x + 2, y + 2, W - 4, 2, tint565(ink, bg, 190));
+    if (c.empty) {
+        canvas.setTextSize(1);
+        canvas.setTextColor(0x8410, bg);
+        canvas.setTextDatum(top_center);
+        canvas.drawString("REST", x + W / 2, y + H / 2 - 3);
+        canvas.setTextDatum(top_left);
+        return;
+    }
     canvas.setTextSize(1);
     if (c.combo) {
-        canvas.setTextColor(colMain(c.e0.type), bg);
-        canvas.setCursor(x + 2, y + 2);
-        canvas.printf("%c%d", typeLetter(c.e0.type), (unsigned)c.e0.pow);
+        canvas.fillRect(x + 2, y + 5, W - 4, 12, cardShade(c.e0.type));
+        canvas.setTextColor(cardInk(c.e0.type), cardShade(c.e0.type));
+        canvas.setCursor(x + 3, y + 8);
+        canvas.printf("%c%u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
         blitIcon(canvas, x + W - 12, y + 1, iconFor(c.e0.type), c.e0.type, 1);
-        canvas.drawFastHLine(x + 2, y + H / 2, W - 4, 0x8410);
-        canvas.setTextColor(colMain(c.e1.type), bg);
-        canvas.setCursor(x + 2, y + H / 2 + 2);
-        canvas.printf("%c%d", typeLetter(c.e1.type), (unsigned)c.e1.pow);
-        blitIcon(canvas, x + W - 12, y + H / 2 + 1, iconFor(c.e1.type), c.e1.type, 1);
+        canvas.drawFastHLine(x + 3, y + H / 2, W - 6,
+                             tint565(ink, bg, 150));
+        canvas.fillRect(x + 2, y + H / 2 + 1, W - 4, H / 2 - 4,
+                        cardShade(c.e1.type));
+        canvas.setTextColor(cardInk(c.e1.type), cardShade(c.e1.type));
+        canvas.setCursor(x + 3, y + H / 2 + 5);
+        canvas.printf("%c%u", typeLetter(c.e1.type), (unsigned)c.e1.pow);
+        blitIcon(canvas, x + W - 12, y + H / 2 + 2,
+                 iconFor(c.e1.type), c.e1.type, 1);
+        canvas.fillCircle(x + W - 4, y + 4, 2, 0xF81F);
     } else {
-        canvas.setTextColor(colMain(c.e0.type), bg);
-        canvas.setCursor(x + 2, y + 2);
-        canvas.printf("%c%d", typeLetter(c.e0.type), (unsigned)c.e0.pow);
-        int scale = (H >= 40) ? 2 : 1;
-        int iw = 10 * scale;
-        blitIcon(canvas, x + (W - iw) / 2, y + 12, iconFor(c.e0.type), c.e0.type, scale);
+        canvas.setTextColor(cardInk(c.e0.type), bg);
+        canvas.setCursor(x + 3, y + 5);
+        canvas.printf("%s", typeName(c.e0.type));
+        canvas.fillCircle(x + W - 6, y + 8, 4, ink);
+        canvas.setTextColor(0x0841, ink);
+        canvas.setCursor(x + W - 8, y + 5);
+        canvas.printf("%u", (unsigned)c.e0.pow);
+
+        const int scale = (H >= 40) ? 2 : 1;
+        const int iw = 10 * scale;
+        const int iconY = y + (H >= 40 ? 12 : 11);
+        blitIcon(canvas, x + (W - iw) / 2, iconY,
+                 iconFor(c.e0.type), c.e0.type, scale);
+        canvas.fillRect(x + 2, y + H - 8, W - 4, 6, cardShade(c.e0.type));
+        canvas.setTextColor(0xEF7D, cardShade(c.e0.type));
+        canvas.setCursor(x + 4, y + H - 7);
+        canvas.printf("%c+%u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
     }
+}
+
+static void drawCardBack(M5Canvas& canvas, int16_t x, int16_t y,
+                         int16_t W, int16_t H, uint32_t elapsed) {
+    canvas.fillRoundRect(x, y, W, H, 3, 0x1834);
+    canvas.drawRoundRect(x, y, W, H, 3, 0x7BEF);
+    canvas.drawRoundRect(x + 2, y + 2, W - 4, H - 4, 2, 0x4DFF);
+    for (int row = 0; row < 5; row++) {
+        const int inset = 4 + (row & 1);
+        canvas.drawFastHLine(x + inset, y + 6 + row * 5, W - inset * 2,
+                             ((elapsed / 70u + row) & 1u) ? 0x4DFF : 0x315A);
+    }
+    canvas.fillCircle(x + W / 2, y + H / 2, 5, 0x1082);
+    canvas.drawCircle(x + W / 2, y + H / 2, 5, 0xFFE0);
+    canvas.setTextColor(0xFFE0);
+    canvas.setTextDatum(top_center);
+    canvas.drawString("*", x + W / 2, y + H / 2 - 4);
+    canvas.setTextDatum(top_left);
 }
 
 void drawActive(M5Canvas& canvas) {
@@ -906,46 +1111,59 @@ void drawActive(M5Canvas& canvas) {
     // 89..104 footer keys
     const int16_t W = 240;
     const int16_t H = 105;
+    const uint32_t elapsed = s_phase == Phase::RESOLVE
+        ? millis() - s_resolveStart : 0;
 
     canvas.fillSprite(0x0841);
 
     // --- HEADER band ---
     canvas.fillRect(0, 0, W, 15, 0x1082);
     canvas.fillRect(0, 14, W, 1, 0x2104);
-    drawHpBar(canvas, 2, 3, s_youHp, 0x07E0, "YOU");
-    drawHpBar(canvas, 148, 3, s_aiHp, 0xF800, "AI");
-    // score centered in gap between bars (~x 100)
+    const uint8_t shownYouHp = s_phase == Phase::RESOLVE
+        ? animatedHp(s_youHpBefore, s_youHp, elapsed) : s_youHp;
+    const uint8_t shownAiHp = s_phase == Phase::RESOLVE
+        ? animatedHp(s_aiHpBefore, s_aiHp, elapsed) : s_aiHp;
+    drawHpBar(canvas, 2, 3, shownYouHp, 0x07E0, "YOU");
+    drawHpBar(canvas, 148, 3, shownAiHp, 0xF800, "AI");
+    canvas.drawFastVLine(119, 2, 11, 0x528A);
     canvas.setTextSize(1);
     canvas.setTextColor(0xFFE0, 0x1082);
-    canvas.setCursor(100, 2);
+    canvas.setCursor(111, 2);
     canvas.printf("R%u", (unsigned)s_round);
     canvas.setTextColor(0xC618, 0x1082);
-    canvas.setCursor(96, 10);
+    canvas.setCursor(108, 10);
     canvas.printf("%u-%u", (unsigned)s_youWins, (unsigned)s_aiWins);
 
-    // --- STATUS band (clear) ---
+    // --- STATUS band ---
     canvas.fillRect(0, 15, W, 12, 0x0841);
-    canvas.setTextColor(0xFFFF, 0x0841);
-    canvas.setCursor(4, 17);
-    if (s_msg[0]) {
-        // truncate so it never wraps under cards
-        char buf[28];
-        size_t i = 0;
-        while (s_msg[i] && i < 27) { buf[i] = s_msg[i]; i++; }
-        buf[i] = '\0';
-        canvas.print(buf);
-    } else if (s_phase == Phase::SELECT) {
-        canvas.setTextColor(0xC618, 0x0841);
-        canvas.printf("Pick %u/2  %s",
-                      (unsigned)s_selCount,
-                      s_youFirst ? "You first" : "AI first");
+    canvas.setTextDatum(top_center);
+    if (s_phase == Phase::SELECT) {
+        canvas.setTextColor(0xEF7D, 0x0841);
+        canvas.drawString(s_youFirst ? "YOUR TURN FIRST" : "YOUR TURN SECOND",
+                          W / 2, 18);
     } else if (s_phase == Phase::RESOLVE) {
-        canvas.print("Resolve...");
-    } else if (s_phase == Phase::ROUND_OVER) {
-        canvas.print("Round over");
-    } else if (s_phase == Phase::MATCH_OVER) {
-        canvas.print("Match over");
+        const bool firstAction = elapsed < 900 || !s_secondExchange;
+        const bool actorYou = firstAction ? s_resolveYouFirst : !s_resolveYouFirst;
+        const PlaySum& action = actorYou ? s_youSum : s_aiSum;
+        const char* actor = actorYou ? "YOU" : "RIVAL";
+        const char* actionText = actionLabel(action);
+        uint16_t actionColor = action.atk ? 0xFCA0 :
+                               action.def ? 0x4DFF : 0xF96A;
+        canvas.setTextColor(actionColor, 0x0841);
+        const bool knockout = !s_secondExchange && elapsed >= 900;
+        canvas.drawString(elapsed < 180 || (elapsed >= 850 && elapsed < 930)
+                              ? "REVEAL!" : knockout ? "KNOCKOUT!" : actor,
+                          W / 2, 18);
+        canvas.setTextColor(0x9CD3, 0x0841);
+        canvas.drawString(knockout ? "ROUND DECIDED" : actionText, W / 2, 25);
+    } else {
+        canvas.setTextColor(s_phase == Phase::MATCH_OVER ? 0xFFE0 : 0xEF7D,
+                            0x0841);
+        canvas.drawString(s_msg[0] ? s_msg :
+                          s_phase == Phase::ROUND_OVER ? "ROUND COMPLETE" :
+                          "MATCH COMPLETE", W / 2, 19);
     }
+    canvas.setTextDatum(top_left);
 
     // --- FOOTER band background ---
     canvas.fillRect(0, 89, W, H - 89, 0x1082);
@@ -959,45 +1177,96 @@ void drawActive(M5Canvas& canvas) {
         const int16_t x0 = (int16_t)((W - total) / 2);
         for (uint8_t i = 0; i < HAND_N; i++) {
             int16_t x = (int16_t)(x0 + i * (CW + gap));
-            drawCardFaceSized(canvas, x, 28, CW, CH, s_hand[i], s_sel[i]);
+            const int16_t cardY = s_sel[i] ? 23 : 27;
+            drawCardFaceSized(canvas, x, cardY, CW, CH, s_hand[i], s_sel[i]);
             canvas.setTextColor(s_sel[i] ? 0xFFE0 : 0x8410, 0x0841);
-            canvas.setCursor(x + CW / 2 - 3, 68);
+            canvas.setCursor(x + CW / 2 - 3, cardY + CH + 2);
             canvas.printf("%u", (unsigned)(i + 1));
         }
+        canvas.setTextColor(0x9CD3, 0x1082);
+        canvas.setTextDatum(top_center);
+        canvas.drawString("ATK HIT  DEF BLOCK  HEAL +HP", W / 2, 91);
+        canvas.setTextColor(0xFFE0, 0x1082);
+        canvas.setCursor(104, 100);
+        canvas.printf("%u/2", (unsigned)s_selCount);
+        canvas.setTextDatum(top_left);
         return;
     }
 
-    // RESOLVE / ROUND_OVER / MATCH_OVER
-    // Labels above cards only
+    // Resolve cards advance in two clear exchanges before the result settles.
+    int16_t youShift = 0;
+    int16_t aiShift = 0;
+    if (s_phase == Phase::RESOLVE) {
+        bool actionYou = false;
+        uint32_t actionStart = 0;
+        if (elapsed >= 180 && elapsed < 900) {
+            actionYou = s_resolveYouFirst;
+            actionStart = 180;
+        } else if (s_secondExchange && elapsed >= 930 && elapsed < 1650) {
+            actionYou = !s_resolveYouFirst;
+            actionStart = 930;
+        }
+        if (actionStart) {
+            const uint32_t actionElapsed = elapsed - actionStart;
+            const int16_t travel = actionElapsed < 300
+                ? (int16_t)(22 * actionElapsed / 300) : 22;
+            if (actionYou) {
+                youShift = travel;
+            } else {
+                aiShift = -travel;
+            }
+
+            const uint32_t impactAt = actionStart + 330u;
+            if (elapsed >= impactAt) {
+                const PlaySum& action = actionYou
+                    ? (s_resolveYouFirst ? s_youSum : s_aiSum)
+                    : (s_resolveYouFirst ? s_aiSum : s_youSum);
+                const uint8_t shownPower = action.atk
+                    ? (uint8_t)(actionStart == 180u ? s_firstDamage : s_secondDamage)
+                    : action.heal ? (actionYou ? (uint8_t)(s_healYou > 0 ? s_healYou : 0)
+                                                : (uint8_t)(s_healAi > 0 ? s_healAi : 0))
+                                  : action.def;
+                drawActionEffect(canvas, action, actionYou,
+                                 elapsed - impactAt, shownPower);
+            }
+        }
+    }
+
+    canvas.setTextDatum(top_center);
     canvas.setTextColor(0x07E0, 0x0841);
-    canvas.setCursor(20, 28);
-    canvas.print("YOU");
-    canvas.setTextColor(0xF800, 0x0841);
-    canvas.setCursor(150, 28);
-    canvas.print("AI");
+    canvas.drawString("YOUR PLAY", 45 + youShift / 2, 29);
+    canvas.setTextColor(0xFCA0, 0x0841);
+    canvas.drawString("RIVAL PLAY", 166 + aiShift / 2, 29);
+    canvas.setTextDatum(top_left);
 
     for (uint8_t i = 0; i < PICK_N; i++) {
-        drawCardFaceSized(canvas, (int16_t)(8 + i * (CW + 6)), 38, CW, CH,
+        drawCardFaceSized(canvas, (int16_t)(8 + i * (CW + 6) + youShift), 38, CW, CH,
                           s_youPlay[i], false);
-        drawCardFaceSized(canvas, (int16_t)(130 + i * (CW + 6)), 38, CW, CH,
-                          s_aiPlay[i], false);
+        const int16_t aiX = (int16_t)(130 + i * (CW + 6) + aiShift);
+        if (s_phase == Phase::RESOLVE && elapsed < 180) {
+            drawCardBack(canvas, aiX, 38, CW, CH, elapsed);
+        } else {
+            drawCardFaceSized(canvas, aiX, 38, CW, CH, s_aiPlay[i], false);
+        }
     }
 
     // Stats band 79..87 — one short line each side
     canvas.fillRect(0, 78, W, 10, 0x0841);
     canvas.setTextColor(0x07E0, 0x0841);
     canvas.setCursor(4, 79);
-    canvas.printf("A%d D%d H%d", s_youSum.atk, s_youSum.def, s_youSum.heal);
-    canvas.setTextColor(0xF800, 0x0841);
+    canvas.printf("ATK%u DEF%u HP+%u", (unsigned)s_youSum.atk,
+                  (unsigned)s_youSum.def, (unsigned)s_youSum.heal);
+    canvas.setTextColor(0xFCA0, 0x0841);
     canvas.setCursor(130, 79);
-    canvas.printf("A%d D%d H%d", s_aiSum.atk, s_aiSum.def, s_aiSum.heal);
+    canvas.printf("ATK%u DEF%u HP+%u", (unsigned)s_aiSum.atk,
+                  (unsigned)s_aiSum.def, (unsigned)s_aiSum.heal);
 
-    canvas.setTextColor(0xC618, 0x1082);
+    canvas.setTextColor(0xEF7D, 0x1082);
     canvas.setCursor(4, 94);
     if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
-        canvas.printf("dmg %d/%d  +%d/+%d",
-                      (int)s_dmgYou, (int)s_dmgAi,
-                      (int)s_healYou, (int)s_healAi);
+        canvas.printf("YOU -%d +%d    RIVAL -%d +%d",
+                      (int)s_dmgYou, (int)s_healYou,
+                      (int)s_dmgAi, (int)s_healAi);
     } else {
         canvas.print("—");
     }

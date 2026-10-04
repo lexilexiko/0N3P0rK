@@ -734,6 +734,7 @@ static bool setValue(const Item& it, int v) {
                 p.cardsEnabled = v != 0;
                 p.wolfEnabled = v != 0;
                 if (v == 0) {
+                    p.animTest = false;
                     Wolf::reset();
                     Props::forceDemo(6);
                     if (CardsTable::isActive()) CardsTable::end();
