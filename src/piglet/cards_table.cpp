@@ -915,7 +915,6 @@ static void drawCardFace(M5Canvas& canvas, int16_t x, int16_t y,
         canvas.printf("%c%d", typeLetter(c.e1.type), (unsigned)c.e1.pow);
         blitIcon(canvas, x + 16, y + H / 2 + 1, iconFor(c.e1.type), c.e1.type, 1);
 
-        canvas.fillRect(x + W - 7, y + H / 2 - 2, 5, 5, 0xF81F);
     } else {
         // Letter top-left, big icon centered
         canvas.setTextColor(colMain(c.e0.type), bg);
@@ -1021,43 +1020,58 @@ static const char* actionLabel(const PlaySum& play) {
     return "REST";
 }
 
-static void drawDuelIcon(M5Canvas& canvas, CType type, int16_t cx,
-                         int16_t cy, uint16_t color, int16_t size) {
+static void drawCardEffect(M5Canvas& canvas, CType type, int16_t cx,
+                           int16_t cy, int16_t size, uint32_t now) {
     const int16_t half = size / 2;
+    const uint8_t phase = (uint8_t)((now / 120u) % 3u);
     if (type == CType::ATK) {
-        canvas.drawLine(cx - half / 2, cy + half / 2,
-                        cx + half / 2, cy - half / 2, color);
-        canvas.drawLine(cx - half / 2 - 2, cy + half / 2 - 2,
-                        cx - half / 2 + 2, cy + half / 2 + 2, color);
-        canvas.drawLine(cx + half / 2 - 2, cy - half / 2 - 2,
-                        cx + half / 2 + 2, cy - half / 2 + 2, color);
-        canvas.fillCircle(cx + half / 2, cy - half / 2, 1, color);
+        const int16_t sway = (int16_t)phase - 1;
+        const uint16_t flame = 0xF800;
+        const uint16_t fire = 0xFD20;
+        const uint16_t core = 0xFFE0;
+        canvas.fillTriangle(cx, cy + half, cx - half, cy + 1,
+                            cx - half / 3 + sway, cy - half, flame);
+        canvas.fillTriangle(cx, cy + half, cx + half, cy + 1,
+                            cx + half / 3 + sway, cy - half, flame);
+        canvas.fillTriangle(cx, cy + half - 1, cx - half + 2, cy + 2,
+                            cx + half - 2, cy + 2, fire);
+        canvas.fillTriangle(cx, cy + half / 2, cx - half / 2,
+                            cy + half / 3, cx + sway, cy - half / 2, core);
+        canvas.drawPixel(cx - half / 2, cy - half / 2 + phase, 0xFFFF);
+        canvas.drawPixel(cx + half / 2, cy - half / 3 - phase, 0xFFFF);
     } else if (type == CType::DEF) {
-        canvas.drawLine(cx - half / 2, cy - half / 2,
-                        cx + half / 2, cy - half / 2, color);
-        canvas.drawLine(cx - half / 2, cy - half / 2,
-                        cx - half / 2 + 1, cy + half / 4, color);
-        canvas.drawLine(cx + half / 2, cy - half / 2,
-                        cx + half / 2 - 1, cy + half / 4, color);
-        canvas.drawLine(cx - half / 2 + 1, cy + half / 4,
-                        cx, cy + half / 2, color);
-        canvas.drawLine(cx + half / 2 - 1, cy + half / 4,
-                        cx, cy + half / 2, color);
-        canvas.drawFastVLine(cx, cy - half / 3, half / 2, color);
+        const uint8_t pulse = (uint8_t)(phase * 2u);
+        const uint16_t aura = phase == 1 ? 0xBFFF : 0x4DFF;
+        canvas.drawCircle(cx, cy, half - 1 + pulse, tint565(aura, 0x0841, 190));
+        canvas.drawCircle(cx, cy, half - 4, tint565(aura, 0x0841, 140));
+        canvas.fillRect(cx - half / 2, cy - half / 2, half, half / 2,
+                        0x3A9F);
+        canvas.fillTriangle(cx - half / 2, cy - 1, cx + half / 2, cy - 1,
+                            cx, cy + half, 0x3A9F);
+        canvas.drawFastHLine(cx - half / 2, cy - half / 2, half, 0xBFFF);
+        canvas.drawLine(cx - half / 2, cy - half / 2, cx - half / 2 + 1,
+                        cy + 1, 0x8E7F);
+        canvas.drawLine(cx + half / 2, cy - half / 2, cx + half / 2 - 1,
+                        cy + 1, 0x8E7F);
+        canvas.drawLine(cx - 2, cy - 1, cx, cy + 2, 0xFFFF);
+        canvas.drawLine(cx, cy + 2, cx + 3, cy - 2, 0xFFFF);
+        canvas.drawPixel(cx - half, cy - phase, 0xFFFF);
+        canvas.drawPixel(cx + half, cy + phase, 0xFFFF);
     } else {
-        const int16_t left = cx - half / 3;
-        const int16_t right = cx + half / 3;
-        const int16_t neck = cy - half / 2;
-        canvas.drawFastHLine(cx - 2, neck, 5, color);
-        canvas.drawFastVLine(cx - 1, neck, 3, color);
-        canvas.drawFastVLine(cx + 1, neck, 3, color);
-        canvas.drawFastHLine(left, cy - 1, right - left + 1, color);
-        canvas.drawFastVLine(left, cy - 1, half / 2, color);
-        canvas.drawFastVLine(right, cy - 1, half / 2, color);
-        canvas.drawFastHLine(left, cy + half / 2 - 1,
-                             right - left + 1, color);
-        canvas.drawFastHLine(cx - 2, cy + 2, 5, color);
-        canvas.drawFastVLine(cx, cy, 5, color);
+        const int16_t spacing = (size >= 18) ? 7 : 4;
+        const int16_t dropY = (int16_t)((now / 90u) % 7u);
+        for (int8_t i = -1; i <= 1; i++) {
+            const int16_t dx = (int16_t)(i * spacing);
+            const int16_t dy = (int16_t)((dropY + i * 2 + 7) % 7);
+            const int16_t dropX = cx + dx;
+            const int16_t top = cy - half / 2 + dy - 2;
+            const uint16_t drop = (i == 0) ? 0xFFFF : 0x5DFF;
+            canvas.fillCircle(dropX, top + 3, 2, drop);
+            canvas.fillTriangle(dropX - 2, top + 2, dropX + 2, top + 2,
+                                dropX, top - 2, drop);
+        }
+        canvas.drawPixel(cx - half + 1, cy + half / 2, 0xBFFF);
+        canvas.drawPixel(cx + half - 1, cy + half / 2, 0xBFFF);
     }
 }
 
@@ -1096,14 +1110,13 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
         canvas.setTextColor(cardInk(c.e0.type));
         canvas.setCursor(x + 5, firstY + 4);
         canvas.printf("%c %u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
-        drawDuelIcon(canvas, c.e0.type, x + W - 7,
-                     firstY + halfH / 2, cardInk(c.e0.type), 8);
+        drawCardEffect(canvas, c.e0.type, x + W - 10,
+                       firstY + halfH / 2, 12, millis());
         canvas.setTextColor(cardInk(c.e1.type));
         canvas.setCursor(x + 5, secondY + 4);
         canvas.printf("%c %u", typeLetter(c.e1.type), (unsigned)c.e1.pow);
-        drawDuelIcon(canvas, c.e1.type, x + W - 7,
-                     secondY + halfH / 2, cardInk(c.e1.type), 8);
-        canvas.fillCircle(x + W - 5, y + 4, 2, 0xFFE0);
+        drawCardEffect(canvas, c.e1.type, x + W - 10,
+                       secondY + halfH / 2, 12, millis());
     } else {
         const char* label = typeName(c.e0.type);
         canvas.fillRoundRect(x + 3, y + 3, W - 6, 10, 2, ink);
@@ -1111,7 +1124,7 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
         canvas.setTextDatum(top_center);
         canvas.drawString(label, x + W / 2, y + 5);
         canvas.setTextDatum(top_left);
-        drawDuelIcon(canvas, c.e0.type, x + W / 2, y + 24, ink, 16);
+        drawCardEffect(canvas, c.e0.type, x + W / 2, y + 22, 17, millis());
         canvas.fillRoundRect(x + 3, y + H - 10, W - 6, 7, 2,
                              tint565(ink, bg, 175));
         canvas.setTextColor(0xFFFF);
@@ -1143,8 +1156,7 @@ void drawActive(M5Canvas& canvas) {
     // 0..14   header HP + score
     // 15..26  status (one line)
     // 27..78  cards
-    // 79..88  combat stats (resolve only)
-    // 89..104 footer keys
+    // 79..104 clear breathing room below the cards
     const int16_t W = 240;
     const int16_t H = 105;
     const uint32_t elapsed = s_phase == Phase::RESOLVE
@@ -1175,9 +1187,12 @@ void drawActive(M5Canvas& canvas) {
     canvas.setTextDatum(top_center);
     if (s_phase == Phase::SELECT) {
         canvas.setTextColor(0xEF7D, 0x0841);
-        canvas.drawString(s_youFirst ? "PICK TWO  /  YOU FIRST"
-                                     : "PICK TWO  /  YOU SECOND",
-                          W / 2, 18);
+        const char* selectionStatus = s_selCount == PICK_N
+            ? (s_youFirst ? "2/2 READY  /  YOU FIRST"
+                          : "2/2 READY  /  YOU SECOND")
+            : (s_youFirst ? "PICK TWO  /  YOU FIRST"
+                          : "PICK TWO  /  YOU SECOND");
+        canvas.drawString(selectionStatus, W / 2, 18);
     } else if (s_phase == Phase::RESOLVE) {
         const bool firstAction = elapsed < 900 || !s_secondExchange;
         const bool actorYou = firstAction ? s_resolveYouFirst : !s_resolveYouFirst;
@@ -1216,19 +1231,7 @@ void drawActive(M5Canvas& canvas) {
             int16_t x = (int16_t)(x0 + i * (CW + gap));
             const int16_t cardY = s_sel[i] ? 32 : 35;
             drawCardFaceSized(canvas, x, cardY, CW, CH, s_hand[i], s_sel[i]);
-            canvas.setTextColor(s_sel[i] ? 0xFFE0 : 0x9CD3, 0x0841);
-            canvas.setCursor(x + CW / 2 - 2, 78);
-            canvas.printf("%u", (unsigned)(i + 1));
         }
-        canvas.setTextDatum(top_center);
-        canvas.setTextColor(0xFFE0, 0x1082);
-        canvas.drawString("SELECTED", 48, 91);
-        canvas.setTextColor(s_selCount == PICK_N ? 0x07E0 : 0xFFE0, 0x1082);
-        canvas.drawString(s_selCount == PICK_N ? "2 / 2" :
-                          s_selCount == 1 ? "1 / 2" : "0 / 2", 94, 91);
-        canvas.setTextColor(0xC618, 0x1082);
-        canvas.drawString("1-5 SELECT   ENTER PLAY   ESC EXIT", W / 2, 100);
-        canvas.setTextDatum(top_left);
         return;
     }
 
@@ -1289,37 +1292,6 @@ void drawActive(M5Canvas& canvas) {
         }
     }
 
-    // Stats band 79..87 — one short line each side
-    canvas.fillRect(0, 78, W, 10, 0x0841);
-    canvas.drawFastVLine(119, 79, 8, 0x315A);
-    canvas.setTextColor(0x07E0, 0x0841);
-    canvas.setCursor(3, 79);
-    canvas.printf("ATK %u DEF %u HEAL %u", (unsigned)s_youSum.atk,
-                  (unsigned)s_youSum.def, (unsigned)s_youSum.heal);
-    canvas.setTextColor(0xFCA0, 0x0841);
-    canvas.setCursor(123, 79);
-    canvas.printf("ATK %u DEF %u HEAL %u", (unsigned)s_aiSum.atk,
-                  (unsigned)s_aiSum.def, (unsigned)s_aiSum.heal);
-
-    canvas.setTextDatum(top_center);
-    canvas.setTextColor(0x9CD3, 0x1082);
-    if (s_dmgYou || s_dmgAi || s_healYou || s_healAi) {
-        char youResult[20];
-        char aiResult[20];
-        snprintf(youResult, sizeof(youResult), "YOU  -%d  +%d",
-                 (int)s_dmgYou, (int)s_healYou);
-        snprintf(aiResult, sizeof(aiResult), "RIVAL  -%d  +%d",
-                 (int)s_dmgAi, (int)s_healAi);
-        canvas.fillRoundRect(4, 91, 108, 12, 3, 0x1843);
-        canvas.fillRoundRect(128, 91, 108, 12, 3, 0x1843);
-        canvas.setTextColor(0x07E0, 0x1843);
-        canvas.drawString(youResult, 58, 93);
-        canvas.setTextColor(0xFCA0, 0x1843);
-        canvas.drawString(aiResult, 182, 93);
-    } else {
-        canvas.drawString("TURN RESOLUTION", W / 2, 94);
-    }
-    canvas.setTextDatum(top_left);
 }
 
 
