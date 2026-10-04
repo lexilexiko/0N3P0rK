@@ -322,7 +322,7 @@ static void resolveTurn() {
     s_roundEndPending = s_youHp == 0 || s_aiHp == 0;
     s_phase = Phase::RESOLVE;
     s_resolveStart = millis();
-    s_phaseUntil = s_resolveStart + 2200;
+    s_phaseUntil = s_resolveStart + 4000;
     s_firstHitCuePlayed = false;
     s_secondHitCuePlayed = false;
     s_msg[0] = '\0';
@@ -470,14 +470,14 @@ void update() {
 
         if (s_phase == Phase::RESOLVE) {
             const uint32_t elapsed = now - s_resolveStart;
-            if (!s_firstHitCuePlayed && elapsed >= 510) {
+            if (!s_firstHitCuePlayed && elapsed >= 750) {
                 s_firstHitCuePlayed = true;
                 const PlaySum& first = s_resolveYouFirst ? s_youSum : s_aiSum;
                 if (first.atk) SFX::play(SFX::ATTACK_HOP);
                 else if (first.heal) SFX::play(SFX::CONFIRM);
                 else if (first.def) SFX::play(SFX::MENU_CLICK);
             }
-            if (s_secondExchange && !s_secondHitCuePlayed && elapsed >= 1260) {
+            if (s_secondExchange && !s_secondHitCuePlayed && elapsed >= 2400) {
                 s_secondHitCuePlayed = true;
                 const PlaySum& second = s_resolveYouFirst ? s_aiSum : s_youSum;
                 if (second.atk) SFX::play(SFX::ATTACK_HOP);
@@ -492,7 +492,7 @@ void update() {
             if (now >= s_phaseUntil) {
                 advanceAfterPause();
             } else if ((s_phase != Phase::RESOLVE ||
-                        now - s_resolveStart >= 1750u) &&
+                        now - s_resolveStart >= 3650u) &&
                        keyNewPress(s_entLatch) && keyEnter()) {
                 s_phaseUntil = 0;
                 advanceAfterPause();
@@ -941,8 +941,8 @@ static void drawHpBar(M5Canvas& canvas, int16_t x, int16_t y,
 }
 
 static uint8_t animatedHp(uint8_t before, uint8_t after, uint32_t elapsed) {
-    uint8_t progress = elapsed < 620 ? 0 : elapsed < 1320 ? 1 :
-                       elapsed < 1780 ? 2 : 3;
+    uint8_t progress = elapsed < 900 ? 0 : elapsed < 2100 ? 1 :
+                       elapsed < 3250 ? 2 : 3;
     int value = before + ((int)after - (int)before) * progress / 3;
     if (value < 0) value = 0;
     if (value > MAX_HP) value = MAX_HP;
@@ -951,20 +951,38 @@ static uint8_t animatedHp(uint8_t before, uint8_t after, uint32_t elapsed) {
 
 static void drawImpact(M5Canvas& canvas, int16_t cx, int16_t cy,
                        uint16_t color, uint32_t age, uint8_t power) {
-    if (age > 240u) return;
-    const int radius = 3 + (int)(age / 24u);
-    for (int ray = 0; ray < 8; ray++) {
+    if (age > 680u) return;
+    const int radius = 5 + (int)(age / 42u);
+    const int pulse = (int)((age / 85u) % 3u);
+    const uint16_t bright = (age / 110u) % 2u ? 0xFFE0 : 0xFFFF;
+    canvas.drawCircle(cx, cy, radius + pulse, color);
+    if (age < 360u)
+        canvas.drawCircle(cx, cy, radius / 2 + 2, bright);
+    for (int ray = 0; ray < 12; ray++) {
         const int dx = (ray & 1) ? radius / 2 : radius;
         const int dy = (ray & 1) ? radius : radius / 2;
         const int sx = (ray & 2) ? -dx : dx;
         const int sy = (ray & 4) ? -dy : dy;
-        canvas.drawLine(cx + sx / 2, cy + sy / 2, cx + sx, cy + sy, color);
+        const int startX = cx + sx / 3;
+        const int startY = cy + sy / 3;
+        const int endX = cx + sx + ((ray % 3) - 1) * pulse;
+        const int endY = cy + sy - ((ray % 2) * pulse);
+        canvas.drawLine(startX, startY, endX, endY,
+                        (ray + (int)(age / 80u)) % 3 == 0 ? bright : color);
+    }
+    for (int spark = 0; spark < 4; spark++) {
+        const int side = (spark & 1) ? -1 : 1;
+        const int sx = cx + side * (radius + 2 + (spark / 2) * 3);
+        const int sy = cy + ((spark & 2) ? -radius / 2 : radius / 2);
+        canvas.drawPixel(sx, sy, bright);
+        canvas.drawPixel(sx + side, sy - 1, color);
     }
     canvas.fillCircle(cx, cy, 2, 0xFFFF);
     canvas.setTextDatum(top_center);
     canvas.setTextColor(color);
-    canvas.setCursor(cx - 6, cy - radius - 8);
-    canvas.printf("-%u", (unsigned)power);
+    char damage[6];
+    snprintf(damage, sizeof(damage), "-%u", (unsigned)power);
+    canvas.drawString(damage, cx, cy - radius - 10);
     canvas.setTextDatum(top_left);
 }
 
@@ -974,15 +992,17 @@ static void drawActionEffect(M5Canvas& canvas, const PlaySum& play,
     const int16_t targetX = actorYou ? 194 : 46;
     const int16_t selfX = actorYou ? 46 : 194;
     if (play.atk) {
-        if (power == 0 && age < 240u) {
-            const int radius = 4 + (int)(age / 24u);
+        if (power == 0 && age < 680u) {
+            const int radius = 5 + (int)(age / 42u);
             const uint16_t color = actorYou ? 0x4DFF : 0x7BEF;
+            canvas.drawCircle(targetX, 53, radius + 2, 0xFFFF);
             canvas.drawCircle(targetX, 53, radius, color);
-            canvas.drawFastHLine(targetX - 4, 53, 9, color);
-            canvas.drawFastVLine(targetX, 49, 9, color);
+            canvas.drawFastHLine(targetX - radius, 53, radius * 2 + 1, color);
+            canvas.drawFastVLine(targetX, 53 - radius, radius * 2 + 1, color);
             canvas.setTextColor(color);
-            canvas.setCursor(targetX - 14, 53 - radius - 9);
-            canvas.print("BLOCK");
+            canvas.setTextDatum(top_center);
+            canvas.drawString("BLOCK", targetX, 53 - radius - 10);
+            canvas.setTextDatum(top_left);
             return;
         }
         drawImpact(canvas, targetX, 53, actorYou ? 0xFCA0 : 0xFC60,
@@ -990,9 +1010,9 @@ static void drawActionEffect(M5Canvas& canvas, const PlaySum& play,
         return;
     }
 
-    if (age > 240u) return;
-    const int radius = 3 + (int)(age / 28u);
-    const uint16_t color = play.def ? 0x4DFF : 0x5FEA;
+    if (age > 680u) return;
+    const int radius = 5 + (int)(age / 45u);
+    const uint16_t color = play.def ? 0x4DFF : 0xF800;
     const int16_t cx = selfX;
     const int16_t cy = 54;
     canvas.drawCircle(cx, cy, radius, color);
@@ -1002,14 +1022,21 @@ static void drawActionEffect(M5Canvas& canvas, const PlaySum& play,
         canvas.drawLine(cx - 4, cy, cx, cy + 4, color);
         canvas.drawLine(cx, cy + 4, cx + 5, cy - 5, color);
         canvas.setTextColor(color);
-        canvas.setCursor(cx - 9, cy - radius - 8);
-        canvas.print("BLOCK");
+        canvas.setTextDatum(top_center);
+        canvas.drawString("BLOCK", cx, cy - radius - 9);
+        canvas.setTextDatum(top_left);
     } else if (play.heal) {
-        canvas.fillRect(cx - 1, cy - 5, 3, 11, color);
-        canvas.fillRect(cx - 5, cy - 1, 11, 3, color);
+        canvas.fillRect(cx - 2, cy - 6, 5, 13, color);
+        canvas.fillRect(cx - 6, cy - 2, 13, 5, color);
+        canvas.drawCircle(cx, cy, radius, 0xF96A);
+        canvas.drawPixel(cx - radius, cy - radius / 2, 0xFFFF);
+        canvas.drawPixel(cx + radius, cy + radius / 2, 0xFFFF);
         canvas.setTextColor(color);
-        canvas.setCursor(cx - 7, cy - radius - 8);
-        canvas.printf("+%u", (unsigned)power);
+        canvas.setTextDatum(top_center);
+        char healed[6];
+        snprintf(healed, sizeof(healed), "+%u", (unsigned)power);
+        canvas.drawString(healed, cx, cy - radius - 9);
+        canvas.setTextDatum(top_left);
     }
 }
 
@@ -1023,7 +1050,7 @@ static const char* actionLabel(const PlaySum& play) {
 static void drawCardEffect(M5Canvas& canvas, CType type, int16_t cx,
                            int16_t cy, int16_t size, uint32_t now) {
     const int16_t half = size / 2;
-    const uint8_t phase = (uint8_t)((now / 120u) % 3u);
+    const uint8_t phase = (uint8_t)((now / 180u) % 3u);
     if (type == CType::ATK) {
         const int16_t sway = (int16_t)phase - 1;
         const uint16_t flame = 0xF800;
@@ -1059,20 +1086,29 @@ static void drawCardEffect(M5Canvas& canvas, CType type, int16_t cx,
         canvas.drawPixel(cx + half, cy + phase, 0xFFFF);
     } else {
         const int16_t spacing = (size >= 18) ? 7 : 4;
-        const int16_t dropY = (int16_t)((now / 90u) % 7u);
+        const int16_t dropY = (int16_t)((now / 120u) % 7u);
         for (int8_t i = -1; i <= 1; i++) {
             const int16_t dx = (int16_t)(i * spacing);
             const int16_t dy = (int16_t)((dropY + i * 2 + 7) % 7);
             const int16_t dropX = cx + dx;
             const int16_t top = cy - half / 2 + dy - 2;
-            const uint16_t drop = (i == 0) ? 0xFFFF : 0x5DFF;
+            const uint16_t drop = (i == 0) ? 0xFFE0 : 0xF800;
             canvas.fillCircle(dropX, top + 3, 2, drop);
             canvas.fillTriangle(dropX - 2, top + 2, dropX + 2, top + 2,
                                 dropX, top - 2, drop);
         }
-        canvas.drawPixel(cx - half + 1, cy + half / 2, 0xBFFF);
-        canvas.drawPixel(cx + half - 1, cy + half / 2, 0xBFFF);
+        canvas.drawPixel(cx - half + 1, cy + half / 2, 0xF96A);
+        canvas.drawPixel(cx + half - 1, cy + half / 2, 0xF96A);
     }
+}
+
+static void drawPowerBadge(M5Canvas& canvas, int16_t x, int16_t y,
+                           uint8_t power) {
+    canvas.fillRoundRect(x, y, 12, 11, 3, 0xFFE0);
+    canvas.drawRoundRect(x, y, 12, 11, 3, 0xFFFF);
+    canvas.setTextColor(0x0841);
+    canvas.setCursor(x + 4, y + 2);
+    canvas.printf("%u", (unsigned)power);
 }
 
 // Sized card face for duel UI (fits MAIN_H)
@@ -1107,16 +1143,14 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
                              cardShade(c.e0.type));
         canvas.fillRoundRect(x + 3, secondY, W - 6, halfH, 2,
                              cardShade(c.e1.type));
-        canvas.setTextColor(cardInk(c.e0.type));
-        canvas.setCursor(x + 5, firstY + 4);
-        canvas.printf("%c %u", typeLetter(c.e0.type), (unsigned)c.e0.pow);
         drawCardEffect(canvas, c.e0.type, x + W - 10,
                        firstY + halfH / 2, 12, millis());
-        canvas.setTextColor(cardInk(c.e1.type));
-        canvas.setCursor(x + 5, secondY + 4);
-        canvas.printf("%c %u", typeLetter(c.e1.type), (unsigned)c.e1.pow);
         drawCardEffect(canvas, c.e1.type, x + W - 10,
                        secondY + halfH / 2, 12, millis());
+        drawPowerBadge(canvas, x + 5, firstY + (halfH - 11) / 2,
+                       c.e0.pow);
+        drawPowerBadge(canvas, x + 5, secondY + (halfH - 11) / 2,
+                       c.e1.pow);
     } else {
         const char* label = typeName(c.e0.type);
         canvas.fillRoundRect(x + 3, y + 3, W - 6, 10, 2, ink);
@@ -1125,11 +1159,7 @@ static void drawCardFaceSized(M5Canvas& canvas, int16_t x, int16_t y,
         canvas.drawString(label, x + W / 2, y + 5);
         canvas.setTextDatum(top_left);
         drawCardEffect(canvas, c.e0.type, x + W / 2, y + 22, 17, millis());
-        canvas.fillRoundRect(x + 3, y + H - 10, W - 6, 7, 2,
-                             tint565(ink, bg, 175));
-        canvas.setTextColor(0xFFFF);
-        canvas.setCursor(x + W / 2 - 6, y + H - 9);
-        canvas.printf("P%u", (unsigned)c.e0.pow);
+        drawPowerBadge(canvas, x + W - 15, y + H - 14, c.e0.pow);
     }
 }
 
@@ -1202,8 +1232,9 @@ void drawActive(M5Canvas& canvas) {
         uint16_t actionColor = action.atk ? 0xFCA0 :
                                action.def ? 0x4DFF : 0xF96A;
         canvas.setTextColor(actionColor, 0x0841);
-        const bool knockout = !s_secondExchange && elapsed >= 900;
-        canvas.drawString(elapsed < 180 || (elapsed >= 850 && elapsed < 930)
+        const bool knockout = !s_secondExchange && elapsed >= 1800;
+        canvas.drawString(elapsed < 250 ||
+                          (elapsed >= 1750 && elapsed < 1900)
                               ? "REVEAL!" : knockout ? "KNOCKOUT!" : actor,
                           W / 2, 18);
         canvas.setTextColor(0x9CD3, 0x0841);
@@ -1241,30 +1272,30 @@ void drawActive(M5Canvas& canvas) {
     if (s_phase == Phase::RESOLVE) {
         bool actionYou = false;
         uint32_t actionStart = 0;
-        if (elapsed >= 180 && elapsed < 900) {
+        if (elapsed >= 250 && elapsed < 1800) {
             actionYou = s_resolveYouFirst;
-            actionStart = 180;
-        } else if (s_secondExchange && elapsed >= 930 && elapsed < 1650) {
+            actionStart = 250;
+        } else if (s_secondExchange && elapsed >= 1900 && elapsed < 3450) {
             actionYou = !s_resolveYouFirst;
-            actionStart = 930;
+            actionStart = 1900;
         }
         if (actionStart) {
             const uint32_t actionElapsed = elapsed - actionStart;
-            const int16_t travel = actionElapsed < 300
-                ? (int16_t)(10 * actionElapsed / 300) : 10;
+            const int16_t travel = actionElapsed < 450
+                ? (int16_t)(16 * actionElapsed / 450) : 16;
             if (actionYou) {
                 youShift = travel;
             } else {
                 aiShift = -travel;
             }
 
-            const uint32_t impactAt = actionStart + 330u;
+            const uint32_t impactAt = actionStart + 500u;
             if (elapsed >= impactAt) {
                 const PlaySum& action = actionYou
                     ? (s_resolveYouFirst ? s_youSum : s_aiSum)
                     : (s_resolveYouFirst ? s_aiSum : s_youSum);
                 const uint8_t shownPower = action.atk
-                    ? (uint8_t)(actionStart == 180u ? s_firstDamage : s_secondDamage)
+                    ? (uint8_t)(actionStart == 250u ? s_firstDamage : s_secondDamage)
                     : action.heal ? (actionYou ? (uint8_t)(s_healYou > 0 ? s_healYou : 0)
                                                 : (uint8_t)(s_healAi > 0 ? s_healAi : 0))
                                   : action.def;
@@ -1285,13 +1316,28 @@ void drawActive(M5Canvas& canvas) {
         drawCardFaceSized(canvas, (int16_t)(22 + i * (CW + 4) + youShift), 36, CW, CH,
                           s_youPlay[i], false);
         const int16_t aiX = (int16_t)(142 + i * (CW + 4) + aiShift);
-        if (s_phase == Phase::RESOLVE && elapsed < 180) {
+        if (s_phase == Phase::RESOLVE && elapsed < 250) {
             drawCardBack(canvas, aiX, 36, CW, CH, elapsed);
         } else {
             drawCardFaceSized(canvas, aiX, 36, CW, CH, s_aiPlay[i], false);
         }
     }
 
+    canvas.fillRoundRect(2, 79, 114, 10, 2, 0x1082);
+    canvas.fillRoundRect(124, 79, 114, 10, 2, 0x1082);
+    canvas.setTextColor(0x07E0, 0x1082);
+    canvas.setCursor(5, 80);
+    canvas.printf("YOU A%u D%u H%u", (unsigned)s_youSum.atk,
+                  (unsigned)s_youSum.def, (unsigned)s_youSum.heal);
+    canvas.setTextColor(0xFCA0, 0x1082);
+    canvas.setCursor(127, 80);
+    canvas.printf("AI A%u D%u H%u", (unsigned)s_aiSum.atk,
+                  (unsigned)s_aiSum.def, (unsigned)s_aiSum.heal);
+    canvas.setTextColor(0xC618, 0x1082);
+    canvas.setCursor(5, 94);
+    canvas.printf("DMG %d  HEAL %d", (int)s_dmgYou, (int)s_healYou);
+    canvas.setCursor(127, 94);
+    canvas.printf("DMG %d  HEAL %d", (int)s_dmgAi, (int)s_healAi);
 }
 
 
