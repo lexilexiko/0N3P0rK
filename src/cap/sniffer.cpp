@@ -1098,13 +1098,23 @@ static bool openFileForBssid(const uint8_t* bssid) {
     size_t preSize = 0;
     if (exists) {
         File probe = SD.open(path, "r");
-        preSize = probe ? probe.size() : 0;
-        if (probe) probe.close();
+        if (!probe) {
+            Serial.printf("[CAP] cannot inspect existing pcap, refusing capture: %s\n", name);
+            addSkip(bssid);
+            return false;
+        }
+        preSize = probe.size();
+        probe.close();
         if (preSize > 0 && preSize < sizeof(Pcap::FileHeader)) {
             Serial.printf("[CAP] removed corrupt %u-byte pcap: %s\n", (unsigned)preSize, name);
             SD.remove(path);
             exists = false;
             preSize = 0;
+        } else if (preSize >= sizeof(Pcap::FileHeader)) {
+            Serial.printf("[CAP] pcap already exists, refusing append: %s (%u bytes)\n",
+                          name, (unsigned)preSize);
+            addSkip(bssid);
+            return false;
         }
     }
     if (!exists && st.handshakes >= MAX_FILES) {
@@ -1291,6 +1301,17 @@ static void rememberPending(const Slot& s, uint8_t message) {
             p->m1 = s;
             memcpy(p->m1Replay, thisReplay, 8);
             p->haveM1 = true;
+            // M2 can arrive first and is held tentatively. Validate that
+            // pending frame against this first M1 before treating the pair
+            // as complete.
+            if (p->haveM2 && memcmp(p->m2Replay, thisReplay, 8) != 0) {
+                Serial.printf("[HS] first M1 replay=%02x%02x, reset mismatched tentative M2 replay=%02x%02x\n",
+                              thisReplay[6], thisReplay[7],
+                              p->m2Replay[6], p->m2Replay[7]);
+                memset(&p->m2, 0, sizeof(p->m2));
+                memset(p->m2Replay, 0, sizeof(p->m2Replay));
+                p->haveM2 = false;
+            }
         } else if (memcmp(thisReplay, p->m1Replay, 8) != 0) {
             // New M1 with a different replay counter (AP retried).
             // Replace M1 and re-evaluate the stored M2.
@@ -1455,6 +1476,13 @@ static void commitPendingCaptures() {
     for (uint8_t i = 0; i < s_pendingSlots; i++) {
         PendingCapture& p = s_pending[i];
         if (!p.used || !p.haveM1 || !p.haveM2) continue;
+        if (memcmp(p.m1Replay, p.m2Replay, sizeof(p.m1Replay)) != 0) {
+            Serial.printf("[HS] refusing mismatched pending pair M1=%02x%02x M2=%02x%02x\n",
+                          p.m1Replay[6], p.m1Replay[7],
+                          p.m2Replay[6], p.m2Replay[7]);
+            memset(&p, 0, sizeof(p));
+            continue;
+        }
         if (s_hsDepth >= 1 && !p.haveM3) continue;
         if (s_hsDepth >= 2 && !p.haveM4) continue;
         if (!Hc22000::hasHandshakeForStation(p.bssid, p.station, s_hsDepth)) continue;
