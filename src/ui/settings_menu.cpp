@@ -94,6 +94,7 @@ static const Item RADIO[] = {
     {"HS FILE B",Kind::VALUE, 28, 1024, 8192, 1024},
     {"RING",    Kind::VALUE,  29, 4, 32, 1},
     {"PENDING", Kind::VALUE, 32, 4, 16, 2},
+    {"AUTO SKIP", Kind::TOGGLE, 33, 0, 1, 1},
     {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
@@ -498,6 +499,7 @@ static int getValue(const Item& it) {
             case 28: return r.hsFileBytes;
             case 29: return r.ringSlots;
             case 32: return r.pendingSlots;
+            case 33: return r.autoSkipCompleted ? 1 : 0;
             case 18: return r.pack;
             // Porkchop-style knobs (IDs 20..23).
             case 20: return r.jitterMs;
@@ -876,6 +878,7 @@ static bool setValue(const Item& it, int v) {
             case 17: r.fatPcap = v != 0; break;
             case 28: r.hsFileBytes = (uint16_t)v; break;
             case 29: r.ringSlots = (uint8_t)v; break;
+            case 33: r.autoSkipCompleted = v != 0; break;
             // Porkchop-style knobs (IDs 20..23) + handshake depth (24).
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;

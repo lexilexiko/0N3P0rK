@@ -87,6 +87,7 @@ bool Config::init() {
     r.hsFileBytes = s_prefs.getUShort("hsfileb", r.hsFileBytes);
     r.ringSlots = s_prefs.getUChar("rings", r.ringSlots);
     r.pendingSlots = s_prefs.getUChar("pends", r.pendingSlots);
+    r.autoSkipCompleted = s_prefs.getBool("autosk", r.autoSkipCompleted);
     r.pack = s_prefs.getUChar("rpack", r.pack);
     // Porkchop-style knobs — same load pattern as everything above.
     r.jitterMs = s_prefs.getUChar("jitms", r.jitterMs);
@@ -238,6 +239,7 @@ bool Config::save() {
     s_prefs.putUShort("hsfileb", r.hsFileBytes);
     s_prefs.putUChar("rings", r.ringSlots);
     s_prefs.putUChar("pends", r.pendingSlots);
+    s_prefs.putBool("autosk", r.autoSkipCompleted);
     s_prefs.putUChar("rpack", r.pack);
     // Porkchop-style knobs — same save pattern as everything above.
     s_prefs.putUChar("jitms", r.jitterMs);

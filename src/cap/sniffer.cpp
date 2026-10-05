@@ -162,6 +162,7 @@ static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
 static bool     s_dataAct = false;     // count data frames for FOCUS activity
 static bool     s_strictLock = true;   // FOCUS ignores score while lock-on-BSSID
 static uint8_t  s_depthHoldSec = 0;    // extra sec hold after pair when hsDepth>0
+static bool     s_autoSkipCompleted = true;
 // PWR / BURST for injected frames (see RadioConfig::txPowerDb/burstPattern).
 static int8_t   s_txPowerDb = 20;      // injected-frame TX power (dBm)
 static uint8_t  s_burstPattern = 1;    // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
@@ -1479,7 +1480,8 @@ static void commitPendingCaptures() {
             if (s_hsDepth >= 2) committed = committed && writeFrameNow(p.m4);
             closeFile();
             if (!committed) continue;
-            autoSkipCapturedNetwork(p.bssid);
+            if (s_autoSkipCompleted)
+                autoSkipCapturedNetwork(p.bssid);
         }
         memset(&p, 0, sizeof(p));
     }
@@ -1903,6 +1905,7 @@ static void startCommon(RunMode mode) {
     s_dwellMinMs = Config::radio().dwellMinMs;
     s_hsDepth = Config::radio().hsDepth;
     if (s_hsDepth > 2) s_hsDepth = 2;
+    s_autoSkipCompleted = Config::radio().autoSkipCompleted;
     if (s_dwellMinMs > 0 && s_dwellMinMs < 50) s_dwellMinMs = 50;
     if (s_dwellMinMs > 600) s_dwellMinMs = 600;
     s_dataAct = Config::radio().dataAct != 0;
