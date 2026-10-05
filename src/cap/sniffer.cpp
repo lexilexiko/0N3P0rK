@@ -2197,15 +2197,17 @@ static void updateSkipMenu() {
 void loop() {
     if (!s_running) return;
 
-    if (s_skipMenuOpen) {
-        updateSkipMenu();
-        return;
-    }
-
     bool qPressed = M5Cardputer.Keyboard.isKeyPressed('q') ||
                     M5Cardputer.Keyboard.isKeyPressed('Q');
     bool qEdge = qPressed && !s_skipMenuQWas;
     s_skipMenuQWas = qPressed;
+
+    if (s_skipMenuOpen) {
+        if (qEdge) closeSkipMenu();
+        else updateSkipMenu();
+        return;
+    }
+
     if (qEdge) {
         openSkipMenu();
         return;
