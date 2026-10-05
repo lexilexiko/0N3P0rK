@@ -24,7 +24,7 @@ void pmkidProbe(const Ctx& ctx) {
 
     for (uint8_t k = 0; k < n; k++) {
         s_probeIdx = (uint8_t)((s_probeIdx + 1) % n);
-        BeaconSlot& b = ctx.beacons[s_probeIdx];
+        BeaconView& b = ctx.beacons[s_probeIdx];
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;

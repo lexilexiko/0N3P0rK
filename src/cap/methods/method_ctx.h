@@ -1,7 +1,7 @@
 // Interface between the orchestrator (cap/sniffer.cpp) and the individual
 // capture methods in this folder. sniffer.cpp keeps owning all the session
 // state (beacon table, current channel, config knobs, sequence counters) and
-// just hands each method a read-only Ctx snapshot every time it's called —
+// hands each method a compact beacon snapshot in Ctx on every call —
 // methods stay free of sniffer.cpp's statics, so they're readable and
 // testable on their own, and adding a new one never touches the others.
 //
@@ -17,8 +17,19 @@
 namespace Cap {
 namespace Methods {
 
+struct BeaconView {
+    uint8_t bssid[6];
+    uint8_t channel;
+    int8_t rssi;
+    char ssid[33];
+    uint8_t clients[20][6];
+    uint8_t clientN;
+    bool pmfCapable;
+    uint16_t dataRecent;
+};
+
 struct Ctx {
-    BeaconSlot*    beacons;
+    BeaconView*    beacons;
     uint8_t        beaconCount;
     uint8_t        channel;
     int8_t         minRssi;
@@ -70,7 +81,7 @@ struct Ctx {
     bool     lockedBssidActive;
 
     // ----- FOCUS extras (RADIO knobs) ------------------------------------
-    // dataAct: true => activity term prefers BeaconSlot::dataRecent (data
+    // dataAct: true => activity term prefers BeaconView::dataRecent (data
     // frames) over beacon-only bumps. false => legacy beacon activity.
     bool     dataAct;
     // strictLock: true => scoring methods MUST only kick lockedBssid while

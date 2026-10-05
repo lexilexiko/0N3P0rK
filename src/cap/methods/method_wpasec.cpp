@@ -59,7 +59,7 @@ static bool alreadyPaired(const uint8_t* bssid) {
     return Hc22000::hasHandshake(bssid, 0);
 }
 
-static int32_t scoreAp(const BeaconSlot& b, bool dataAct) {
+static int32_t scoreAp(const BeaconView& b, bool dataAct) {
     if (alreadyPaired(b.bssid)) return -1000;
     int32_t s = 0;
     int16_t r = b.rssi;
@@ -86,7 +86,7 @@ static int32_t scoreAp(const BeaconSlot& b, bool dataAct) {
     return s;
 }
 
-static void kickTarget(const Ctx& ctx, const BeaconSlot& target) {
+static void kickTarget(const Ctx& ctx, const BeaconView& target) {
     uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
     if (target.clientN && ctx.bidirKick) {
         for (uint8_t c = 0; c < target.clientN; c++) {
@@ -115,7 +115,7 @@ void resetWpasecState() {
     memset(s_scores, 0, sizeof(s_scores));
 }
 
-static bool usableAp(const Ctx& ctx, const BeaconSlot& b) {
+static bool usableAp(const Ctx& ctx, const BeaconView& b) {
     if (b.channel != ctx.channel) return false;
     if (ctx.isOwnAp && ctx.isOwnAp(b.bssid)) return false;
     if (ctx.skipPin && ctx.skipPin(b.bssid)) return false;
@@ -135,7 +135,7 @@ void wpasec(const Ctx& ctx) {
 
     if (ctx.strictLock && ctx.lockedBssidActive && ctx.lockedBssid[0] != 0) {
         for (uint8_t i = 0; i < n; i++) {
-            const BeaconSlot& b = ctx.beacons[i];
+            const BeaconView& b = ctx.beacons[i];
             if (memcmp(b.bssid, ctx.lockedBssid, 6) != 0) continue;
             if (!usableAp(ctx, b)) return;
             ScoreEntry* se = findOrCreate(b.bssid);
@@ -151,7 +151,7 @@ void wpasec(const Ctx& ctx) {
     int32_t bestScore = INT32_MIN;
     int8_t  bestIdx = -1;
     for (uint8_t i = 0; i < n; i++) {
-        const BeaconSlot& b = ctx.beacons[i];
+        const BeaconView& b = ctx.beacons[i];
         if (!usableAp(ctx, b)) continue;
         ScoreEntry* se = findOrCreate(b.bssid);
         se->lastSeenMs = now;
@@ -165,7 +165,7 @@ void wpasec(const Ctx& ctx) {
     }
     if (bestIdx < 0 || bestScore < ctx.scoreThr) return;
 
-    const BeaconSlot& target = ctx.beacons[bestIdx];
+    const BeaconView& target = ctx.beacons[bestIdx];
     kickTarget(ctx, target);
     findOrCreate(target.bssid)->lastKickMs = now;
 }

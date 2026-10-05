@@ -49,7 +49,7 @@ void csaHerd(const Ctx& ctx) {
     // Round-robin so a crowded room doesn't starve the far channels.
     for (uint8_t k = 0; k < n; k++) {
         s_herdIdx = (uint8_t)((s_herdIdx + 1) % n);
-        BeaconSlot& b = ctx.beacons[s_herdIdx];
+        BeaconView& b = ctx.beacons[s_herdIdx];
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;

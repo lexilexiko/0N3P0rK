@@ -17,7 +17,7 @@ void ours(const Ctx& ctx) {
 
     uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
     for (uint8_t i = 0; i < ctx.beaconCount; i++) {
-        const BeaconSlot& b = ctx.beacons[i];
+        const BeaconView& b = ctx.beacons[i];
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;

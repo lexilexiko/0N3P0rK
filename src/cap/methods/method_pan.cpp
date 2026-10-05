@@ -16,7 +16,7 @@ void pan(const Ctx& ctx) {
 
     if (!quiet) {
         for (uint8_t i = 0; i < ctx.beaconCount; i++) {
-            BeaconSlot& b = ctx.beacons[i];
+            BeaconView& b = ctx.beacons[i];
             if (b.channel != ctx.channel) continue;
             if (ctx.isOwnAp(b.bssid)) continue;
             if (ctx.skipPin(b.bssid)) continue;
@@ -57,7 +57,7 @@ void pan(const Ctx& ctx) {
 
         if (!hit && ctx.authFlood) {
             for (uint8_t i = 0; i < ctx.beaconCount; i++) {
-                BeaconSlot& b = ctx.beacons[i];
+                BeaconView& b = ctx.beacons[i];
                 if (b.channel != ctx.channel) continue;
                 if (ctx.isOwnAp(b.bssid)) continue;
                 if (ctx.skipPin(b.bssid)) continue;

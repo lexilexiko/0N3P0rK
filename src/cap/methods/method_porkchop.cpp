@@ -66,19 +66,11 @@ static int actSlotFor(const uint8_t* bssid) {
     return -1;
 }
 
-static void decayActivity(uint32_t now, const Ctx& ctx) {
+static void decayActivity(uint32_t now) {
     if (now - s_lastActDecayMs < 1000) return;
     s_lastActDecayMs = now;
     for (uint8_t i = 0; i < ACT_SLOTS; i++) {
         if (s_act[i].used) s_act[i].recent = (uint16_t)(s_act[i].recent >> 1);
-    }
-    // DATA ACT: decay sniffer-side dataRecent on every beacon slot we see.
-    if (ctx.dataAct && ctx.beacons) {
-        for (uint8_t i = 0; i < ctx.beaconCount; i++) {
-            if (ctx.beacons[i].dataRecent) {
-                ctx.beacons[i].dataRecent = (uint16_t)(ctx.beacons[i].dataRecent >> 1);
-            }
-        }
     }
 }
 
@@ -117,7 +109,7 @@ static ScoreEntry* findOrCreateScore(const uint8_t* bssid) {
     return &s_scores[worst];
 }
 
-static int32_t computeScore(const BeaconSlot& b, uint8_t hsDepth, bool dataAct) {
+static int32_t computeScore(const BeaconView& b, uint8_t hsDepth, bool dataAct) {
     // Mirrors Porkchop's priority scoring in spirit, simplified for our
     // smaller beacon table:
     //   RSSI     -> 0..100  (clamped -100..-30 mapped to 0..100)
@@ -182,7 +174,7 @@ void pmkidProbePorkchop(const Ctx& ctx) {
     if (!n) return;
     for (uint8_t k = 0; k < n; k++) {
         s_probeIdx = (uint8_t)((s_probeIdx + 1) % n);
-        const BeaconSlot& b = ctx.beacons[s_probeIdx];
+        const BeaconView& b = ctx.beacons[s_probeIdx];
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
@@ -205,7 +197,7 @@ void pmkidProbePorkchop(const Ctx& ctx) {
 // busy ones don't starve.
 void porkchop(const Ctx& ctx) {
     uint32_t now = millis();
-    decayActivity(now, ctx);
+    decayActivity(now);
 
     // Refresh activity counters for every AP visible right now. This is the
     // cheap "is anyone talking to this AP" signal - we only see the AP when
@@ -215,7 +207,7 @@ void porkchop(const Ctx& ctx) {
     uint8_t n = ctx.beaconCount;
     if (!ctx.dataAct) {
         for (uint8_t i = 0; i < n; i++) {
-            const BeaconSlot& b = ctx.beacons[i];
+            const BeaconView& b = ctx.beacons[i];
             if (b.channel != ctx.channel) continue;
             if (b.rssi < ctx.minRssi) continue;
             bumpActivity(b.bssid);
@@ -252,7 +244,7 @@ void porkchop(const Ctx& ctx) {
     // and M2 would never land.
     if (ctx.strictLock && ctx.lockedBssidActive && ctx.lockedBssid[0] != 0) {
         for (uint8_t i = 0; i < n; i++) {
-            const BeaconSlot& b = ctx.beacons[i];
+            const BeaconView& b = ctx.beacons[i];
             if (memcmp(b.bssid, ctx.lockedBssid, 6) != 0) continue;
             if (b.channel != ctx.channel) continue;
             if (ctx.isOwnAp(b.bssid)) break;
@@ -267,7 +259,7 @@ void porkchop(const Ctx& ctx) {
             se->lastSeenMs = now;
             se->score = (se->score * 3 + computeScore(b, ctx.hsDepth, ctx.dataAct)) / 4;
             se->lastKickMs = now; // suppress cooldown for this BSSID
-            const BeaconSlot& target = b;
+            const BeaconView& target = b;
             uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
             if (target.clientN && ctx.bidirKick) {
                 for (uint8_t c = 0; c < target.clientN; c++) {
@@ -302,7 +294,7 @@ void porkchop(const Ctx& ctx) {
     int32_t bestScore = INT32_MIN;
     int8_t  bestIdx = -1;
     for (uint8_t i = 0; i < n; i++) {
-        const BeaconSlot& b = ctx.beacons[i];
+        const BeaconView& b = ctx.beacons[i];
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
@@ -329,7 +321,7 @@ void porkchop(const Ctx& ctx) {
         // Nothing to kick this tick — auth-flood fallback (AGGRO/WOLF) + CSA.
         if (ctx.authFlood) {
             for (uint8_t i = 0; i < n; i++) {
-                const BeaconSlot& b = ctx.beacons[i];
+                const BeaconView& b = ctx.beacons[i];
                 if (b.channel != ctx.channel) continue;
                 if (ctx.isOwnAp(b.bssid)) continue;
                 if (ctx.skipPin(b.bssid)) continue;
@@ -345,7 +337,7 @@ void porkchop(const Ctx& ctx) {
         return;
     }
 
-    const BeaconSlot& target = ctx.beacons[bestIdx];
+    const BeaconView& target = ctx.beacons[bestIdx];
     uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
 
     // Bidirectional kick is the Porkchop default - we mirror that.
