@@ -162,9 +162,6 @@ static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
 static bool     s_dataAct = false;     // count data frames for FOCUS activity
 static bool     s_strictLock = true;   // FOCUS ignores score while lock-on-BSSID
 static uint8_t  s_depthHoldSec = 0;    // extra sec hold after pair when hsDepth>0
-static uint8_t  s_autoStopSec = 0;     // seconds after pair → skip that AP
-static uint32_t s_autoStopAt = 0;      // millis() deadline for auto-skip (0=not armed)
-static uint8_t  s_autoStopBssid[6] = {};
 // PWR / BURST for injected frames (see RadioConfig::txPowerDb/burstPattern).
 static int8_t   s_txPowerDb = 20;      // injected-frame TX power (dBm)
 static uint8_t  s_burstPattern = 1;    // 0=STRAIGHT 1=RANDOM 2=CLUSTER 3=PULSE
@@ -1423,6 +1420,36 @@ static void writeFrameToFile(const Slot& s) {
     rememberPending(s, classifyPendingEapol(s));
 }
 
+static void releaseSkippedTarget(const uint8_t* bssid);
+
+static void autoSkipCapturedNetwork(const uint8_t* bssid) {
+    if (isZeroMac(bssid)) {
+        Serial.println("[CAP] cannot auto-skip completed capture with empty BSSID");
+        Display::showToast("AUTO SKIP FAILED", 1400);
+        return;
+    }
+    char ssid[33] = {0};
+    ssidForBssid(bssid, ssid);
+
+    // Block this network for the current run even if saving the persistent
+    // skip list fails; report that failure rather than implying it was saved.
+    addSkip(bssid);
+    bool saved = setStoredSkip(bssid, ssid, true);
+    releaseSkippedTarget(bssid);
+
+    if (saved) {
+        Serial.printf("[CAP] saved completed network to persistent skip: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
+                      ssid[0] ? ssid : "?",
+                      bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+        Display::showToast("CAPTURED - SKIP SAVED", 1400);
+    } else {
+        Serial.printf("[CAP] persistent auto-skip save failed; skipped for this run only: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
+                      ssid[0] ? ssid : "?",
+                      bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+        Display::showToast("SKIP SAVE FAILED - TEMP", 1600);
+    }
+}
+
 static void commitPendingCaptures() {
     for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
         PendingCapture& p = s_pending[i];
@@ -1452,14 +1479,7 @@ static void commitPendingCaptures() {
             if (s_hsDepth >= 2) committed = committed && writeFrameNow(p.m4);
             closeFile();
             if (!committed) continue;
-            if (s_autoStopSec > 0 && s_autoStopAt == 0) {
-                memcpy(s_autoStopBssid, p.bssid, sizeof(s_autoStopBssid));
-                s_autoStopAt = millis() + (uint32_t)s_autoStopSec * 1000u;
-                Serial.printf("[CAP] auto-skip armed for %02X:%02X:%02X:%02X:%02X:%02X: %us\n",
-                              p.bssid[0], p.bssid[1], p.bssid[2],
-                              p.bssid[3], p.bssid[4], p.bssid[5],
-                              (unsigned)s_autoStopSec);
-            }
+            autoSkipCapturedNetwork(p.bssid);
         }
         memset(&p, 0, sizeof(p));
     }
@@ -1886,10 +1906,6 @@ static void startCommon(RunMode mode) {
     s_strictLock = Config::radio().strictLock;
     s_depthHoldSec = Config::radio().depthHoldSec;
     if (s_depthHoldSec > 30) s_depthHoldSec = 30;
-    s_autoStopSec = Config::radio().autoStopSec;
-    if (s_autoStopSec > 60) s_autoStopSec = 60;
-    s_autoStopAt = 0;  // clear any leftover armed timer
-    memset(s_autoStopBssid, 0, sizeof(s_autoStopBssid));
     s_txPowerDb = Config::radio().txPowerDb;
     s_burstPattern = Config::radio().burstPattern;
     // Apply injected-frame TX power + burst shaping once per capture session.
@@ -2379,20 +2395,6 @@ void loop() {
     }
 
     uint32_t now = millis();
-
-    // AUTO-SKIP after pair: keep attacking this AP for the selected delay,
-    // then add only this BSSID to the session skip-list and continue hunting.
-    if (s_autoStopSec > 0) {
-        if (s_autoStopAt != 0 && now >= s_autoStopAt) {
-            Serial.println("[CAP] auto-skip fired");
-            s_autoStopAt = 0;
-            // Reuse the complete manual-Z cleanup path, but force it to the
-            // BSSID whose pair started this timer.
-            memcpy(s_lockBssid, s_autoStopBssid, sizeof(s_lockBssid));
-            skipCurrent();
-            memset(s_autoStopBssid, 0, sizeof(s_autoStopBssid));
-        }
-    }
 
     // Porkchop-style lock-on-BSSID: if we caught an EAPOL and the target's
     // pair isn't on file yet, park on its channel so M2 (sent back from the

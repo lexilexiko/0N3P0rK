@@ -96,7 +96,6 @@ static const Item RADIO[] = {
     {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
-    {"AUTO SKIP",Kind::VALUE, 50, 0, 60, 1},
     {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
 };
 
@@ -507,7 +506,6 @@ static int getValue(const Item& it) {
             case 25: return r.dataAct ? 1 : 0;
             case 26: return r.strictLock ? 1 : 0;
             case 27: return r.depthHoldSec;
-            case 50: return r.autoStopSec;
             case 30: return r.txPowerDb;
             case 31: return r.burstPattern;
             default: return 0;
@@ -868,7 +866,6 @@ static bool setValue(const Item& it, int v) {
             case 25: r.dataAct = (uint8_t)(v != 0 ? 1 : 0); break;
             case 26: r.strictLock = v != 0; break;
             case 27: r.depthHoldSec = (uint8_t)v; break;
-            case 50: r.autoStopSec = (uint8_t)v; break;
             case 30: r.txPowerDb = (int8_t)v; break;
             case 31: r.burstPattern = (uint8_t)v; break;
             default: return false;

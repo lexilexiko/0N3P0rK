@@ -170,10 +170,6 @@ struct RadioConfig {
     // if no further EAPOL refreshes the normal lockMs deadline.
     // 0 = off (release on normal lockMs / hasHandshake only).
     uint8_t depthHoldSec = 0;
-    // AUTO-STOP: seconds after a pair is written before capture stops.
-    // Prevents PCAP from growing too large (wpa-sec rejects >800-byte EAPOL).
-    // 0 = never auto-stop. Suggested: 3-10 sec.
-    uint8_t autoStopSec = 0;
     // PWR / BURST radio knobs for injected frames (deauth/disassoc kicks).
     // txPowerDb is applied once per capture session (WSLBypasser::setTxPowerDb)
     // via esp_wifi_set_max_tx_power(); lower = quieter/stealthier, higher =
