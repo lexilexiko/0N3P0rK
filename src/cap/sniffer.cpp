@@ -57,7 +57,7 @@ static Slot* s_ring = nullptr;
 static uint8_t s_ringSlots = 12;
 static volatile uint8_t s_write = 0;
 static volatile uint8_t s_read  = 0;
-static const uint8_t PENDING_SLOTS = 4;
+static uint8_t s_pendingSlots = 4;
 
 struct PendingCapture {
     bool used;
@@ -456,7 +456,7 @@ static bool keyEdge(char key, bool& wasPressed) {
 static bool allocateCaptureMemory() {
     if (s_ring && s_pending && s_beacons) return true;
     if (!s_ring) s_ring = new (std::nothrow) Slot[s_ringSlots];
-    if (!s_pending) s_pending = new (std::nothrow) PendingCapture[PENDING_SLOTS];
+    if (!s_pending) s_pending = new (std::nothrow) PendingCapture[s_pendingSlots];
     if (!s_beacons) s_beacons = new (std::nothrow) BeaconSlot[BEACON_SLOTS];
     if (!s_ring || !s_pending || !s_beacons) {
         delete[] s_ring;
@@ -1233,14 +1233,14 @@ static uint8_t classifyPendingEapol(const Slot& s) {
 }
 
 static PendingCapture* pendingFor(const Slot& s) {
-    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+    for (uint8_t i = 0; i < s_pendingSlots; i++) {
         if (s_pending[i].used &&
             sameBssid(s_pending[i].bssid, s.bssid) &&
             sameBssid(s_pending[i].station, s.station)) {
             return &s_pending[i];
         }
     }
-    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+    for (uint8_t i = 0; i < s_pendingSlots; i++) {
         if (!s_pending[i].used) {
             memset(&s_pending[i], 0, sizeof(s_pending[i]));
             s_pending[i].used = true;
@@ -1451,7 +1451,7 @@ static void autoSkipCapturedNetwork(const uint8_t* bssid) {
 }
 
 static void commitPendingCaptures() {
-    for (uint8_t i = 0; i < PENDING_SLOTS; i++) {
+    for (uint8_t i = 0; i < s_pendingSlots; i++) {
         PendingCapture& p = s_pending[i];
         if (!p.used || !p.haveM1 || !p.haveM2) continue;
         if (s_hsDepth >= 1 && !p.haveM3) continue;
@@ -1819,6 +1819,9 @@ static void startCommon(RunMode mode) {
         s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 28) {
         s_ringSlots = 12;
     }
+    s_pendingSlots = Config::radio().pendingSlots;
+    if (s_pendingSlots < 4 || s_pendingSlots > 16 || (s_pendingSlots & 1u))
+        s_pendingSlots = 4;
     if (!allocateCaptureMemory()) {
         Serial.println("[CAP] capture buffers allocation failed");
         s_mode = RunMode::Off;
@@ -1839,7 +1842,7 @@ static void startCommon(RunMode mode) {
 
     s_write = 0;
     s_read = 0;
-    memset(s_pending, 0, sizeof(PendingCapture) * PENDING_SLOTS);
+    memset(s_pending, 0, sizeof(PendingCapture) * s_pendingSlots);
     s_cnt = {};
     memset(s_seqTable, 0, sizeof(s_seqTable));
     s_pendingLearn = false;

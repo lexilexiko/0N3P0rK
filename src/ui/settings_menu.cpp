@@ -93,6 +93,7 @@ static const Item RADIO[] = {
     {"ATK RSSI",Kind::VALUE,  5,  -90, -50, 5},
     {"HS FILE B",Kind::VALUE, 28, 1024, 8192, 1024},
     {"RING",    Kind::VALUE,  29, 4, 32, 1},
+    {"PENDING", Kind::VALUE, 32, 4, 16, 2},
     {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
@@ -496,6 +497,7 @@ static int getValue(const Item& it) {
             case 17: return r.fatPcap ? 1 : 0;
             case 28: return r.hsFileBytes;
             case 29: return r.ringSlots;
+            case 32: return r.pendingSlots;
             case 18: return r.pack;
             // Porkchop-style knobs (IDs 20..23).
             case 20: return r.jitterMs;
@@ -669,6 +671,25 @@ static bool setValue(const Item& it, int v) {
         Config::markRadioCustom();
         Config::save();
         Display::showToast("RING SAVED", 700);
+        return true;
+    }
+
+    if (isRadioPage() && it.id == 32) {
+        static const uint8_t slots[] = {4, 6, 8, 10, 12, 14, 16};
+        uint8_t current = r.pendingSlots;
+        uint8_t slot = 0;
+        for (uint8_t i = 0; i < 7; i++) {
+            if (slots[i] == current) {
+                slot = i;
+                break;
+            }
+        }
+        slot = (v > current) ? (uint8_t)((slot + 1) % 7)
+                             : (uint8_t)((slot + 6) % 7);
+        r.pendingSlots = slots[slot];
+        Config::markRadioCustom();
+        Config::save();
+        Display::showToast("PENDING SAVED", 700);
         return true;
     }
 

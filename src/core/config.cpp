@@ -86,6 +86,7 @@ bool Config::init() {
     r.fatPcap = s_prefs.getBool("fatpcap", r.fatPcap);
     r.hsFileBytes = s_prefs.getUShort("hsfileb", r.hsFileBytes);
     r.ringSlots = s_prefs.getUChar("rings", r.ringSlots);
+    r.pendingSlots = s_prefs.getUChar("pends", r.pendingSlots);
     r.pack = s_prefs.getUChar("rpack", r.pack);
     // Porkchop-style knobs — same load pattern as everything above.
     r.jitterMs = s_prefs.getUChar("jitms", r.jitterMs);
@@ -165,6 +166,8 @@ bool Config::init() {
     if (r.ringSlots != 4 && r.ringSlots != 8 && r.ringSlots != 12 &&
         r.ringSlots != 16 && r.ringSlots != 24 && r.ringSlots != 28)
         r.ringSlots = 12;
+    if (r.pendingSlots < 4 || r.pendingSlots > 16 || (r.pendingSlots & 1u))
+        r.pendingSlots = 4;
     // pack lives in its own registry (Cap::Packs), separate bound from
     // hsMethod's - CUSTOM is the one value allowed above that bound
     // (fixed sentinel).
@@ -234,6 +237,7 @@ bool Config::save() {
     s_prefs.putBool("fatpcap", r.fatPcap);
     s_prefs.putUShort("hsfileb", r.hsFileBytes);
     s_prefs.putUChar("rings", r.ringSlots);
+    s_prefs.putUChar("pends", r.pendingSlots);
     s_prefs.putUChar("rpack", r.pack);
     // Porkchop-style knobs — same save pattern as everything above.
     s_prefs.putUChar("jitms", r.jitterMs);
