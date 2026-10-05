@@ -750,8 +750,7 @@ void Display::drawBottomBar() {
         bottomBar.setTextColor(TEXT_COL);
         bottomBar.setTextSize(1);
         bottomBar.setTextDatum(top_left);
-        bottomBar.drawString("</> MOVE  ENT TOGGLE", 3, 3);
-        bottomBar.drawString("Z ADD/SKIP  ESC BACK", 3, 13);
+        bottomBar.drawString("^/v MOVE  ENT TOGGLE  Q BACK", 3, 2);
         return;
     }
     auto blend565 = [](uint16_t fg, uint16_t bg, uint8_t weight) -> uint16_t {
