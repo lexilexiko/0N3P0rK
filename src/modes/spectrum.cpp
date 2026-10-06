@@ -826,6 +826,28 @@ static void formatMetricCount(uint32_t value, char* out, size_t size) {
     }
 }
 
+static void drawSeasonalNoise(M5Canvas& c, uint16_t bg,
+                              const SpectrumPalette& palette) {
+    const uint32_t frame = millis() / 110u;
+    for (int y = 3; y < MAIN_H; y += 5) {
+        for (int x = 3; x < DISPLAY_W; x += 5) {
+            uint16_t noise = (uint16_t)(x * 251u + y * 37u + frame * 97u);
+            noise ^= (uint16_t)(noise << 7);
+            noise ^= (uint16_t)(noise >> 9);
+            noise ^= (uint16_t)(noise << 8);
+            if ((noise & 7u) > 1u) continue;
+            c.drawPixel(x, y, blend565(palette.signal, bg, 102));
+        }
+    }
+
+    const int sweepX = (int)((millis() / 70u) % DISPLAY_W);
+    c.drawFastVLine(sweepX, 0, MAIN_H,
+                    blend565(palette.accent, bg, 42));
+    if (sweepX > 0)
+        c.drawFastVLine(sweepX - 1, 0, MAIN_H,
+                        blend565(palette.accent, bg, 18));
+}
+
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextWrap(false);
     const SpectrumPalette palette = seasonPalette();
@@ -1362,8 +1384,14 @@ void draw(M5Canvas& canvas) {
     uint16_t fg = getColorFG();
     uint16_t bg = getColorBG();
     canvas.fillSprite(bg);
-    if (s_phase == HUNT) drawHunt(canvas, fg, bg);
-    else if (s_phase == LOCK) drawLock(canvas, fg, bg);
+    if (s_phase == HUNT) {
+        drawSeasonalNoise(canvas, bg, seasonPalette());
+        drawHunt(canvas, fg, bg);
+    }
+    else if (s_phase == LOCK) {
+        drawSeasonalNoise(canvas, bg, seasonPalette());
+        drawLock(canvas, fg, bg);
+    }
     else drawSweep(canvas, fg, bg);
 }
 
