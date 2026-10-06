@@ -216,7 +216,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Kept Loot's existing sync presentation while retaining the updated key
   labels.
 
-### 1.3.6f (FixFIxFIx, current)
+### 1.3.6f (FixFIxFIx)
 
 #### Farm and grass
 
@@ -274,5 +274,31 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Updated the Russian contributor guides for [capture methods](src/cap/methods/README.md)
   and [radio packs](src/cap/packs/README.md), including their registration
   examples, RADIO settings and behavior notes.
+
+### 1.3.7 (Beta)
+
+#### Radio capture and PCAP safety
+
+- Added a **PENDING** RADIO setting for `4–16` simultaneous unfinished
+  BSSID/client handshake captures, in steps of `2`.
+- Added **AUTO SKIP** on/off control. When enabled, a network is added to the
+  persistent skip list after a successful capture at the selected handshake
+  depth and confirmation in `.22000`.
+- Added the in-capture `Q` skip-list menu for viewing saved and session
+  networks, toggling persistent entries, and returning to capture. The saved
+  list supports up to 64 networks; the session-only list holds up to 16.
+- Prevented new captures from appending to an existing PCAP for the same
+  BSSID when that file has a complete global header. Existing files are kept
+  unchanged; this guard does not determine whether every packet in an old file
+  is valid or repair files already damaged.
+- Unified EAPOL message classification and replay-counter extraction around
+  the validated EAPOL-Key offset, and reject mismatched M1/M2 replay counters
+  before writing the pair.
+- Fixed the M2-before-M1 case so a tentative M2 with a different replay
+  counter is discarded when the first M1 arrives.
+- Protected beacon-table access with short critical sections and snapshots
+  passed to capture methods; corrected EAPOL queue-drop accounting.
+- Updated the RADIO guide and capture controls, including the one-line Q-menu
+  navigation hint.
 
 ---

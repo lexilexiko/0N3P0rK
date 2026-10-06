@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.3.6f (FixFIxFIx)**
+**Current version: 1.3.7 (Beta)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -61,7 +61,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.6f_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.7_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -91,7 +91,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.6f`.
+   `1.3.7 (Beta)`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -282,6 +282,10 @@ Capture workflow:
 The capture path writes classic PCAP files and prepares Hashcat 22000 material
 when enough valid handshake data is available. Incomplete, oversized, or
 invalid files are rejected instead of being presented as successful captures.
+When a PCAP for a BSSID already exists with a complete global header, a new
+capture is refused rather than appended to that file. This protects existing
+captures from repeated handshakes; it checks the header only and does not
+repair or validate all packet records in an older file.
 
 ### Checking a capture before upload (LOOT → `i` / `I`)
 
@@ -399,6 +403,14 @@ The **SET → RADIO** page contains the stable radio controls:
 - deauthentication and EAPOL/PMKID options;
 - RSSI filtering and kick burst count;
 - PCAP format and maximum capture size;
+- **RING** queue capacity and **PENDING** concurrent handshake capacity.
+  **PENDING** can be set from `4` to `16` in steps of `2`; larger values let
+  the sniffer track more unfinished BSSID/client handshakes at once, at the
+  cost of roughly 4.5 KB of RAM per slot;
+- **AUTO SKIP** controls whether a network is added to the persistent skip
+  list after its selected handshake depth is successfully written to PCAP
+  and confirmed in `.22000`. The persistent list holds up to 64 networks;
+  session-only skips have a separate 16-network limit.
 - handshake depth and target hold behavior. **HS DEPTH** is user-controlled:
   `M1–M2` is the default; select `+M3` or `FULL` yourself when needed.
 
@@ -416,9 +428,10 @@ The **PACK** selector applies a tested group of radio values. Editing
 individual values marks the profile as custom. **RADIO → RESET** restores the
 stock radio profile without deleting files from the SD card.
 
-During capture, press `Q` to open the persistent network skip list. The list
-contains saved entries and networks seen during the current session. Use `;` /
-`.` to move, `ENT` to enable or disable skipping, and `ESC` to return; capture
+During capture, press `Q` to open the persistent network skip list. It shows
+enabled saved ignores and networks detected in the current capture session;
+older saved entries that are not currently ignored are hidden. Use `;` / `.`
+to move, `ENT` to enable or disable skipping, and `ESC` to return; capture
 reception pauses while the list is open and resumes in the same session.
 Pressing `Z` skips the focused network immediately and saves it as enabled.
 The list is stored in `/0N3P0rK/radio_skip.csv` (up to 64 networks); when the
@@ -767,7 +780,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.3.6f, see
+For the chronological release notes from the early builds through 1.3.7 (Beta), see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---
