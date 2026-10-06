@@ -826,29 +826,6 @@ static void formatMetricCount(uint32_t value, char* out, size_t size) {
     }
 }
 
-static void drawHuntNoiseBackground(M5Canvas& c, uint16_t bg,
-                                    const SpectrumPalette& palette) {
-    const uint32_t frame = millis() / 110u;
-    for (int y = 3; y < MAIN_H; y += 5) {
-        for (int x = 3; x < DISPLAY_W; x += 5) {
-            uint16_t noise = (uint16_t)(x * 251u + y * 37u + frame * 97u);
-            noise ^= (uint16_t)(noise << 7);
-            noise ^= (uint16_t)(noise >> 9);
-            noise ^= (uint16_t)(noise << 8);
-            if ((noise & 7u) > 1u) continue;
-            const uint8_t weight = (uint8_t)(38u + ((noise >> 3) & 39u));
-            c.drawPixel(x, y, blend565(palette.signal, bg, weight));
-        }
-    }
-
-    const int sweepX = (int)((millis() / 70u) % DISPLAY_W);
-    const uint16_t sweep = blend565(palette.accent, bg, 26);
-    c.drawFastVLine(sweepX, 0, MAIN_H, sweep);
-    if (sweepX > 0)
-        c.drawFastVLine(sweepX - 1, 0, MAIN_H,
-                        blend565(palette.accent, bg, 12));
-}
-
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextWrap(false);
     const SpectrumPalette palette = seasonPalette();
@@ -1385,10 +1362,7 @@ void draw(M5Canvas& canvas) {
     uint16_t fg = getColorFG();
     uint16_t bg = getColorBG();
     canvas.fillSprite(bg);
-    if (s_phase == HUNT) {
-        drawHuntNoiseBackground(canvas, bg, seasonPalette());
-        drawHunt(canvas, fg, bg);
-    }
+    if (s_phase == HUNT) drawHunt(canvas, fg, bg);
     else if (s_phase == LOCK) drawLock(canvas, fg, bg);
     else drawSweep(canvas, fg, bg);
 }
