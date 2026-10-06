@@ -810,6 +810,45 @@ static void upName(const char* in, char* out, size_t n) {
     out[i] = 0;
 }
 
+static void formatMetricCount(uint32_t value, char* out, size_t size) {
+    if (value < 10000) {
+        snprintf(out, size, "%lu", (unsigned long)value);
+    } else if (value < 1000000) {
+        snprintf(out, size, "%luk", (unsigned long)(value / 1000));
+    } else if (value < 10000000) {
+        snprintf(out, size, "%lu.%luM",
+                 (unsigned long)(value / 1000000),
+                 (unsigned long)((value / 100000) % 10));
+    } else if (value < 1000000000) {
+        snprintf(out, size, "%luM", (unsigned long)(value / 1000000));
+    } else {
+        snprintf(out, size, "%luG+", (unsigned long)(value / 1000000000));
+    }
+}
+
+static void drawHuntNoiseBackground(M5Canvas& c, uint16_t bg,
+                                    const SpectrumPalette& palette) {
+    const uint32_t frame = millis() / 110u;
+    for (int y = 3; y < MAIN_H; y += 5) {
+        for (int x = 3; x < DISPLAY_W; x += 5) {
+            uint16_t noise = (uint16_t)(x * 251u + y * 37u + frame * 97u);
+            noise ^= (uint16_t)(noise << 7);
+            noise ^= (uint16_t)(noise >> 9);
+            noise ^= (uint16_t)(noise << 8);
+            if ((noise & 7u) > 1u) continue;
+            const uint8_t weight = (uint8_t)(38u + ((noise >> 3) & 39u));
+            c.drawPixel(x, y, blend565(palette.signal, bg, weight));
+        }
+    }
+
+    const int sweepX = (int)((millis() / 70u) % DISPLAY_W);
+    const uint16_t sweep = blend565(palette.accent, bg, 26);
+    c.drawFastVLine(sweepX, 0, MAIN_H, sweep);
+    if (sweepX > 0)
+        c.drawFastVLine(sweepX - 1, 0, MAIN_H,
+                        blend565(palette.accent, bg, 12));
+}
+
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextWrap(false);
     const SpectrumPalette palette = seasonPalette();
@@ -1024,8 +1063,8 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
 }
 
 static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
-    (void)bg;
     c.setTextWrap(false);
+    const SpectrumPalette palette = seasonPalette();
     int idx = findNet(s_monBssid);
     const Cap::Counters& cap = Cap::counters();
     c.setTextSize(1);
@@ -1046,42 +1085,88 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextColor(fg);
     c.drawString(line, 4, 14);
 
-    snprintf(line, sizeof(line), "kick %u   eapol %u",
-             (unsigned)cap.framesDeauth, (unsigned)cap.framesEapol);
-    c.setTextColor(UiStyle::PINK);
-    c.drawString(line, 4, 28);
+    static const char* metricLabels[] = { "KICK", "EAPOL", "WRITE", "FILE" };
+    const uint32_t metricValues[] = {
+        cap.framesDeauth, cap.framesEapol, cap.framesWritten, cap.filesOpened
+    };
+    static const int metricX[] = { 3, 59, 121, 183 };
+    c.fillRoundRect(2, 28, DISPLAY_W - 4, 11, 2, UiStyle::PANEL);
+    for (uint8_t i = 0; i < 4; ++i) {
+        char count[8];
+        char label[8];
+        snprintf(label, sizeof(label), "%s:", metricLabels[i]);
+        formatMetricCount(metricValues[i], count, sizeof(count));
+        c.setTextColor(UiStyle::GOLD);
+        c.drawString(label, metricX[i], 30);
+        c.setTextColor(fg);
+        c.drawString(count, metricX[i] + (int)strlen(label) * 6, 30);
+        if (i < 3)
+            c.drawFastVLine(metricX[i + 1] - 1, 30, 7, UiStyle::DIM);
+    }
 
-    snprintf(line, sizeof(line), "write %u   files %u",
-             (unsigned)cap.framesWritten, (unsigned)cap.filesOpened);
-    c.setTextColor(fg);
-    c.drawString(line, 4, 40);
+    const bool pair = Hc22000::hasHandshake(s_monBssid, s_huntDepth);
+    const uint8_t mask = Hc22000::handshakeMask(s_monBssid);
+    const uint8_t reqMask = (s_huntDepth == 0) ? 0x03 : (s_huntDepth == 1 ? 0x07 : 0x0F);
 
-    bool pair = Hc22000::hasHandshake(s_monBssid, s_huntDepth);
-    uint8_t mask = Hc22000::handshakeMask(s_monBssid);
+    const int panelX = 4;
+    const int panelY = 48;
+    const int panelW = 228;
+    const int panelH = 48;
+    c.setTextSize(1);
+    c.setTextDatum(top_left);
+    c.fillRoundRect(panelX, panelY, panelW, panelH, 3, UiStyle::PANEL);
+    c.drawRoundRect(panelX, panelY, panelW, panelH, 3, UiStyle::PINK);
+
+    const int chipW = 70;
+    const int chipGap = 4;
+    for (uint8_t d = 0; d < 3; ++d) {
+        const bool selected = (s_huntDepth == d);
+        const int x = panelX + 6 + d * (chipW + chipGap);
+        const uint16_t fill = selected ? UiStyle::GOLD : 0x2A2A;
+        const uint16_t border = selected ? UiStyle::PINK : 0x4208;
+        const uint16_t text = selected ? 0x0000 : UiStyle::TEXT;
+        c.fillRoundRect(x, panelY + 13, chipW, 9, 2, fill);
+        c.drawRoundRect(x, panelY + 13, chipW, 9, 2, border);
+        c.setTextColor(text);
+        c.drawString((d == 0) ? "PAIR" : ((d == 1) ? "+M3" : "FULL"), x + 16, panelY + 14);
+    }
+
+    const int boxW = 24;
+    const int boxGap = 4;
+    const char* labels[4] = { "M1", "M2", "M3", "M4" };
+    const uint8_t bits[4] = { 0x01, 0x02, 0x04, 0x08 };
+    for (uint8_t i = 0; i < 4; ++i) {
+        const bool seen = (mask & bits[i]) != 0;
+        const bool required = (reqMask & bits[i]) != 0;
+        const int x = panelX + 6 + i * (boxW + boxGap);
+        const int y = panelY + 25;
+        uint16_t fill = seen ? (required ? UiStyle::GOLD : UiStyle::CYAN) : 0x3186;
+        uint16_t border = required ? UiStyle::PINK : 0x4208;
+        if (!seen && required) fill = 0x5AEB;
+        c.fillRoundRect(x, y, boxW, 9, 2, fill);
+        c.drawRoundRect(x, y, boxW, 9, 2, border);
+        c.setTextColor(seen ? 0x0000 : UiStyle::TEXT);
+        c.drawString(labels[i], x + 7, y + 1);
+    }
+
     c.setTextColor(pair ? UiStyle::GOLD : UiStyle::DIM);
-    // Progress toward selected depth (D cycles PAIR / +M3 / FULL).
-    char pairLine[40];
-    snprintf(pairLine, sizeof(pairLine), "%s%s%s%s need %s %s",
-             (mask & 0x01) ? "M1" : "--",
-             (mask & 0x02) ? "+M2" : "---",
-             (mask & 0x04) ? "+M3" : "---",
-             (mask & 0x08) ? "+M4" : "---",
-             huntDepthName(s_huntDepth),
-             pair ? "OK" : "…");
-    c.drawString(pairLine, 4, 54);
+    char statusLine[28];
+    snprintf(statusLine, sizeof(statusLine), "%s %s",
+             huntDepthName(s_huntDepth), pair ? "READY" : "WAIT");
+    c.drawString(statusLine, panelX + 6, panelY + 1);
 
     if (cap.lastHsSsid[0]) {
-        char got[36];
-        snprintf(got, sizeof(got), "GOT  %s", cap.lastHsSsid);
+        char got[28];
+        snprintf(got, sizeof(got), "GOT %.7s", cap.lastHsSsid);
         c.setTextColor(UiStyle::GOLD);
-        c.drawString(got, 4, 66);
+        c.drawString(got, panelX + panelW - 74, panelY + 1);
     }
 
     c.setTextColor(UiStyle::CYAN);
     const char* st = "listening";
     if (Cap::isLocked()) st = "hold after M1";
     else if (cap.framesDeauth) st = "kicking + sniff";
-    c.drawString(st, 4, 80);
+    c.drawString(st, panelX + 6, panelY + 37);
 }
 
 void start() {
@@ -1300,7 +1385,10 @@ void draw(M5Canvas& canvas) {
     uint16_t fg = getColorFG();
     uint16_t bg = getColorBG();
     canvas.fillSprite(bg);
-    if (s_phase == HUNT) drawHunt(canvas, fg, bg);
+    if (s_phase == HUNT) {
+        drawHuntNoiseBackground(canvas, bg, seasonPalette());
+        drawHunt(canvas, fg, bg);
+    }
     else if (s_phase == LOCK) drawLock(canvas, fg, bg);
     else drawSweep(canvas, fg, bg);
 }
