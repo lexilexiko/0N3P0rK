@@ -29,7 +29,7 @@ void pmkidProbe(const Ctx& ctx) {
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
         if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-        if (b.rssi < ctx.minRssi) continue;
+        if (ctx.belowMinRssi(b.rssi)) continue;
         if (!b.ssid[0]) continue;
         if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         WSLBypasser::sendAuthentication(b.bssid);

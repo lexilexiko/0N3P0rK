@@ -148,8 +148,10 @@ bool Config::init() {
     if (r.hopMs < 50) r.hopMs = 50;
     if (r.hopMs > 2000) r.hopMs = 2000;
     if (r.lockMs > 15000) r.lockMs = 15000;
-    if (r.minRssi < -90) r.minRssi = -90;
-    if (r.minRssi > -50) r.minRssi = -50;
+    if (r.minRssi != RADIO_RSSI_NO_LIMIT) {
+        if (r.minRssi < -90) r.minRssi = -90;
+        if (r.minRssi > -50) r.minRssi = -50;
+    }
     if (r.hopSet >= HOP_SET_COUNT) r.hopSet = 0;
     if (r.hsMethod >= HS_METHOD_COUNT_MAX) r.hsMethod = 0;
     if (r.fallbackSec < 10) r.fallbackSec = 10;

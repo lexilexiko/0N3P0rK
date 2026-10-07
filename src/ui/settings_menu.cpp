@@ -593,6 +593,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
+    } else if (isRadioPage() && it.id == 5) {
+        int v = getValue(it);
+        if (v == RADIO_RSSI_NO_LIMIT) strncpy(raw, "ANY", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%ddBm", v);
     } else if (isRadioPage() && it.id == 30) {
         snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
     } else if (isRadioPage() && it.id == 31) {
@@ -699,6 +703,27 @@ static bool setValue(const Item& it, int v) {
         Config::markRadioCustom();
         Config::save();
         Display::showToast("PENDING SAVED", 700);
+        return true;
+    }
+
+    if (isRadioPage() && it.id == 5) {
+        static const int8_t levels[] = {
+            -90, -85, -80, -75, -70, -65, -60, -55, -50,
+            RADIO_RSSI_NO_LIMIT
+        };
+        const int levelCount = sizeof(levels) / sizeof(levels[0]);
+        int currentSlot = levelCount - 1;
+        for (int i = 0; i < levelCount; i++) {
+            if (levels[i] == r.minRssi) {
+                currentSlot = i;
+                break;
+            }
+        }
+        const bool stepUp = v > (int)r.minRssi;
+        currentSlot = (currentSlot + (stepUp ? 1 : levelCount - 1)) % levelCount;
+        r.minRssi = levels[currentSlot];
+        Config::markRadioCustom();
+        Config::save();
         return true;
     }
 

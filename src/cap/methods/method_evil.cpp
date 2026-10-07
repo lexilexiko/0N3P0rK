@@ -135,7 +135,7 @@ static bool usable(const Ctx& ctx, const BeaconView& b) {
     if (ctx.isOwnAp(b.bssid)) return false;
     if (ctx.skipPin(b.bssid)) return false;
     if (ctx.isSkipped && ctx.isSkipped(b.bssid)) return false;
-    if (b.rssi < ctx.minRssi) return false;
+    if (ctx.belowMinRssi(b.rssi)) return false;
     return true;
 }
 
@@ -294,7 +294,7 @@ void evil(const Ctx& ctx) {
         for (uint8_t i = 0; i < n; i++) {
             const BeaconView& b = ctx.beacons[i];
             if (b.channel != ctx.channel) continue;
-            if (b.rssi < ctx.minRssi) continue;
+            if (ctx.belowMinRssi(b.rssi)) continue;
             bumpActivity(b.bssid);
         }
     }
@@ -418,7 +418,7 @@ void evilProbe(const Ctx& ctx) {
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
         if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-        if (b.rssi < ctx.minRssi) continue;
+        if (ctx.belowMinRssi(b.rssi)) continue;
         if (!b.ssid[0]) continue;
         if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         int32_t s = computeEvilScore(b, ctx.hsDepth, ctx.dataAct);

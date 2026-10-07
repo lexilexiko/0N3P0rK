@@ -120,7 +120,7 @@ static bool usableAp(const Ctx& ctx, const BeaconView& b) {
     if (ctx.isOwnAp && ctx.isOwnAp(b.bssid)) return false;
     if (ctx.skipPin && ctx.skipPin(b.bssid)) return false;
     if (ctx.isSkipped && ctx.isSkipped(b.bssid)) return false;
-    if (b.rssi < ctx.minRssi) return false;
+    if (ctx.belowMinRssi(b.rssi)) return false;
     if (alreadyPaired(b.bssid)) return false;
     return true;
 }

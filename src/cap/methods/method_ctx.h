@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "../../core/config.h"
 #include "beacon_slot.h"
 
 namespace Cap {
@@ -53,6 +54,10 @@ struct Ctx {
     void (*sendRawMgmt)(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest);
 
     uint32_t* framesDeauth; // counter to bump on every injected frame
+
+    bool belowMinRssi(int8_t rssi) const {
+        return minRssi != RADIO_RSSI_NO_LIMIT && rssi < minRssi;
+    }
 
     // ----- Porkchop-style knobs ------------------------------------------
     // All default to 0 (= off / use the legacy behavior baked into OURS,

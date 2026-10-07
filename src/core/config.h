@@ -5,6 +5,8 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+constexpr int8_t RADIO_RSSI_NO_LIMIT = INT8_MIN;
+
 enum class SkyMode : uint8_t {
     AUTO = 0,
     DAY = 1,

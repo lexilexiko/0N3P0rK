@@ -179,7 +179,7 @@ void pmkidProbePorkchop(const Ctx& ctx) {
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
         if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-        if (b.rssi < ctx.minRssi) continue;
+        if (ctx.belowMinRssi(b.rssi)) continue;
         if (!b.ssid[0]) continue;
         if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         WSLBypasser::sendAuthentication(b.bssid);
@@ -209,7 +209,7 @@ void porkchop(const Ctx& ctx) {
         for (uint8_t i = 0; i < n; i++) {
             const BeaconView& b = ctx.beacons[i];
             if (b.channel != ctx.channel) continue;
-            if (b.rssi < ctx.minRssi) continue;
+            if (ctx.belowMinRssi(b.rssi)) continue;
             bumpActivity(b.bssid);
         }
     }
@@ -248,7 +248,7 @@ void porkchop(const Ctx& ctx) {
             if (memcmp(b.bssid, ctx.lockedBssid, 6) != 0) continue;
             if (b.channel != ctx.channel) continue;
             if (ctx.isOwnAp(b.bssid)) break;
-            if (b.rssi < ctx.minRssi) break;
+            if (ctx.belowMinRssi(b.rssi)) break;
             // If handshake already complete at this depth, the sniffer
             // is about to release the lock anyway - don't burn a burst
             // on it. Fall through to the normal scoring path below.
@@ -299,7 +299,7 @@ void porkchop(const Ctx& ctx) {
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
         if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-        if (b.rssi < ctx.minRssi) continue;
+        if (ctx.belowMinRssi(b.rssi)) continue;
         ScoreEntry* se = findOrCreateScore(b.bssid);
         se->lastSeenMs = now;
         // EMA - new score pulls 25% toward the freshly-computed one.
@@ -326,7 +326,7 @@ void porkchop(const Ctx& ctx) {
                 if (ctx.isOwnAp(b.bssid)) continue;
                 if (ctx.skipPin(b.bssid)) continue;
                 if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-                if (b.rssi < ctx.minRssi) continue;
+                if (ctx.belowMinRssi(b.rssi)) continue;
                 if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
                 WSLBypasser::sendAuthFlood(b.bssid, 8);
                 *ctx.framesDeauth += 8;

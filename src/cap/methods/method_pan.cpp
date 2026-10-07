@@ -21,7 +21,7 @@ void pan(const Ctx& ctx) {
             if (ctx.isOwnAp(b.bssid)) continue;
             if (ctx.skipPin(b.bssid)) continue;
             if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-            if (b.rssi < ctx.minRssi) continue;
+            if (ctx.belowMinRssi(b.rssi)) continue;
             if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
             if (b.pmfCapable) continue; // deauth dropped; CSA path below
 
@@ -62,7 +62,7 @@ void pan(const Ctx& ctx) {
                 if (ctx.isOwnAp(b.bssid)) continue;
                 if (ctx.skipPin(b.bssid)) continue;
                 if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
-                if (b.rssi < ctx.minRssi) continue;
+                if (ctx.belowMinRssi(b.rssi)) continue;
                 if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
                 WSLBypasser::sendAuthFlood(b.bssid, 8);
                 *ctx.framesDeauth += 8;

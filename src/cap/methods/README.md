@@ -103,7 +103,7 @@ static const uint8_t exampleKnobs[] = {9, 10, 15, 0};
 | `ctx.beacons` | Снимок текущих сетей (`BeaconView`), не содержит кадры beacon |
 | `ctx.beaconCount` | Число заполненных элементов таблицы |
 | `ctx.channel` | Текущий радиоканал |
-| `ctx.minRssi` | Минимальный RSSI для отбора точек доступа |
+| `ctx.minRssi` | Минимальный RSSI для отбора точек доступа; `ANY` отключает фильтр |
 | `ctx.kickBurst` | Настроенное число повторов |
 | `ctx.deauthReason` | Reason code для соответствующих кадров |
 | `ctx.bidirKick` | Настройка двусторонних действий |
