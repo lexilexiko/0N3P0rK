@@ -711,13 +711,16 @@ static void noteNetwork(const uint8_t* bssid, const char* ssid, bool force) {
     if (s_pinOk && memcmp(bssid, s_pinBssid, 6) != 0) return;
     // Session skip (Z): stop showing / chasing this BSSID in the bar.
     if (isSessionSkipped(bssid)) return;
-    // current* tracks last-seen beacon / activity for Z-skip resolution.
-    // The bottom-bar LEFT label uses target* (setBarTarget) so hopping
-    // beacons no longer flicker random SSIDs over the real focus.
-    snprintf(s_cnt.currentBssid, sizeof(s_cnt.currentBssid),
+    // current* tracks the last-seen beacon / activity for scan status and
+    // Z-skip resolution. A pinned target remains separately in target*.
+    char currentBssid[sizeof(s_cnt.currentBssid)];
+    snprintf(currentBssid, sizeof(currentBssid),
              "%02X:%02X:%02X:%02X:%02X:%02X",
              bssid[0], bssid[1], bssid[2],
              bssid[3], bssid[4], bssid[5]);
+    if (strcmp(s_cnt.currentBssid, currentBssid) != 0)
+        s_cnt.currentSsid[0] = '\0';
+    memcpy(s_cnt.currentBssid, currentBssid, sizeof(currentBssid));
     if (ssid && ssid[0]) {
         strncpy(s_cnt.currentSsid, ssid, sizeof(s_cnt.currentSsid) - 1);
         s_cnt.currentSsid[sizeof(s_cnt.currentSsid) - 1] = '\0';

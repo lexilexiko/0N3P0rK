@@ -845,7 +845,7 @@ void Display::drawBottomBar() {
 
     char left[48];
     left[0] = '\0';
-    char rightName[32];
+    char rightName[40];
     rightName[0] = '\0';
     bool capLive = Cap::isRunning();
 
@@ -853,14 +853,18 @@ void Display::drawBottomBar() {
         SpectrumMode::getStatusLine(left, sizeof(left));
     } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
-        // Real focus only (lock / pin / last HS). Hopping beacons no longer
-        // overwrite the left label — that looked like random SSIDs.
+        // Show the pinned focus while locked; while hopping, pair the channel
+        // with the most recently seen network name.
         // targetMode: 0=SCAN 1=LOCK 2=HS 3=PIN 4=KICK
         const char* net = nullptr;
         // Names only — skip "?" placeholder and never show MAC.
-        if (c.targetSsid[0] && strcmp(c.targetSsid, "?") != 0) net = c.targetSsid;
-        else if (c.lastHsSsid[0]) net = c.lastHsSsid;
-        if (net) {
+        if (c.targetMode != 0 && c.targetSsid[0] &&
+            strcmp(c.targetSsid, "?") != 0) net = c.targetSsid;
+        else if (c.targetMode != 0 && c.lastHsSsid[0]) net = c.lastHsSsid;
+        if (c.targetMode == 0 && c.currentSsid[0]) {
+            snprintf(left, sizeof(left), "SCAN#%02u %s",
+                     (unsigned)c.currentChannel, c.currentSsid);
+        } else if (net) {
             size_t n = 0;
             while (net[n] && n < 10) {
                 char ch = net[n];
@@ -910,22 +914,45 @@ void Display::drawBottomBar() {
         // $N appears whenever we have a real focus (LOCK/PIN/HS/EAPOL), so the
         // bar answers "how many people sit on the net we're hitting?".
         if (c.targetMode != 0) {
-            snprintf(rightName, sizeof(rightName), "%s%s %c/%c $%u &%u #%02u",
-                     tag,
-                     Cap::isLocked() ? "*" : "",
-                     packCh,
-                     methCh,
-                     (unsigned)Cap::targetClients(),
-                     (unsigned)hsN,
-                     (unsigned)c.currentChannel);
+            if (c.eapolDropped) {
+                snprintf(rightName, sizeof(rightName), "%s%s %c/%c $%u &%u #%02u E!%lu",
+                         tag,
+                         Cap::isLocked() ? "*" : "",
+                         packCh,
+                         methCh,
+                         (unsigned)Cap::targetClients(),
+                         (unsigned)hsN,
+                         (unsigned)c.currentChannel,
+                         (unsigned long)c.eapolDropped);
+            } else {
+                snprintf(rightName, sizeof(rightName), "%s%s %c/%c $%u &%u #%02u",
+                         tag,
+                         Cap::isLocked() ? "*" : "",
+                         packCh,
+                         methCh,
+                         (unsigned)Cap::targetClients(),
+                         (unsigned)hsN,
+                         (unsigned)c.currentChannel);
+            }
         } else {
-            snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u",
-                     tag,
-                     Cap::isLocked() ? "*" : "",
-                     packCh,
-                     methCh,
-                     (unsigned)hsN,
-                     (unsigned)c.currentChannel);
+            if (c.eapolDropped) {
+                snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u E!%lu",
+                         tag,
+                         Cap::isLocked() ? "*" : "",
+                         packCh,
+                         methCh,
+                         (unsigned)hsN,
+                         (unsigned)c.currentChannel,
+                         (unsigned long)c.eapolDropped);
+            } else {
+                snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u",
+                         tag,
+                         Cap::isLocked() ? "*" : "",
+                         packCh,
+                         methCh,
+                         (unsigned)hsN,
+                         (unsigned)c.currentChannel);
+            }
         }
     } else if (bottomHint[0]) {
         strncpy(left, bottomHint, sizeof(left) - 1);
