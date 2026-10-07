@@ -1286,28 +1286,13 @@ static bool replayIncremented(const uint8_t* base, const uint8_t* candidate) {
     return memcmp(expected, candidate, sizeof(expected)) == 0;
 }
 
-static bool pendingReadyForDepth(const PendingCapture& p) {
-    if (!p.haveM1 || !p.haveM2 ||
-        memcmp(p.m1Replay, p.m2Replay, sizeof(p.m1Replay)) != 0)
-        return false;
-    if (s_hsDepth >= 1 &&
-        (!p.haveM3 || !replayIncremented(p.m1Replay, p.m3Replay)))
-        return false;
-    if (s_hsDepth >= 2 &&
-        (!p.haveM4 || memcmp(p.m3Replay, p.m4Replay, sizeof(p.m3Replay)) != 0))
-        return false;
-    return true;
-}
-
 static void expireStalePending(uint32_t now) {
     const uint8_t timeoutSec = Config::radio().pendingTimeoutSec;
     if (timeoutSec == 0) return;
     const uint32_t timeoutMs = (uint32_t)timeoutSec * 1000u;
     for (uint8_t i = 0; i < s_pendingSlots; i++) {
         PendingCapture& p = s_pending[i];
-        if (!p.used || now - p.lastSeenMs < timeoutMs ||
-            pendingReadyForDepth(p))
-            continue;
+        if (!p.used || now - p.lastSeenMs < timeoutMs) continue;
         Serial.printf("[HS] expired incomplete capture %02X:%02X:%02X:%02X:%02X:%02X / %02X:%02X:%02X:%02X:%02X:%02X\n",
                       p.bssid[0], p.bssid[1], p.bssid[2],
                       p.bssid[3], p.bssid[4], p.bssid[5],

@@ -128,6 +128,24 @@ static void makePath(const Hs* h, const char* suffix, char* path, size_t pathLen
     snprintf(path, pathLen, "%s/%s%s", Storage::DIR_HS, stem, suffix);
 }
 
+static Hs* oldestReusableSlot() {
+    Hs* oldestUnwritten = nullptr;
+    Hs* oldestWritten = nullptr;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        Hs* h = &s_hs[i];
+        if (!h->used) continue;
+        if (h->wroteEapol || h->wrotePmkid) {
+            if (!oldestWritten || h->lastSeenMs < oldestWritten->lastSeenMs)
+                oldestWritten = h;
+        } else if (!oldestUnwritten || h->lastSeenMs < oldestUnwritten->lastSeenMs) {
+            oldestUnwritten = h;
+        }
+    }
+    // Saved hash files remain on SD, so a completed in-memory entry can be
+    // recycled once all earlier incomplete entries have been considered.
+    return oldestUnwritten ? oldestUnwritten : oldestWritten;
+}
+
 static Hs* slotFor(const uint8_t* bssid) {
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) return &s_hs[i];
@@ -140,13 +158,7 @@ static Hs* slotFor(const uint8_t* bssid) {
             return &s_hs[i];
         }
     }
-    Hs* oldest = nullptr;
-    for (uint8_t i = 0; i < MAX_HS; i++) {
-        if (!s_hs[i].wroteEapol && !s_hs[i].wrotePmkid &&
-            (!oldest || s_hs[i].lastSeenMs < oldest->lastSeenMs)) {
-            oldest = &s_hs[i];
-        }
-    }
+    Hs* oldest = oldestReusableSlot();
     if (!oldest) return nullptr;
     memset(oldest, 0, sizeof(Hs));
     memcpy(oldest->bssid, bssid, 6);
@@ -179,17 +191,28 @@ static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
         }
     }
     if (!h) {
-        Hs* oldest = nullptr;
+        uint8_t essid[32];
+        uint8_t essidLen = 0;
+        bool haveEssid = false;
         for (uint8_t i = 0; i < MAX_HS; i++) {
-            if (!s_hs[i].wroteEapol && !s_hs[i].wrotePmkid &&
-                (!oldest || s_hs[i].lastSeenMs < oldest->lastSeenMs)) {
-                oldest = &s_hs[i];
+            if (s_hs[i].used && s_hs[i].haveEssid &&
+                memcmp(s_hs[i].bssid, bssid, 6) == 0) {
+                memcpy(essid, s_hs[i].essid, sizeof(essid));
+                essidLen = s_hs[i].essidLen;
+                haveEssid = true;
+                break;
             }
         }
+        Hs* oldest = oldestReusableSlot();
         if (oldest) {
             memset(oldest, 0, sizeof(Hs));
             memcpy(oldest->bssid, bssid, 6);
             oldest->used = true;
+            if (haveEssid) {
+                memcpy(oldest->essid, essid, sizeof(oldest->essid));
+                oldest->essidLen = essidLen;
+                oldest->haveEssid = true;
+            }
             h = oldest;
         }
     }

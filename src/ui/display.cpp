@@ -1073,11 +1073,21 @@ void Display::drawBottomBar() {
         bottomBar.setTextColor(0xFE60);
     bottomBar.setTextWrap(false);
 
-    // M1-M4 pills sit BETWEEN the SSID (left) and the A* F/F &N #ch (right).
-    // Always reserved while capturing so the SSID never draws over them.
-    // "1-2-3-4" = 4*6 + 3*5 = 39 px, plus 4 px gap.
+    // M1-M4 sit between the SSID and the capture status, and only take space
+    // after at least one message has actually been seen for the focused AP.
     const bool showMx = capLive && App::mode() != AppMode::SPECTRUM;
-    const int mBlockW = showMx ? 43 : 0;
+    const Cap::Counters* captureCounters = showMx ? &Cap::counters() : nullptr;
+    Hc22000::HandshakeProgress progress{};
+    if (captureCounters && captureCounters->targetBssid[0]) {
+        uint8_t mac[6];
+        if (parseBarMac(captureCounters->targetBssid, mac))
+            progress = Hc22000::handshakeProgress(mac, 0);
+    }
+    const uint8_t gm = progress.messages;
+    const bool pairValid = (gm & 0x03) == 0x03;
+    const int shownMCount = ((gm & 0x01) ? 1 : 0) + ((gm & 0x02) ? 1 : 0) +
+                            ((gm & 0x04) ? 1 : 0) + ((gm & 0x08) ? 1 : 0);
+    const int mBlockW = shownMCount ? shownMCount * 6 + 4 : 28;
     int rightPx = rightName[0] ? ((int)strlen(rightName) * 6 + 6) : 0;
     int leftMax = DISPLAY_W - 6 - rightPx - mBlockW;
     if (leftMax < 42) leftMax = 42;
@@ -1089,53 +1099,26 @@ void Display::drawBottomBar() {
         bottomBar.setTextDatum(top_left);
     }
 
-    // M1/M2/M3/M4 live capture — one station on THIS target.
-    // Empty slots use the active season's text color so all four remain visible.
-    //   unseen     = dark
-    //   M1 waiting = grey; M2 appears only after the replay match
-    //   M1+M2 pair = green  (crackable)
-    //   M3         = cyan
-    //   M4         = white
-    //   EAPOL written = half-bright
+    // Show only messages actually received for the focused AP, with no
+    // separators. M1 alone is incomplete (red), a validated pair is green,
+    // and additional exchange messages are yellow.
     if (showMx) {
-        const Cap::Counters& cc = Cap::counters();
-        uint8_t gm = 0;
-        bool written = false;
-        uint8_t mac[6];
-        if (cc.targetBssid[0] && parseBarMac(cc.targetBssid, mac)) {
-            const Hc22000::HandshakeProgress progress =
-                Hc22000::handshakeProgress(mac, 0);
-            gm = progress.messages;
-            written = progress.eapolWritten;
-        }
-        bool pairValid = (gm & 0x03) == 0x03;
-        struct { uint8_t bit; const char* lbl; uint16_t colOk; uint16_t colWait; } msgs[4] = {
-            { 0x01, "1", 0x07E0, 0x7BEF },
-            { 0x02, "2", 0x07E0, 0xFFE0 },
-            { 0x04, "3", 0x07FF, 0x07FF },
-            { 0x08, "4", 0xFFFF, 0xFFFF },
-        };
-        int x = DISPLAY_W - 2 - rightPx - mBlockW;
+        static const uint8_t bits[4] = { 0x01, 0x02, 0x04, 0x08 };
+        int x = DISPLAY_W - 2 - rightPx - mBlockW + 2;
         if (x < 50) x = 50;
         const int y = 3;
         bottomBar.setTextSize(1);
         bottomBar.setTextDatum(top_left);
+        const bool noMessages = gm == 0;
         for (uint8_t mi = 0; mi < 4; mi++) {
-            bool seen = (gm & msgs[mi].bit) != 0;
-            uint16_t col = TEXT_COL; // unseen: default lower-bar / season text color
-            if (seen) {
-                if (mi <= 1) col = pairValid ? msgs[mi].colOk : msgs[mi].colWait;
-                else         col = msgs[mi].colOk;
-                if (written) col = dimRgb565(col);
-            }
+            const bool seen = (gm & bits[mi]) != 0;
+            if (!seen && !noMessages) continue;
+            const uint16_t col = !seen ? dimRgb565(TEXT_COL)
+                               : (mi == 0 && !pairValid) ? 0xF800
+                               : (mi >= 2) ? 0xFFE0 : 0x07E0;
             bottomBar.setTextColor(col);
-            bottomBar.drawString(msgs[mi].lbl, x, y);
-            x += 7;
-            if (mi < 3) {
-                bottomBar.setTextColor(0x4208);
-                bottomBar.drawString("-", x, y);
-                x += 5;
-            }
+            bottomBar.drawChar((char)('1' + mi), x, y);
+            x += 6;
         }
         bottomBar.setTextColor(TEXT_COL);
     }
