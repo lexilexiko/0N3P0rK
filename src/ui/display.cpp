@@ -853,8 +853,8 @@ void Display::drawBottomBar() {
         SpectrumMode::getStatusLine(left, sizeof(left));
     } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
-        // Show the pinned focus while locked; while hopping, pair the channel
-        // with the most recently seen network name.
+        // Show the pinned focus while locked; while hopping, show the latest
+        // network name. The channel is already present on the right side.
         // targetMode: 0=SCAN 1=LOCK 2=HS 3=PIN 4=KICK
         const char* net = nullptr;
         // Names only — skip "?" placeholder and never show MAC.
@@ -862,8 +862,7 @@ void Display::drawBottomBar() {
             strcmp(c.targetSsid, "?") != 0) net = c.targetSsid;
         else if (c.targetMode != 0 && c.lastHsSsid[0]) net = c.lastHsSsid;
         if (c.targetMode == 0 && c.currentSsid[0]) {
-            snprintf(left, sizeof(left), "SCAN#%02u %s",
-                     (unsigned)c.currentChannel, c.currentSsid);
+            snprintf(left, sizeof(left), "%s", c.currentSsid);
         } else if (net) {
             size_t n = 0;
             while (net[n] && n < 10) {
@@ -872,8 +871,6 @@ void Display::drawBottomBar() {
                 left[n++] = ch;
             }
             left[n] = '\0';
-        } else {
-            snprintf(left, sizeof(left), "SCAN#%02u", (unsigned)c.currentChannel);
         }
         const char* tag = "L";
         if (Cap::runMode() == Cap::RunMode::Aggressive) tag = "A";
@@ -1072,8 +1069,7 @@ void Display::drawBottomBar() {
         left[sizeof(left) - 1] = '\0';
     }
 
-    if (capLive && App::mode() != AppMode::SPECTRUM &&
-        left[0] && strncmp(left, "SCAN", 4) != 0)
+    if (capLive && App::mode() != AppMode::SPECTRUM && left[0])
         bottomBar.setTextColor(0xFE60);
     bottomBar.setTextWrap(false);
 
