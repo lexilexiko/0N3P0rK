@@ -528,6 +528,13 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
                 h->m2Len = 0;
                 memset(h->m2Replay, 0, 8);
             }
+            if (h->haveAnonce3 && !replayIncremented(e + 9, h->m3Replay)) {
+                h->haveAnonce3 = false;
+                h->haveM4 = false;
+                memset(h->anonce3, 0, sizeof(h->anonce3));
+                memset(h->m3Replay, 0, sizeof(h->m3Replay));
+                memset(h->m4Replay, 0, sizeof(h->m4Replay));
+            }
         } else {
             // Same replay counter as current M1 — retransmit, ignore nonce/replay change.
             // But do handle the special case where an earlier M1 didn't match
@@ -675,11 +682,10 @@ bool hasPair(const uint8_t* bssid) {
     if (!bssid) return false;
     portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
-        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0)
-        {
-            bool result = s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
+        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0 &&
+            (s_hs[i].wroteEapol || s_hs[i].wrotePmkid)) {
             portEXIT_CRITICAL(&s_hsMux);
-            return result;
+            return true;
         }
     }
     portEXIT_CRITICAL(&s_hsMux);
@@ -741,14 +747,25 @@ uint8_t globalHandshakeMask() {
 }
 
 bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
-    // M1+M2 (validated, crackable) is the floor no matter what depth asks
-    // for - depth only ever adds stricter requirements on top of it.
-    if (!hasPair(bssid)) return false;
-    if (depth == 0) return true;
-    uint8_t m = handshakeMask(bssid);
-    if (depth >= 1 && !(m & 0x04)) return false; // +M3
-    if (depth >= 2 && !(m & 0x08)) return false; // +M4 (full 4-way)
-    return true;
+    if (!bssid) return false;
+    portENTER_CRITICAL(&s_hsMux);
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        const Hs& h = s_hs[i];
+        if (!h.used || memcmp(h.bssid, bssid, 6) != 0 ||
+            !(h.wroteEapol || h.wrotePmkid)) continue;
+        if (depth >= 1 &&
+            (!h.haveAnonce || !h.haveM2 ||
+             memcmp(h.anonceReplay, h.m2Replay, 8) != 0 ||
+             !h.haveAnonce3 ||
+             !replayIncremented(h.anonceReplay, h.m3Replay))) continue;
+        if (depth >= 2 &&
+            (!h.haveM4 ||
+             memcmp(h.m3Replay, h.m4Replay, 8) != 0)) continue;
+        portEXIT_CRITICAL(&s_hsMux);
+        return true;
+    }
+    portEXIT_CRITICAL(&s_hsMux);
+    return false;
 }
 
 bool hasHandshakeForStation(const uint8_t* bssid, const uint8_t* sta, uint8_t depth) {
