@@ -1245,9 +1245,13 @@ void getStatusLine(char* out, size_t n) {
         if (keys) {
             snprintf(out, n, "D DEPTH  ESC STOP");
         } else {
+            const Hc22000::HandshakeProgress progress =
+                Hc22000::handshakeProgress(s_monBssid, s_huntDepth);
+            const char* status = progress.ready ? "DONE"
+                               : progress.pmkid ? "PMKID" : "wait";
             snprintf(out, n, "HUNT %s  %s",
                      huntDepthName(s_huntDepth),
-                     Hc22000::hasHandshake(s_monBssid, s_huntDepth) ? "DONE" : "wait");
+                     status);
         }
     } else if (s_phase == LOCK) {
         if (keys) {
