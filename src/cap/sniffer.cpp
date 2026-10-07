@@ -31,6 +31,7 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
+static const uint32_t PENDING_STALE_MS = 30000;
 // Keep the capture queue bounded so WPA-sec sync still has a large
 // contiguous heap block available after radio capture. The selected size is
 // loaded from RadioConfig before each capture session starts.
@@ -71,6 +72,7 @@ struct PendingCapture {
     uint8_t m2Replay[8];   // §A: replay counter from M2 — must match m1Replay
     uint8_t m3Replay[8];   // M3 must be M1 replay counter + 1
     uint8_t m4Replay[8];   // M4 must match M3 replay counter
+    uint32_t lastSeenMs;
     Slot m1;
     Slot m2;
     Slot m3;
@@ -1282,13 +1284,44 @@ static bool replayIncremented(const uint8_t* base, const uint8_t* candidate) {
     return memcmp(expected, candidate, sizeof(expected)) == 0;
 }
 
+static bool pendingReadyForDepth(const PendingCapture& p) {
+    if (!p.haveM1 || !p.haveM2 ||
+        memcmp(p.m1Replay, p.m2Replay, sizeof(p.m1Replay)) != 0)
+        return false;
+    if (s_hsDepth >= 1 &&
+        (!p.haveM3 || !replayIncremented(p.m1Replay, p.m3Replay)))
+        return false;
+    if (s_hsDepth >= 2 &&
+        (!p.haveM4 || memcmp(p.m3Replay, p.m4Replay, sizeof(p.m3Replay)) != 0))
+        return false;
+    return true;
+}
+
+static void expireStalePending(uint32_t now) {
+    for (uint8_t i = 0; i < s_pendingSlots; i++) {
+        PendingCapture& p = s_pending[i];
+        if (!p.used || now - p.lastSeenMs < PENDING_STALE_MS ||
+            pendingReadyForDepth(p))
+            continue;
+        Serial.printf("[HS] expired incomplete capture %02X:%02X:%02X:%02X:%02X:%02X / %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      p.bssid[0], p.bssid[1], p.bssid[2],
+                      p.bssid[3], p.bssid[4], p.bssid[5],
+                      p.station[0], p.station[1], p.station[2],
+                      p.station[3], p.station[4], p.station[5]);
+        memset(&p, 0, sizeof(p));
+    }
+}
+
 static void rememberPending(const Slot& s, uint8_t message) {
     if (message == 0) return;
+    uint32_t now = millis();
+    expireStalePending(now);
     PendingCapture* p = pendingFor(s);
     if (!p) {
         s_cnt.framesDropped++;
         return;
     }
+    p->lastSeenMs = now;
 
     uint8_t thisReplay[8];
     extractReplay(s, thisReplay);
