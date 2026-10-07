@@ -162,11 +162,12 @@ static bool isHexString(const char* s, size_t len) {
 
 static bool isUsableMacHex(const char* s) {
     if (!isHexLen(s, 12)) return false;
-    uint8_t first = 0;
-    if (s[0] >= '0' && s[0] <= '9') first = (uint8_t)(s[0] - '0');
-    else if (s[0] >= 'a' && s[0] <= 'f') first = (uint8_t)(s[0] - 'a' + 10);
-    else first = (uint8_t)(s[0] - 'A' + 10);
-    if (first & 1u) return false;
+    const char low = s[1];
+    uint8_t lowNibble;
+    if (low >= '0' && low <= '9') lowNibble = (uint8_t)(low - '0');
+    else if (low >= 'a' && low <= 'f') lowNibble = (uint8_t)(low - 'a' + 10);
+    else lowNibble = (uint8_t)(low - 'A' + 10);
+    if (lowNibble & 1u) return false;
     for (uint8_t i = 0; i < 12; ++i)
         if (s[i] != '0') return true;
     return false;
