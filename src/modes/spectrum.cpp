@@ -1150,11 +1150,14 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     }
 
     char statusLine[28];
-    const char* resultStatus = progress.ready ? "READY"
-                             : progress.pmkid ? "PMKID" : "WAIT";
+    if (progress.ready) {
+        snprintf(statusLine, sizeof(statusLine), "%s READY", huntDepthName(s_huntDepth));
+    } else if (progress.pmkid) {
+        snprintf(statusLine, sizeof(statusLine), "PMKID");
+    } else {
+        snprintf(statusLine, sizeof(statusLine), "%s WAIT", huntDepthName(s_huntDepth));
+    }
     c.setTextColor(progress.ready || progress.pmkid ? UiStyle::GOLD : UiStyle::DIM);
-    snprintf(statusLine, sizeof(statusLine), "%s %s",
-             huntDepthName(s_huntDepth), resultStatus);
     c.drawString(statusLine, panelX + 6, panelY + 1);
 
     if (cap.lastHsSsid[0]) {
@@ -1247,11 +1250,12 @@ void getStatusLine(char* out, size_t n) {
         } else {
             const Hc22000::HandshakeProgress progress =
                 Hc22000::handshakeProgress(s_monBssid, s_huntDepth);
-            const char* status = progress.ready ? "DONE"
-                               : progress.pmkid ? "PMKID" : "wait";
-            snprintf(out, n, "HUNT %s  %s",
-                     huntDepthName(s_huntDepth),
-                     status);
+            if (progress.ready)
+                snprintf(out, n, "HUNT %s  DONE", huntDepthName(s_huntDepth));
+            else if (progress.pmkid)
+                snprintf(out, n, "HUNT PMKID");
+            else
+                snprintf(out, n, "HUNT %s  wait", huntDepthName(s_huntDepth));
         }
     } else if (s_phase == LOCK) {
         if (keys) {
