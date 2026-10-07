@@ -1084,7 +1084,7 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextColor(fg);
     c.drawString(line, 4, 14);
 
-    static const char* metricLabels[] = { "KICK", "EAPOL", "WRITE", "FILE" };
+    static const char* metricLabels[] = { "KICK", "EAPOL", "WRITE", "PCAP" };
     const uint32_t metricValues[] = {
         cap.framesDeauth, cap.framesEapol, cap.framesWritten, cap.filesOpened
     };
