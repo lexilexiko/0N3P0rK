@@ -34,6 +34,7 @@ struct HandshakeProgress {
     uint8_t station[6];
     bool hasStation;
     bool ready;
+    bool eapolWritten;
     bool pmkid;
 };
 

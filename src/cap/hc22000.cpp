@@ -754,18 +754,20 @@ HandshakeProgress handshakeProgress(const uint8_t* bssid, uint8_t depth) {
         uint8_t score = 0;
         for (uint8_t bits = messages; bits; bits >>= 1)
             score += bits & 1u;
+        const bool ready = h.wroteEapol && pair &&
+                           (depth < 1 || m3) && (depth < 2 || m4);
         if (score && (!result.hasStation || score > bestScore ||
-                      (score == bestScore && h.lastSeenMs > bestSeen))) {
+                      (score == bestScore &&
+                       (ready > result.ready ||
+                        (ready == result.ready && h.lastSeenMs > bestSeen))))) {
             result.messages = messages;
             memcpy(result.station, h.sta, sizeof(result.station));
             result.hasStation = true;
+            result.ready = ready;
+            result.eapolWritten = h.wroteEapol;
             bestScore = score;
             bestSeen = h.lastSeenMs;
         }
-
-        if (h.wroteEapol && pair &&
-            (depth < 1 || m3) && (depth < 2 || m4))
-            result.ready = true;
     }
     portEXIT_CRITICAL(&s_hsMux);
     return result;

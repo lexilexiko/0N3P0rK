@@ -1066,23 +1066,26 @@ void Display::drawBottomBar() {
         bottomBar.setTextDatum(top_left);
     }
 
-    // M1/M2/M3/M4 live capture — THIS target only (not OR of every slot).
+    // M1/M2/M3/M4 live capture — one station on THIS target.
     // Empty slots stay dim so the 4-way is always readable.
     //   unseen     = dark
-    //   M1 waiting = grey
-    //   M2 waiting = yellow (seen, replay not matched)
+    //   M1 waiting = grey; M2 appears only after the replay match
     //   M1+M2 pair = green  (crackable)
     //   M3         = cyan
     //   M4         = white
-    //   written    = half-bright
+    //   EAPOL written = half-bright
     if (showMx) {
         const Cap::Counters& cc = Cap::counters();
         uint8_t gm = 0;
+        bool written = false;
         uint8_t mac[6];
-        if (cc.targetBssid[0] && parseBarMac(cc.targetBssid, mac))
-            gm = Hc22000::handshakeMask(mac);
-        bool pairValid = (gm & 0x10) != 0;
-        bool written   = (gm & 0x20) != 0;
+        if (cc.targetBssid[0] && parseBarMac(cc.targetBssid, mac)) {
+            const Hc22000::HandshakeProgress progress =
+                Hc22000::handshakeProgress(mac, 0);
+            gm = progress.messages;
+            written = progress.eapolWritten;
+        }
+        bool pairValid = (gm & 0x03) == 0x03;
         struct { uint8_t bit; const char* lbl; uint16_t colOk; uint16_t colWait; } msgs[4] = {
             { 0x01, "1", 0x07E0, 0x7BEF },
             { 0x02, "2", 0x07E0, 0xFFE0 },
