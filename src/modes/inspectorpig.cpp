@@ -295,7 +295,7 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
         return 0;
     }
 
-    if ((pmkid && nf != 8) || (eapol && nf != 9)) {
+    if ((pmkid && nf != 9) || (eapol && nf != 9)) {
         emit("error      : wrong field count (%u)", (unsigned)nf);
         return 0;
     }
@@ -322,8 +322,8 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
     if (pmkid) {
         emit("pmkid      : %s", f2);
         if (!isHexLen(f2, 32) || !isHexLen(f3, 12) ||
-            !isHexLen(f4, 12) || f6[0] != '\0' ||
-            strcmp(f7, "01") != 0) {
+            !isHexLen(f4, 12) || f6[0] != '\0' || f7[0] != '\0' ||
+            (f8[0] != '\0' && strcmp(f8, "01") != 0)) {
             emit("error      : malformed PMKID record fields");
             return 0;
         }
