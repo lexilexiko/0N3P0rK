@@ -55,9 +55,8 @@ private:
     static constexpr uint8_t VIS_ROWS    = 5;
     static constexpr uint8_t MAX_LINES   = 72;
     static constexpr uint8_t LINE_LEN    = 46;
-    // .22000 lines are small; pcaps are streamed off SD so a 1 MB capture
-    // does not have to fit in heap and is not marked BROKEN for being "too big".
-    static constexpr uint32_t READ_MAX_22000 = 4096u;
+    // PCAPs and .22000 files are streamed off SD; large files never need to
+    // fit in heap just to be inspected.
     static constexpr uint32_t PKT_CAP        = 768u;
     // Verdict index on SD. Append-only; older lines for a name lose to newer
     // ones, so a re-check simply overwrites the previous answer.

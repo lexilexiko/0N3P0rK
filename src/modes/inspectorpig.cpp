@@ -150,6 +150,81 @@ static bool isHexLen(const char* s, size_t want) {
     return n == want;
 }
 
+static bool isHexString(const char* s, size_t len) {
+    if (!s) return false;
+    for (size_t i = 0; i < len; ++i) {
+        const char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F'))) return false;
+    }
+    return true;
+}
+
+static bool isUsableMacHex(const char* s) {
+    if (!isHexLen(s, 12)) return false;
+    uint8_t first = 0;
+    if (s[0] >= '0' && s[0] <= '9') first = (uint8_t)(s[0] - '0');
+    else if (s[0] >= 'a' && s[0] <= 'f') first = (uint8_t)(s[0] - 'a' + 10);
+    else first = (uint8_t)(s[0] - 'A' + 10);
+    if (first & 1u) return false;
+    for (uint8_t i = 0; i < 12; ++i)
+        if (s[i] != '0') return true;
+    return false;
+}
+
+static bool collectCaptureNames(char (**namesOut)[Storage::FILE_NAME_MAX],
+                                uint16_t* countOut) {
+    if (!namesOut || !countOut) return false;
+    *namesOut = nullptr;
+    *countOut = 0;
+
+    File dir = SD.open(Storage::DIR_HS);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return false;
+    }
+
+    uint16_t capacity = 0;
+    File f = dir.openNextFile();
+    while (f) {
+        const char* name = Storage::baseName(f.name());
+        const bool capture = !f.isDirectory() && name && name[0] &&
+                             (isPcapName(name) || isHc22000Name(name));
+        if (capture) {
+            if (*countOut == capacity) {
+                const uint16_t next = capacity ? (uint16_t)(capacity * 2) : 32;
+                if (next <= capacity) {
+                    f.close();
+                    dir.close();
+                    free(*namesOut);
+                    *namesOut = nullptr;
+                    *countOut = 0;
+                    return false;
+                }
+                void* grown = realloc(*namesOut,
+                    (size_t)next * Storage::FILE_NAME_MAX);
+                if (!grown) {
+                    f.close();
+                    dir.close();
+                    free(*namesOut);
+                    *namesOut = nullptr;
+                    *countOut = 0;
+                    return false;
+                }
+                *namesOut = (char (*)[Storage::FILE_NAME_MAX])grown;
+                capacity = next;
+            }
+            strncpy((*namesOut)[*countOut], name, Storage::FILE_NAME_MAX - 1);
+            (*namesOut)[*countOut][Storage::FILE_NAME_MAX - 1] = '\0';
+            ++*countOut;
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+    dir.close();
+    return true;
+}
+
 // EAPOL-Key message number from the key information bits.
 static uint8_t eapolMsgOf(const uint8_t* e, size_t total) {
     if (!e || total < 7) return 0;
@@ -171,9 +246,10 @@ static uint8_t eapolMsgOf(const uint8_t* e, size_t total) {
 //   WPA*02*MIC*BSSID*STA*ESSID*ANONCE*EAPOL*PAIR
 // ---------------------------------------------------------------------------
 uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
-    char line[1024];
+    char line[1400];
     size_t n = 0;
-    while (n < len && n + 1 < sizeof(line) && data[n] != '\n' && data[n] != '\r') {
+    while (n < len && n + 1 < sizeof(line) &&
+           data[n] != '\n' && data[n] != '\r') {
         line[n] = (char)data[n];
         n++;
     }
@@ -181,6 +257,11 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
 
     emit("source     : .22000 hash line");
     emit("bytes      : %u", (unsigned)len);
+    if (n + 1 == sizeof(line) && n < len &&
+        data[n] != '\n' && data[n] != '\r') {
+        emit("error      : hash line exceeds inspector limit");
+        return 0;
+    }
 
     if (strncmp(line, "WPA*", 4) != 0) {
         emit("magic      : missing WPA* prefix");
@@ -214,6 +295,20 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
         return 0;
     }
 
+    if ((pmkid && nf != 8) || (eapol && nf != 9)) {
+        emit("error      : wrong field count (%u)", (unsigned)nf);
+        return 0;
+    }
+    if (!isUsableMacHex(f3) || !isUsableMacHex(f4)) {
+        emit("error      : invalid or non-unicast BSSID/station");
+        return 0;
+    }
+    if (strlen(f5) > 64 || (strlen(f5) & 1u) ||
+        !isHexString(f5, strlen(f5))) {
+        emit("error      : ESSID must be 0..32 bytes of hex");
+        return 0;
+    }
+
     char ssid[33];
     hexToAscii(f5, ssid, sizeof(ssid));
     emit("bssid      : %s", f3);
@@ -226,13 +321,20 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
 
     if (pmkid) {
         emit("pmkid      : %s", f2);
-        if (!isHexLen(f2, 32)) { emit("probe      : pmkid is not 16 bytes"); return 25; }
+        if (!isHexLen(f2, 32) || !isHexLen(f3, 12) ||
+            !isHexLen(f4, 12) || f6[0] != '\0' ||
+            strcmp(f7, "01") != 0) {
+            emit("error      : malformed PMKID record fields");
+            return 0;
+        }
         uint8_t raw[16];
         hexToBytes(f2, raw, sizeof(raw));
-        if (allZero(raw, sizeof(raw))) { emit("probe      : pmkid is all zeros"); return 25; }
-        if (!isHexLen(f3, 12)) { emit("probe      : bad bssid"); score -= 15; }
+        if (allZero(raw, sizeof(raw))) {
+            emit("error      : PMKID is all zeros");
+            return 0;
+        }
         score += 50;
-        emit("result     : complete PMKID, no client needed");
+        emit("result     : complete PMKID, no EAPOL exchange needed");
         return (score > 100) ? 100 : score;
     }
 
@@ -241,52 +343,54 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
     emit("anonce     : %s", f6);
     emit("pair       : 0x%s", f8);
 
-    if (!isHexLen(f2, 32)) emit("probe      : mic is not 16 bytes");
-    else {
-        uint8_t raw[16];
-        hexToBytes(f2, raw, sizeof(raw));
-        if (allZero(raw, sizeof(raw))) emit("probe      : mic is all zeros");
-        else score += 15;
+    const size_t eapolHexLen = strlen(f7);
+    if (!isHexLen(f2, 32) || !isHexLen(f6, 64) ||
+        eapolHexLen < 198 || eapolHexLen > 1024 ||
+        (eapolHexLen & 1u) || !isHexString(f7, eapolHexLen) ||
+        (strcmp(f8, "00") != 0 && strcmp(f8, "02") != 0)) {
+        emit("error      : malformed EAPOL hash fields");
+        return 0;
     }
-    if (!isHexLen(f6, 64)) emit("probe      : anonce is not 32 bytes");
-    else {
-        uint8_t raw[32];
-        hexToBytes(f6, raw, sizeof(raw));
-        if (allZero(raw, sizeof(raw))) emit("probe      : anonce is all zeros");
-        else score += 15;
+    uint8_t micRaw[16], nonceRaw[32];
+    hexToBytes(f2, micRaw, sizeof(micRaw));
+    hexToBytes(f6, nonceRaw, sizeof(nonceRaw));
+    if (allZero(micRaw, sizeof(micRaw)) || allZero(nonceRaw, sizeof(nonceRaw))) {
+        emit("error      : MIC or ANONCE is all zeros");
+        return 0;
     }
-    if (strcmp(f8, "00") == 0 || strcmp(f8, "02") == 0) score += 10;
-    else {
-        emit("probe      : pair should be 00 or 02");
-        score = (score > 20) ? (uint8_t)(score - 20) : 0;
-    }
+    score += 30;
 
     // Decode the embedded EAPOL and check it against 802.11i.
-    uint8_t* e = (uint8_t*)malloc(512);
-    if (!e) {
-        emit("probe      : out of memory for eapol");
-        return score;
-    }
-    size_t el = hexToBytes(f7, e, 512);
+    uint8_t e[512];
+    size_t el = hexToBytes(f7, e, sizeof(e));
     emit("eapol      : %u bytes", (unsigned)el);
     if (el < 99) {
-        emit("probe      : eapol shorter than 99 bytes");
-        free(e);
-        return (score > 25) ? (uint8_t)(score - 25) : 0;
+        emit("error      : EAPOL shorter than 99 bytes");
+        return 0;
     }
 
     uint16_t body  = (uint16_t)((e[2] << 8) | e[3]);
     uint16_t total = (uint16_t)(4 + body);
     emit("eapol hdr  : %u %s", (unsigned)total,
          (total == el) ? "(length ok)" : "(length mismatch!)");
-    if (total == el) score += 10;
-    if (e[1] != 3) emit("probe      : not an EAPOL-Key frame");
+    if (total != el || e[1] != 3) {
+        emit("error      : invalid EAPOL length/type");
+        return 0;
+    }
+    score += 10;
     emit("descriptor : %u %s", (unsigned)e[4],
          e[4] == 2 ? "RSN/WPA2" : (e[4] == 254 ? "WPA1" : "?"));
+    if (e[4] != 2 && e[4] != 254) {
+        emit("error      : unsupported EAPOL key descriptor");
+        return 0;
+    }
 
     uint8_t msg = eapolMsgOf(e, el);
     emit("message    : M%u", (unsigned)msg);
-    if (msg == 0) emit("probe      : key info does not match M1..M4");
+    if (msg != 2) {
+        emit("error      : WPA*02 EAPOL blob must be message M2");
+        return 0;
+    }
     uint16_t ki = (uint16_t)((e[5] << 8) | e[6]);
     emit("key info   : 0x%04X", (unsigned)ki);
     emit("replay     : %02x%02x%02x%02x%02x%02x%02x%02x",
@@ -297,12 +401,25 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
     // zeroed. A non-zero copy means the line was built from a raw frame.
     bool micZeroed = allZero(e + 81, 16);
     emit("mic in blob: %s", micZeroed ? "zeroed (correct)" : "NOT zeroed (!)");
-    if (micZeroed) score += 10;
+    if (!micZeroed) {
+        emit("error      : EAPOL MIC field must be zeroed in WPA*02 blob");
+        return 0;
+    }
+    score += 10;
 
     uint16_t kdLen = (uint16_t)((e[97] << 8) | e[98]);
     emit("key data   : %u bytes", (unsigned)kdLen);
-    if (kdLen >= 20 && (size_t)(99 + kdLen) <= el && e[99] == 0x30) {
+    if ((size_t)99 + kdLen > el) {
+        emit("error      : key data exceeds EAPOL body");
+        return 0;
+    }
+    if (kdLen >= 20 && e[99] == 0x30) {
         const uint8_t* kd = e + 99;
+        const size_t rsnLen = (size_t)kd[1] + 2;
+        if (rsnLen > kdLen || rsnLen < 20) {
+            emit("error      : malformed RSN key data");
+            return 0;
+        }
         const uint8_t* g  = kd + 4;
         const char* gname = (g[0] == 0x00 && g[1] == 0x0F && g[2] == 0xAC)
             ? (g[3] == 0x04 ? "CCMP" : (g[3] == 0x02 ? "TKIP" : "other"))
@@ -310,15 +427,19 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
         emit("rsn ver    : %u", (unsigned)(kd[2] | (kd[3] << 8)));
         emit("group ciph : %s", gname);
         uint16_t pc = (uint16_t)(kd[8] | (kd[9] << 8));
-        if (pc >= 1 && (uint16_t)(14) <= (uint16_t)(kd[1] + 2)) {
+        size_t pairEnd = 10u + (size_t)pc * 4u;
+        if (pc >= 1 && pairEnd <= rsnLen) {
             const uint8_t* pw = kd + 10;
             const char* pname = (pw[0] == 0x00 && pw[1] == 0x0F && pw[2] == 0xAC)
                 ? (pw[3] == 0x04 ? "CCMP" : (pw[3] == 0x02 ? "TKIP" : "other"))
                 : "unknown";
             emit("pairwise   : %s", pname);
         }
-        uint16_t akOff = (uint16_t)(10 + pc * 4);
-        if ((uint16_t)(akOff + 6) <= (uint16_t)(kd[1] + 2)) {
+        size_t akOff = pairEnd;
+        if (akOff + 2 <= rsnLen) {
+            uint16_t akCnt = (uint16_t)(kd[akOff] | (kd[akOff + 1] << 8));
+            size_t akEnd = akOff + 2u + (size_t)akCnt * 4u;
+            if (akCnt && akEnd <= rsnLen) {
             const uint8_t* ak = kd + akOff + 2;
             const char* aname = (ak[0] == 0x00 && ak[1] == 0x0F && ak[2] == 0xAC)
                 ? (ak[3] == 0x01 ? "WPA" : (ak[3] == 0x02 ? "PSK" :
@@ -326,16 +447,14 @@ uint8_t InspectorPig::analyze22000(const uint8_t* data, size_t len) {
                    (ak[3] == 0x08 ? "SAE" : "other")))))
                 : "unknown";
             emit("akm        : %s", aname);
+            }
         }
         score += 5;
     } else {
-        emit("key data   : no RSN IE in this message");
+        emit("key data   : no RSN IE (allowed)");
     }
-    free(e);
 
-    emit("result     : %s",
-         (score >= 85) ? "complete EAPOL pair"
-                       : "EAPOL pair looks incomplete");
+    emit("result     : structurally valid crackable EAPOL record");
     return (score > 100) ? 100 : score;
 }
 
@@ -388,8 +507,8 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
     if (magic == PCAPNG_MAGIC) {
         emit("magic      : 0A0D0D0A  pcapng");
         emit("note       : pcapng blocks are not decoded by this inspector");
-        emit("result     : container recognised, contents not inspected");
-        return 40;
+        emit("result     : unsupported container; no content verdict");
+        return 0;
     }
     const bool le = (magic == PCAP_MAGIC_LE);
     const bool be = (magic == PCAP_MAGIC_BE);
@@ -411,25 +530,44 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
 
     emit("magic      : %s  pcap v%u.%u", le ? "D4C3B2A1 (LE)" : "A1B2C3D4 (BE)",
          (unsigned)rd16(gh + 4), (unsigned)rd16(gh + 6));
-    emit("snaplen    : %u", (unsigned)rd32(gh + 16));
+    uint16_t major = rd16(gh + 4), minor = rd16(gh + 6);
+    uint32_t snaplen = rd32(gh + 16);
+    emit("snaplen    : %u", (unsigned)snaplen);
+    if (major != 2 || minor < 4)
+        emit("warning    : non-standard pcap version");
+    if (snaplen == 0) {
+        emit("error      : snaplen is zero");
+        return 0;
+    }
     uint32_t linktype = rd32(gh + 20);
     emit("linktype   : %u %s", (unsigned)linktype,
          linktype == LINK_RADIOTAP ? "(radiotap+802.11)"
                                    : (linktype == LINK_80211 ? "(raw 802.11)"
                                                              : "(unexpected!)"));
+    if (linktype != LINK_RADIOTAP && linktype != LINK_80211) {
+        emit("error      : unsupported linktype; packets not decoded");
+        return 0;
+    }
 
-    uint16_t frames = 0, badRecords = 0, beacons = 0, proberesp = 0;
-    uint16_t eapolSeen = 0, shownEapol = 0;
+    uint32_t frames = 0, badRecords = 0, beacons = 0, proberesp = 0;
+    uint32_t eapolSeen = 0, badEapol = 0, shownEapol = 0;
+    uint32_t packetInspectionTruncated = 0;
     uint8_t  chan = 0;
     int8_t   rssi = 0;
     bool     hasRadiotap = false;
     char     ssid[33] = "";
     bool     mSeen[5] = {false, false, false, false, false};
-    // Keep a few replay counters so a retry M1 does not poison the first M2.
-    uint8_t  replayM1[4][8] = {{0}};
-    uint8_t  replayM2[4][8] = {{0}};
-    uint8_t  replayM3[4][8] = {{0}};
-    uint8_t  nM1 = 0, nM2 = 0, nM3 = 0;
+    struct StationTrack {
+        uint8_t bssid[6];
+        uint8_t station[6];
+        uint8_t count[5];
+        uint8_t replay[5][4][8];
+        bool replayOverflow;
+    };
+    static const uint8_t MAX_STATIONS = 8;
+    StationTrack stations[MAX_STATIONS] = {};
+    uint8_t stationCount = 0;
+    uint16_t untrackedStations = 0;
 
     emit("-- packet records --");
     uint8_t pkt[InspectorPig::PKT_CAP];
@@ -443,10 +581,14 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
             break;
         }
         uint32_t incl = rd32(ph + 8);
-        if (incl == 0) {
-            emit("  record %u zero length", (unsigned)frames);
+        uint32_t orig = rd32(ph + 12);
+        if (incl == 0 || incl > orig || incl > snaplen) {
+            emit("  record %u invalid lengths incl=%u orig=%u snap=%u",
+                 (unsigned)frames, (unsigned)incl, (unsigned)orig,
+                 (unsigned)snaplen);
             badRecords++;
-            break;
+            if (!skipBytes(f, incl)) break;
+            continue;
         }
         uint32_t take = incl < InspectorPig::PKT_CAP ? incl : InspectorPig::PKT_CAP;
         size_t got = f.read(pkt, take);
@@ -460,6 +602,7 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
             badRecords++;
             break;
         }
+        if (incl > take) packetInspectionTruncated++;
         uint16_t flen = (uint16_t)take;
         frames++;
         if ((frames & 31u) == 0) yield();
@@ -468,31 +611,42 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
         if (linktype == LINK_RADIOTAP) {
             if (flen < 8) continue;
             uint16_t itLen = (uint16_t)(pkt[2] | (pkt[3] << 8));
-            if (itLen < 8 || itLen > 80 || itLen > flen) continue;
+            if (itLen < 8 || itLen > flen) {
+                badRecords++;
+                continue;
+            }
             hasRadiotap = true;
             uint32_t present = (uint32_t)pkt[4] | ((uint32_t)pkt[5] << 8) |
                                ((uint32_t)pkt[6] << 16) | ((uint32_t)pkt[7] << 24);
             uint16_t rp = 8;
-            if (present & (1u << 31)) {
-                // another present word; skip so channel/rssi parse stays honest
+            bool extended = (present & (1u << 31)) != 0;
+            while (extended && (uint32_t)rp + 4 <= itLen) {
+                uint32_t next = (uint32_t)pkt[rp] |
+                                ((uint32_t)pkt[rp + 1] << 8) |
+                                ((uint32_t)pkt[rp + 2] << 16) |
+                                ((uint32_t)pkt[rp + 3] << 24);
                 rp = (uint16_t)(rp + 4);
+                extended = (next & (1u << 31)) != 0;
             }
-            if (present & (1u << 0)) { rp = (uint16_t)((rp + 7) & ~7u); rp += 8; }
-            if (present & (1u << 1)) rp += 1;
-            if (present & (1u << 2)) rp += 1;
-            if (present & (1u << 3)) {
-                rp = (uint16_t)((rp + 1) & ~1u);
-                if ((uint32_t)rp + 2 <= (uint32_t)itLen) {
-                    uint16_t freq = (uint16_t)(pkt[rp] | (pkt[rp + 1] << 8));
-                    if (freq >= 2412 && freq <= 2472) chan = (uint8_t)((freq - 2407) / 5);
-                    else if (freq == 2484) chan = 14;
+            if (!extended) {
+                if (present & (1u << 0)) { rp = (uint16_t)((rp + 7) & ~7u); rp += 8; }
+                if (present & (1u << 1)) rp += 1;
+                if (present & (1u << 2)) rp += 1;
+                if (present & (1u << 3)) {
+                    rp = (uint16_t)((rp + 1) & ~1u);
+                    if ((uint32_t)rp + 2 <= (uint32_t)itLen) {
+                        uint16_t freq = (uint16_t)(pkt[rp] | (pkt[rp + 1] << 8));
+                        if (freq >= 2412 && freq <= 2472)
+                            chan = (uint8_t)((freq - 2407) / 5);
+                        else if (freq == 2484) chan = 14;
+                    }
+                    rp += 4;
                 }
-                rp += 4;
-            }
-            if (present & (1u << 4)) { rp = (uint16_t)((rp + 1) & ~1u); rp += 2; }
-            if (present & (1u << 5)) {
-                if ((uint32_t)rp < (uint32_t)itLen) rssi = (int8_t)pkt[rp];
-                rp += 1;
+                if (present & (1u << 4)) { rp = (uint16_t)((rp + 1) & ~1u); rp += 2; }
+                if (present & (1u << 5)) {
+                    if ((uint32_t)rp < (uint32_t)itLen) rssi = (int8_t)pkt[rp];
+                    rp += 1;
+                }
             }
             fr = pkt + itLen;
             flen = (uint16_t)(flen - itLen);
@@ -526,7 +680,17 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
 
         const uint8_t* e = fr + ho + 8;
         uint16_t elen = (uint16_t)(flen - ho - 8);
-        if (elen < 99 || e[1] != 0x03) continue;
+        if (elen < 99 || e[1] != 0x03) {
+            badEapol++;
+            continue;
+        }
+        uint16_t bodyLen = (uint16_t)((e[2] << 8) | e[3]);
+        if ((uint32_t)bodyLen + 4u < 99u ||
+            (uint32_t)bodyLen + 4u > elen) {
+            badEapol++;
+            continue;
+        }
+        elen = (uint16_t)(bodyLen + 4u);
         uint8_t msg = eapolMsgOf(e, elen);
         if (msg == 0) continue;
 
@@ -541,9 +705,34 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
             emit("     replay %02x%02x%02x%02x%02x%02x%02x%02x",
                  e[9], e[10], e[11], e[12], e[13], e[14], e[15], e[16]);
         }
-        if (msg == 1 && nM1 < 4) { memcpy(replayM1[nM1], e + 9, 8); nM1++; }
-        if (msg == 2 && nM2 < 4) { memcpy(replayM2[nM2], e + 9, 8); nM2++; }
-        if (msg == 3 && nM3 < 4) { memcpy(replayM3[nM3], e + 9, 8); nM3++; }
+
+        const uint8_t* bssid = (msg == 1 || msg == 3) ? fr + 10 : fr + 4;
+        const uint8_t* station = (msg == 1 || msg == 3) ? fr + 4 : fr + 10;
+        uint8_t si = 0;
+        while (si < stationCount &&
+               (memcmp(stations[si].bssid, bssid, 6) != 0 ||
+                memcmp(stations[si].station, station, 6) != 0)) si++;
+        if (si == stationCount) {
+            if (stationCount == MAX_STATIONS) {
+                untrackedStations++;
+                continue;
+            }
+            memcpy(stations[si].bssid, bssid, 6);
+            memcpy(stations[si].station, station, 6);
+            stationCount++;
+        }
+        uint8_t count = stations[si].count[msg];
+        bool duplicate = false;
+        for (uint8_t i = 0; i < count; ++i) {
+            if (memcmp(stations[si].replay[msg][i], e + 9, 8) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate && count < 4) {
+            memcpy(stations[si].replay[msg][count], e + 9, 8);
+            stations[si].count[msg]++;
+        } else if (!duplicate) stations[si].replayOverflow = true;
     }
 
     emit("-- summary --");
@@ -555,6 +744,18 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
     emit("beacons    : %u", (unsigned)beacons);
     emit("probe resp : %u", (unsigned)proberesp);
     emit("eapol      : %u", (unsigned)eapolSeen);
+    emit("bad eapol  : %u", (unsigned)badEapol);
+    emit("stations   : %u tracked, %u beyond limit",
+         (unsigned)stationCount, (unsigned)untrackedStations);
+    uint16_t replayOverflowStations = 0;
+    for (uint8_t si = 0; si < stationCount; ++si)
+        if (stations[si].replayOverflow) replayOverflowStations++;
+    if (replayOverflowStations)
+        emit("probe      : replay storage limit reached for %u stations",
+             (unsigned)replayOverflowStations);
+    if (packetInspectionTruncated)
+        emit("probe      : %u large records parsed from first %u bytes",
+             (unsigned)packetInspectionTruncated, (unsigned)InspectorPig::PKT_CAP);
     emit("messages   : M1:%s M2:%s M3:%s M4:%s",
          mSeen[1] ? "y" : "-", mSeen[2] ? "y" : "-",
          mSeen[3] ? "y" : "-", mSeen[4] ? "y" : "-");
@@ -570,31 +771,78 @@ uint8_t InspectorPig::analyzePcapFile(File& f, size_t len) {
     else emit("probe      : no beacon seen -> essid unknown");
     if (eapolSeen) score += 15;
 
-    bool pair12 = false;
-    for (uint8_t i = 0; i < nM1 && !pair12; i++)
-        for (uint8_t j = 0; j < nM2; j++)
-            if (memcmp(replayM1[i], replayM2[j], 8) == 0) { pair12 = true; break; }
-    bool pair23 = false;
-    for (uint8_t i = 0; i < nM2 && !pair23; i++)
-        for (uint8_t j = 0; j < nM3; j++)
-            if (replayIncremented(replayM2[i], replayM3[j])) { pair23 = true; break; }
+    uint8_t pair12Count = 0, pair23Count = 0, depth3Count = 0, depth4Count = 0;
+    for (uint8_t si = 0; si < stationCount; ++si) {
+        const StationTrack& station = stations[si];
+        bool stationPair12 = false, stationPair23 = false;
+        bool stationDepth3 = false, stationDepth4 = false;
+        for (uint8_t a = 0; a < station.count[1]; ++a) {
+            for (uint8_t b = 0; b < station.count[2]; ++b) {
+                if (memcmp(station.replay[1][a], station.replay[2][b], 8) != 0)
+                    continue;
+                stationPair12 = true;
+                for (uint8_t c = 0; c < station.count[3]; ++c) {
+                    if (!replayIncremented(station.replay[1][a],
+                                           station.replay[3][c])) continue;
+                    stationDepth3 = true;
+                    for (uint8_t d = 0; d < station.count[4]; ++d) {
+                        if (memcmp(station.replay[3][c],
+                                   station.replay[4][d], 8) == 0)
+                            stationDepth4 = true;
+                    }
+                }
+            }
+        }
+        for (uint8_t b = 0; b < station.count[2]; ++b)
+            for (uint8_t c = 0; c < station.count[3]; ++c)
+                if (replayIncremented(station.replay[2][b],
+                                      station.replay[3][c])) stationPair23 = true;
+        if (stationPair12) pair12Count++;
+        if (stationPair23) pair23Count++;
+        if (stationDepth3) depth3Count++;
+        if (stationDepth4) depth4Count++;
+        if (stationPair12 || stationPair23 || stationDepth3 || stationDepth4) {
+            char bssidText[18];
+            char staText[18];
+            macToStr(station.bssid, bssidText);
+            macToStr(station.station, staText);
+            emit("  AP %s STA %s pair12:%s pair23:%s +M3:%s FULL:%s",
+                 bssidText, staText, stationPair12 ? "y" : "-",
+                 stationPair23 ? "y" : "-", stationDepth3 ? "y" : "-",
+                 stationDepth4 ? "y" : "-");
+        }
+    }
 
-    if (pair12) {
+    emit("validated  : pair12=%u pair23=%u +M3=%u FULL=%u stations",
+         (unsigned)pair12Count, (unsigned)pair23Count,
+         (unsigned)depth3Count, (unsigned)depth4Count);
+
+    if (pair12Count) {
         score += 45;
-        emit("pair       : M1+M2 with matching replay");
-    } else if (pair23) {
+        emit("pair       : same BSSID+station, M1/M2 replay matches");
+    } else if (pair23Count) {
         score += 45;
-        emit("pair       : M2+M3 (M3 replay = M2+1)");
-    } else if (nM2 && !nM1 && !nM3) {
+        emit("pair       : same BSSID+station, M2/M3 replay matches");
+    } else if (mSeen[2] && !mSeen[1] && !mSeen[3]) {
         emit("probe      : M2 without M1/M3 -> not crackable");
-    } else if (nM1 && !nM2) {
+    } else if (mSeen[1] && !mSeen[2]) {
         emit("probe      : M1 without M2 -> not crackable");
-    } else if (nM1 && nM2) {
-        emit("probe      : M1+M2 but replay counters differ");
+    } else if (mSeen[1] && mSeen[2]) {
+        emit("probe      : M1/M2 did not match on same BSSID+station");
     } else if (eapolSeen == 0) {
         emit("probe      : no EAPOL in this capture");
     }
 
+    if (badRecords || badEapol) {
+        uint32_t penalty = badRecords * 8u + badEapol * 5u;
+        if (penalty > 30u) penalty = 30u;
+        score = (score > penalty) ? (uint8_t)(score - penalty) : 0;
+        emit("probe      : score reduced for malformed records");
+    }
+    if (untrackedStations || replayOverflowStations || packetInspectionTruncated) {
+        if (score > 84) score = 84;
+        emit("probe      : validation limited by station/replay/packet cap");
+    }
     if (score > 100) score = 100;
     emit("result     : %s (%u/100)", verdictFor(score), (unsigned)score);
     return score;
@@ -749,23 +997,47 @@ uint8_t InspectorPig::analyzePath(const char* path, Kind kind) {
     }
     uint8_t score = 0;
     if (kind == Kind::HC22000) {
-        size_t want = n < READ_MAX_22000 ? n : READ_MAX_22000;
-        uint8_t* buf = (uint8_t*)malloc(want);
-        if (!buf) {
-            f.close();
-            emit("error      : out of memory for %u bytes", (unsigned)want);
-            return 0;
+        static const size_t HASH_LINE_CAP = 1400;
+        uint8_t line[HASH_LINE_CAP];
+        size_t lineLen = 0;
+        uint16_t linesSeen = 0, invalid = 0;
+        uint8_t best = 0;
+        bool overflow = false;
+        int ch;
+        auto analyzeLine = [&]() {
+            if (lineLen == 0 && !overflow) return;
+            ++linesSeen;
+            uint8_t lineScore = 0;
+            if (overflow) {
+                emit("source     : .22000 hash line");
+                emit("error      : line exceeds inspector limit");
+            } else {
+                lineScore = analyze22000(line, lineLen);
+            }
+            if (lineScore == 0) ++invalid;
+            if (lineScore > best) best = lineScore;
+            lineLen = 0;
+            overflow = false;
+        };
+        while ((ch = f.read()) >= 0) {
+            if (ch == '\n') {
+                if (lineLen && line[lineLen - 1] == '\r') --lineLen;
+                analyzeLine();
+            } else if (lineLen + 1 < sizeof(line)) {
+                line[lineLen++] = (uint8_t)ch;
+            } else {
+                overflow = true;
+            }
         }
-        size_t got = f.read(buf, want);
+        if (lineLen || overflow) analyzeLine();
         f.close();
-        if (got == 0) {
-            free(buf);
-            emit("error      : short read");
+        if (linesSeen == 0) {
+            emit("error      : no hash lines");
             return 0;
         }
-        score = analyze22000(buf, got);
-        free(buf);
-        return score;
+        emit("hash lines : %u (%u invalid), best=%u/100",
+             (unsigned)linesSeen, (unsigned)invalid, (unsigned)best);
+        return best;
     }
     score = analyzePcapFile(f, n);
     f.close();
@@ -826,8 +1098,8 @@ void InspectorPig::inspectSelected() {
                        reportOk ? 1200 : 1800);
 }
 
-// Every capture on the active tab — the whole folder, not just the page on
-// screen. Verbose text goes to /0N3P0rK/inspector/report.txt, one summary line
+// Every PCAP and hash file in the folder, not just the active tab/page.
+// Verbose text goes to /0N3P0rK/inspector/report.txt, one summary line
 // per capture goes to the screen, and every verdict is written to the index so a
 // later visit shows the answers instead of running the analysis again.
 void InspectorPig::inspectAll() {
@@ -837,16 +1109,14 @@ void InspectorPig::inspectAll() {
         return;
     }
 
-    // Names first, analysis second: the directory handle is closed before any
-    // capture is opened, and this buffer is released before returning.
-    const uint16_t kMaxList = 128;
-    char (*names)[Storage::FILE_NAME_MAX] =
-        (char (*)[Storage::FILE_NAME_MAX])malloc((size_t)kMaxList * Storage::FILE_NAME_MAX);
-    if (!names) {
-        Display::showToast("LOW MEM", 1400);
+    // Close the directory before opening captures. Grow the list as needed
+    // rather than silently stopping at a fixed number of files.
+    char (*names)[Storage::FILE_NAME_MAX] = nullptr;
+    uint16_t listed = 0;
+    if (!collectCaptureNames(&names, &listed)) {
+        Display::showToast("LIST FAIL / LOW MEM", 1600);
         return;
     }
-    const uint16_t listed = Storage::listHandshakes(names, kMaxList);
 
     reportBegin();
     Storage::ensureDir(Storage::DIR_INSPECTOR);
@@ -854,18 +1124,16 @@ void InspectorPig::inspectAll() {
     s_reportOut = SD.open("/0N3P0rK/inspector/report.txt", "w");
     const bool reportOk = (bool)s_reportOut;
 
-    const bool hcTab = (tab == Tab::HC22000);
     s_streamOnly = true;
-    emit("scope      : ALL %s captures in /0N3P0rK/handshakes",
-         hcTab ? ".22000" : "PCAP");
+    emit("scope      : ALL PCAP + .22000 in /0N3P0rK/handshakes");
     s_streamOnly = false;
-    emit("ALL %s", hcTab ? ".22000" : "PCAP");
+    emit("ALL PCAP + .22000");
 
-    uint8_t good = 0, usable = 0, partial = 0, broken = 0;
+    uint16_t good = 0, usable = 0, partial = 0, broken = 0;
     uint16_t done = 0;
     for (uint16_t i = 0; i < listed; i++) {
         const char* nm = names[i];
-        if (!nm[0] || !tabMatches(hcTab, nm)) continue;
+        if (!nm[0]) continue;
 
         char path[96];
         snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, nm);
@@ -907,8 +1175,9 @@ void InspectorPig::inspectAll() {
         yield();
     }
 
-    char tot[48];
-    snprintf(tot, sizeof(tot), "TOT ok=%u use=%u part=%u bad=%u",
+    char tot[64];
+    snprintf(tot, sizeof(tot), "TOT files=%u ok=%u use=%u part=%u bad=%u",
+             (unsigned)done,
              (unsigned)good, (unsigned)usable, (unsigned)partial, (unsigned)broken);
     emit("%s", tot);
     if (s_reportOut) {
@@ -1252,10 +1521,11 @@ uint8_t InspectorPig::checkOne(const char* filename, char* msg, size_t msgLen) {
     if (s_reportOut) s_reportOut.close();
     s_streamOnly = true;                 // file only: no screen lines exist here
     s_reportOut = SD.open(report, "w");
+    const bool reportOk = (bool)s_reportOut;
 
     emit("file       : %s", filename);
     emit("size       : %u bytes", (unsigned)Storage::fileSize(path));
-    emit("saved to   : %s", report);
+    emit("report     : %s", reportOk ? report : "(open failed)");
     uint8_t score = analyzePath(path, isHc22000Name(filename) ? Kind::HC22000
                                                              : Kind::PCAP);
     emit("verdict    : %u/100 %s", (unsigned)score, verdictFor(score));
@@ -1276,7 +1546,8 @@ uint8_t InspectorPig::checkOne(const char* filename, char* msg, size_t msgLen) {
     }
 
     if (msg && msgLen)
-        snprintf(msg, msgLen, "%s %u/100 SAVED", verdictFor(score), (unsigned)score);
+        snprintf(msg, msgLen, "%s %u/100 %s", verdictFor(score), (unsigned)score,
+                 reportOk ? "REPORT SAVED" : "REPORT FAIL");
     return score;
 }
 
@@ -1287,17 +1558,14 @@ uint16_t InspectorPig::checkAll(char* msg, size_t msgLen) {
         return 0;
     }
 
-    // Names first, analysis second: the SD directory handle is closed before
-    // any capture is opened, and the name list is a short-lived heap buffer
-    // that does not outlive the call.
-    const uint16_t kMaxList = 96;
-    char (*names)[Storage::FILE_NAME_MAX] =
-        (char (*)[Storage::FILE_NAME_MAX])malloc((size_t)kMaxList * Storage::FILE_NAME_MAX);
-    if (!names) {
-        if (msg && msgLen) snprintf(msg, msgLen, "LOW MEM");
+    // Close the directory before opening captures. The list grows with the
+    // number of matching files instead of silently truncating at a fixed cap.
+    char (*names)[Storage::FILE_NAME_MAX] = nullptr;
+    uint16_t listed = 0;
+    if (!collectCaptureNames(&names, &listed)) {
+        if (msg && msgLen) snprintf(msg, msgLen, "LIST FAIL / LOW MEM");
         return 0;
     }
-    const uint16_t listed = Storage::listHandshakes(names, kMaxList);
 
     reportBegin();
     Storage::ensureDir(Storage::DIR_INSPECTOR);
@@ -1306,12 +1574,13 @@ uint16_t InspectorPig::checkAll(char* msg, size_t msgLen) {
     snprintf(reportPath, sizeof(reportPath), "%s/report.txt", Storage::DIR_INSPECTOR);
     s_streamOnly = true;
     s_reportOut = SD.open(reportPath, "w");
+    const bool reportOk = (bool)s_reportOut;
 
-    emit("scope      : ALL captures in /0N3P0rK/handshakes");
+    emit("scope      : ALL PCAP + .22000 in /0N3P0rK/handshakes");
     emit("run by     : LOOT checker");
 
     uint16_t files = 0;
-    uint8_t good = 0, usable = 0, partial = 0, broken = 0;
+    uint16_t good = 0, usable = 0, partial = 0, broken = 0;
     for (uint16_t i = 0; i < listed; i++) {
         const char* name = names[i];
         if (!name[0]) continue;
@@ -1341,12 +1610,12 @@ uint16_t InspectorPig::checkAll(char* msg, size_t msgLen) {
         yield();
     }
 
-    char tot[48];
-    snprintf(tot, sizeof(tot), "TOT ok=%u use=%u part=%u bad=%u",
+    char tot[64];
+    snprintf(tot, sizeof(tot), "TOT files=%u ok=%u use=%u part=%u bad=%u",
+             (unsigned)files,
              (unsigned)good, (unsigned)usable, (unsigned)partial, (unsigned)broken);
     emit("%s", tot);
     if (s_reportOut) {
-        s_reportOut.println(tot);
         s_reportOut.flush();
         s_reportOut.close();
     }
@@ -1354,6 +1623,7 @@ uint16_t InspectorPig::checkAll(char* msg, size_t msgLen) {
     free(names);
 
     if (msg && msgLen)
-        snprintf(msg, msgLen, "%u FILES  OK %u", (unsigned)files, (unsigned)good);
+        snprintf(msg, msgLen, "%u FILES OK %u%s", (unsigned)files,
+                 (unsigned)good, reportOk ? "" : " REPORT FAIL");
     return files;
 }
