@@ -1103,8 +1103,9 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
             c.drawFastVLine(metricX[i + 1] - 1, 30, 7, UiStyle::DIM);
     }
 
-    const bool pair = Hc22000::hasHandshake(s_monBssid, s_huntDepth);
-    const uint8_t mask = Hc22000::handshakeMask(s_monBssid);
+    const Hc22000::HandshakeProgress progress =
+        Hc22000::handshakeProgress(s_monBssid, s_huntDepth);
+    const uint8_t mask = progress.messages;
     const uint8_t reqMask = (s_huntDepth == 0) ? 0x03 : (s_huntDepth == 1 ? 0x07 : 0x0F);
 
     const int panelX = 4;
@@ -1148,10 +1149,12 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.drawString(labels[i], x + 7, y + 1);
     }
 
-    c.setTextColor(pair ? UiStyle::GOLD : UiStyle::DIM);
     char statusLine[28];
+    const char* resultStatus = progress.ready ? "READY"
+                             : progress.pmkid ? "PMKID" : "WAIT";
+    c.setTextColor(progress.ready || progress.pmkid ? UiStyle::GOLD : UiStyle::DIM);
     snprintf(statusLine, sizeof(statusLine), "%s %s",
-             huntDepthName(s_huntDepth), pair ? "READY" : "WAIT");
+             huntDepthName(s_huntDepth), resultStatus);
     c.drawString(statusLine, panelX + 6, panelY + 1);
 
     if (cap.lastHsSsid[0]) {
@@ -1166,6 +1169,13 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     if (Cap::isLocked()) st = "hold after M1";
     else if (cap.framesDeauth) st = "kicking + sniff";
     c.drawString(st, panelX + 6, panelY + 37);
+    if (progress.hasStation) {
+        char station[20];
+        snprintf(station, sizeof(station), "STA %02X:%02X:%02X",
+                 progress.station[3], progress.station[4], progress.station[5]);
+        c.setTextColor(fg);
+        c.drawString(station, panelX + panelW - 82, panelY + 37);
+    }
 }
 
 void start() {

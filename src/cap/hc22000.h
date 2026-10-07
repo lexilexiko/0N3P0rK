@@ -29,6 +29,18 @@ uint16_t convertAllPcaps();
 // 0 if the BSSID isn't tracked at all.
 uint8_t handshakeMask(const uint8_t* bssid);
 
+struct HandshakeProgress {
+    uint8_t messages;
+    uint8_t station[6];
+    bool hasStation;
+    bool ready;
+    bool pmkid;
+};
+
+// Best validated handshake progress for one station on this BSSID.
+// The result does not OR EAPOL messages across different stations.
+HandshakeProgress handshakeProgress(const uint8_t* bssid, uint8_t depth);
+
 // OR of handshakeMask across ALL active slots + extra status bits:
 // bit4=pair valid (M1+M2 replay matched, crackable)
 // bit5=already written to SD

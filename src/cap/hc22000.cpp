@@ -724,6 +724,53 @@ uint8_t handshakeMask(const uint8_t* bssid) {
     return result;
 }
 
+HandshakeProgress handshakeProgress(const uint8_t* bssid, uint8_t depth) {
+    HandshakeProgress result{};
+    if (!bssid) return result;
+
+    uint8_t bestScore = 0;
+    uint32_t bestSeen = 0;
+    portENTER_CRITICAL(&s_hsMux);
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        const Hs& h = s_hs[i];
+        if (!h.used || memcmp(h.bssid, bssid, 6) != 0) continue;
+
+        result.pmkid = result.pmkid || h.wrotePmkid;
+
+        uint8_t messages = 0;
+        const bool m1 = h.haveAnonce;
+        const bool pair = m1 && h.haveM2 &&
+                          memcmp(h.anonceReplay, h.m2Replay, 8) == 0;
+        const bool m3 = pair && h.haveAnonce3 &&
+                        replayIncremented(h.anonceReplay, h.m3Replay);
+        const bool m4 = m3 && h.haveM4 &&
+                        memcmp(h.m3Replay, h.m4Replay, 8) == 0;
+
+        if (m1) messages |= 0x01;
+        if (pair) messages |= 0x02;
+        if (m3) messages |= 0x04;
+        if (m4) messages |= 0x08;
+
+        uint8_t score = 0;
+        for (uint8_t bits = messages; bits; bits >>= 1)
+            score += bits & 1u;
+        if (score && (!result.hasStation || score > bestScore ||
+                      (score == bestScore && h.lastSeenMs > bestSeen))) {
+            result.messages = messages;
+            memcpy(result.station, h.sta, sizeof(result.station));
+            result.hasStation = true;
+            bestScore = score;
+            bestSeen = h.lastSeenMs;
+        }
+
+        if (h.wroteEapol && pair &&
+            (depth < 1 || m3) && (depth < 2 || m4))
+            result.ready = true;
+    }
+    portEXIT_CRITICAL(&s_hsMux);
+    return result;
+}
+
 uint8_t globalHandshakeMask() {
     portENTER_CRITICAL(&s_hsMux);
     uint8_t result = 0;
