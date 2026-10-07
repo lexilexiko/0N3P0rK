@@ -209,43 +209,134 @@ static Hs* slotForStation(const uint8_t* bssid, const uint8_t* sta) {
 
 static void maybeWrite(Hs* h);
 
+static bool isHexText(const char* text, size_t len) {
+    if (!text) return false;
+    for (size_t i = 0; i < len; ++i) {
+        if (!isxdigit((unsigned char)text[i])) return false;
+    }
+    return true;
+}
+
+static bool hashLineHasStation(const char* line, const char* stationHex) {
+    if (!line || !stationHex ||
+        (strncmp(line, "WPA*01*", 7) != 0 &&
+         strncmp(line, "WPA*02*", 7) != 0)) return false;
+    const bool pmkid = strncmp(line, "WPA*01*", 7) == 0;
+
+    const char* field = line;
+    for (uint8_t i = 0; i < 4; ++i) {
+        field = strchr(field, '*');
+        if (!field) return false;
+        ++field;
+    }
+    if (strlen(field) < 13) return false;
+    for (uint8_t i = 0; i < 12; ++i) {
+        if (tolower((unsigned char)field[i]) !=
+                tolower((unsigned char)stationHex[i])) return false;
+    }
+    if (field[12] != '*') return false;
+
+    const char* ssid = field + 13;
+    const char* ssidEnd = strchr(ssid, '*');
+    if (!ssidEnd) return false;
+    const size_t ssidLen = (size_t)(ssidEnd - ssid);
+    if ((ssidLen & 1u) != 0 || !isHexText(ssid, ssidLen)) return false;
+
+    if (pmkid) {
+        const char* pmk = line + 7;
+        const char* ap = strchr(pmk, '*');
+        if (!ap || (size_t)(ap - pmk) != 32 || !isHexText(pmk, 32)) return false;
+        ap++;
+        const char* apEnd = strchr(ap, '*');
+        return apEnd && (size_t)(apEnd - ap) == 12 &&
+               isHexText(ap, 12) && strcmp(ssidEnd, "***01") == 0;
+    }
+
+    const char* nonce = ssidEnd + 1;
+    const char* nonceEnd = strchr(nonce, '*');
+    if (!nonceEnd || (size_t)(nonceEnd - nonce) != 64 ||
+        !isHexText(nonce, 64)) return false;
+    const char* eapol = nonceEnd + 1;
+    const char* pair = strrchr(eapol, '*');
+    if (!pair || (strcmp(pair, "*00") != 0 && strcmp(pair, "*02") != 0))
+        return false;
+    const size_t eapolLen = (size_t)(pair - eapol);
+    return eapolLen >= 194 && (eapolLen & 1u) == 0 &&
+           isHexText(eapol, eapolLen);
+}
+
+static bool fileHasStation(const char* path, const char* stationHex) {
+    File f = SD.open(path, "r");
+    if (!f) return false;
+
+    char line[1280];
+    size_t len = 0;
+    bool found = false;
+    bool overflow = false;
+    int ch;
+    while ((ch = f.read()) >= 0) {
+        if (ch == '\n') {
+            if (len > 0 && line[len - 1] == '\r') --len;
+            line[len] = '\0';
+            if (!overflow && hashLineHasStation(line, stationHex)) {
+                found = true;
+                break;
+            }
+            len = 0;
+            overflow = false;
+        } else if (len + 1 < sizeof(line)) {
+            line[len++] = (char)ch;
+        } else {
+            overflow = true;
+        }
+    }
+    if (!found && len > 0) {
+        if (len > 0 && line[len - 1] == '\r') --len;
+        line[len] = '\0';
+        found = !overflow && hashLineHasStation(line, stationHex);
+    }
+    f.close();
+    return found;
+}
+
 static bool writeLine(Hs* h, const char* suffix, const char* line) {
     if (!h) return false;
     Storage::ensureDir(Storage::DIR_HS);
     char path[80];
     makePath(h, suffix, path, sizeof(path));
+    char stationHex[13];
+    hexEnc(h->sta, 6, stationHex);
+    bool append = false;
 
-    // Same rule as pcap: if a good file is already on SD, do not open "w"
-    // (that truncates). A real WPA*01 / WPA*02 line is well over 64 bytes.
-    // Returning true marks wroteEapol/wrotePmkid so we stop retrying.
     if (SD.exists(path)) {
         File probe = SD.open(path, "r");
         size_t sz = probe ? probe.size() : 0;
         if (probe) probe.close();
-        if (sz >= 64) {
-            Serial.printf("[22000] keep existing %s (%u bytes)\n",
-                          Storage::baseName(path), (unsigned)sz);
+        if (sz >= 64 && fileHasStation(path, stationHex)) {
+            Serial.printf("[22000] keep existing %s for STA %s\n",
+                          Storage::baseName(path), stationHex);
             return true;
         }
-        // Tiny/corrupt leftover — safe to replace.
-        if (sz > 0 && sz < 64) SD.remove(path);
+        if (sz >= 64) {
+            append = true;
+        } else if (sz > 0) {
+            // Tiny/corrupt leftover — safe to replace.
+            SD.remove(path);
+        }
     }
 
-    File f = SD.open(path, "w");
+    File f = SD.open(path, append ? "a" : "w");
     if (!f) return false;
-    f.println(line);
+    const size_t lineLen = strlen(line);
+    const size_t written = f.println(line);
     f.close();
+    if (written < lineLen) return false;
     char ssid[33];
     essidOf(h, ssid);
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, Storage::baseName(path), ssid);
-    char legacy[64];
-    snprintf(legacy, sizeof(legacy),
-             "%s/%02X-%02X-%02X-%02X-%02X-%02X%s",
-             Storage::DIR_HS,
-             h->bssid[0], h->bssid[1], h->bssid[2],
-             h->bssid[3], h->bssid[4], h->bssid[5], suffix);
-    if (strcmp(legacy, path) != 0 && SD.exists(legacy)) SD.remove(legacy);
-    Serial.printf("[22000] wrote %s\n", Storage::baseName(path));
+    Serial.printf("[22000] %s %s for STA %s\n",
+                  append ? "appended" : "wrote",
+                  Storage::baseName(path), stationHex);
     return true;
 }
 
@@ -309,10 +400,15 @@ static void maybeWrite(Hs* h) {
                 hexEnc(nonce, 32, an);
                 char ehex[MAX_EAPOL * 2 + 1];
                 hexEnc(eapol, eapolLen, ehex);
-                char line[768];
-                snprintf(line, sizeof(line), "WPA*02*%s*%s*%s*%s*%s*%s*%02x",
-                         mic, ap, sta, ess, an, ehex, (unsigned)pair);
-                if (writeLine(h, "_hs.22000", line)) h->wroteEapol = true;
+                char line[1280];
+                int lineLen = snprintf(line, sizeof(line),
+                                       "WPA*02*%s*%s*%s*%s*%s*%s*%02x",
+                                       mic, ap, sta, ess, an, ehex, (unsigned)pair);
+                if (lineLen > 0 && (size_t)lineLen < sizeof(line)) {
+                    if (writeLine(h, "_hs.22000", line)) h->wroteEapol = true;
+                } else {
+                    Serial.println("[22000] EAPOL hash line exceeds output buffer");
+                }
             }
         }
     }
@@ -754,12 +850,14 @@ HandshakeProgress handshakeProgress(const uint8_t* bssid, uint8_t depth) {
         uint8_t score = 0;
         for (uint8_t bits = messages; bits; bits >>= 1)
             score += bits & 1u;
-        const bool ready = h.wroteEapol && pair &&
-                           (depth < 1 || m3) && (depth < 2 || m4);
-        if (score && (!result.hasStation || score > bestScore ||
-                      (score == bestScore &&
-                       (ready > result.ready ||
-                        (ready == result.ready && h.lastSeenMs > bestSeen))))) {
+        const bool ready = h.wroteEapol &&
+                           (depth == 0 || (pair && m3)) &&
+                           (depth < 2 || m4);
+        if (score && (!result.hasStation ||
+                      (ready && !result.ready) ||
+                      (ready == result.ready &&
+                       (score > bestScore ||
+                        (score == bestScore && h.lastSeenMs > bestSeen))))) {
             result.messages = messages;
             memcpy(result.station, h.sta, sizeof(result.station));
             result.hasStation = true;
@@ -800,9 +898,15 @@ bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
     portENTER_CRITICAL(&s_hsMux);
     for (uint8_t i = 0; i < MAX_HS; i++) {
         const Hs& h = s_hs[i];
-        if (!h.used || memcmp(h.bssid, bssid, 6) != 0 ||
-            !(h.wroteEapol || h.wrotePmkid)) continue;
-        if (depth >= 1 &&
+        if (!h.used || memcmp(h.bssid, bssid, 6) != 0) continue;
+        if (depth == 0) {
+            if (h.wroteEapol || h.wrotePmkid) {
+                portEXIT_CRITICAL(&s_hsMux);
+                return true;
+            }
+            continue;
+        }
+        if (!h.wroteEapol ||
             (!h.haveAnonce || !h.haveM2 ||
              memcmp(h.anonceReplay, h.m2Replay, 8) != 0 ||
              !h.haveAnonce3 ||
@@ -824,15 +928,18 @@ bool hasHandshakeForStation(const uint8_t* bssid, const uint8_t* sta, uint8_t de
         const Hs& h = s_hs[i];
         if (!h.used || memcmp(h.bssid, bssid, 6) != 0 ||
             memcmp(h.sta, sta, 6) != 0) continue;
-        bool ready = h.wroteEapol || h.wrotePmkid;
-        uint8_t mask = 0;
-        if (h.haveAnonce) mask |= 0x01;
-        if (h.haveM2) mask |= 0x02;
-        if (h.haveAnonce3) mask |= 0x04;
-        if (h.haveM4) mask |= 0x08;
-        bool result = ready &&
-                      (depth < 1 || (mask & 0x04)) &&
-                      (depth < 2 || (mask & 0x08));
+        const bool pair = h.haveAnonce && h.haveM2 &&
+                          memcmp(h.anonceReplay, h.m2Replay, 8) == 0;
+        const bool m3 = pair && h.haveAnonce3 &&
+                        replayIncremented(h.anonceReplay, h.m3Replay);
+        const bool m4 = m3 && h.haveM4 &&
+                        memcmp(h.m3Replay, h.m4Replay, 8) == 0;
+        const bool written = depth == 0
+            ? (h.wroteEapol || h.wrotePmkid)
+            : h.wroteEapol;
+        bool result = written &&
+                      (depth == 0 || (pair && m3)) &&
+                      (depth < 2 || m4);
         portEXIT_CRITICAL(&s_hsMux);
         return result;
     }

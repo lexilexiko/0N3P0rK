@@ -1067,7 +1067,7 @@ void Display::drawBottomBar() {
     }
 
     // M1/M2/M3/M4 live capture — one station on THIS target.
-    // Empty slots stay dim so the 4-way is always readable.
+    // Empty slots use the active season's text color so all four remain visible.
     //   unseen     = dark
     //   M1 waiting = grey; M2 appears only after the replay match
     //   M1+M2 pair = green  (crackable)
@@ -1099,7 +1099,7 @@ void Display::drawBottomBar() {
         bottomBar.setTextDatum(top_left);
         for (uint8_t mi = 0; mi < 4; mi++) {
             bool seen = (gm & msgs[mi].bit) != 0;
-            uint16_t col = 0x3186; // unseen
+            uint16_t col = TEXT_COL; // unseen: default lower-bar / season text color
             if (seen) {
                 if (mi <= 1) col = pairValid ? msgs[mi].colOk : msgs[mi].colWait;
                 else         col = msgs[mi].colOk;

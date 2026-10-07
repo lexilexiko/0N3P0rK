@@ -48,10 +48,8 @@ HandshakeProgress handshakeProgress(const uint8_t* bssid, uint8_t depth);
 // Used by the bottom bar to show M1/M2/M3/M4 live without knowing BSSID.
 uint8_t globalHandshakeMask();
 
-// depth: 0 = M1+M2 only (same as hasPair() - already enough to crack),
-// 1 = also require M3, 2 = require the full 4-way (M1..M4). Always
-// requires hasPair() first regardless of depth, so this can only ever be
-// stricter than hasPair(), never looser.
+// depth: 0 = any saved crackable result (EAPOL or PMKID), 1 = saved EAPOL
+// plus a replay-validated M1/M2/M3 sequence, 2 = also require matching M4.
 bool hasHandshake(const uint8_t* bssid, uint8_t depth);
 bool hasHandshakeForStation(const uint8_t* bssid, const uint8_t* sta, uint8_t depth);
 
