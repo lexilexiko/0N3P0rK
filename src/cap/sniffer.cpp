@@ -1080,6 +1080,202 @@ static void closeFile() {
     }
 }
 
+static bool isAppendablePcap(File& file, size_t fileSize) {
+    if (fileSize < sizeof(Pcap::FileHeader)) return false;
+
+    uint8_t header[sizeof(Pcap::FileHeader)];
+    if (file.read(header, sizeof(header)) != sizeof(header)) return false;
+    if (header[0] != 0xD4 || header[1] != 0xC3 ||
+        header[2] != 0xB2 || header[3] != 0xA1)
+        return false;
+
+    const uint16_t major = (uint16_t)(header[4] | (header[5] << 8));
+    const uint16_t minor = (uint16_t)(header[6] | (header[7] << 8));
+    const uint32_t snaplen = (uint32_t)header[16] |
+                             ((uint32_t)header[17] << 8) |
+                             ((uint32_t)header[18] << 16) |
+                             ((uint32_t)header[19] << 24);
+    const uint32_t linktype = (uint32_t)header[20] |
+                              ((uint32_t)header[21] << 8) |
+                              ((uint32_t)header[22] << 16) |
+                              ((uint32_t)header[23] << 24);
+    if (major != 2 || minor < 4 || snaplen == 0 ||
+        linktype != 127u)
+        return false;
+
+    size_t offset = sizeof(header);
+    uint8_t discard[64];
+    while (offset < fileSize) {
+        if (fileSize - offset < sizeof(Pcap::PacketHeader)) return false;
+        uint8_t packetHeader[sizeof(Pcap::PacketHeader)];
+        if (file.read(packetHeader, sizeof(packetHeader)) != sizeof(packetHeader))
+            return false;
+        offset += sizeof(packetHeader);
+
+        const uint32_t inclLen = (uint32_t)packetHeader[8] |
+                                 ((uint32_t)packetHeader[9] << 8) |
+                                 ((uint32_t)packetHeader[10] << 16) |
+                                 ((uint32_t)packetHeader[11] << 24);
+        const uint32_t origLen = (uint32_t)packetHeader[12] |
+                                 ((uint32_t)packetHeader[13] << 8) |
+                                 ((uint32_t)packetHeader[14] << 16) |
+                                 ((uint32_t)packetHeader[15] << 24);
+        if (inclLen == 0 || inclLen > origLen || inclLen > snaplen ||
+            inclLen > fileSize - offset)
+            return false;
+
+        uint32_t remaining = inclLen;
+        while (remaining) {
+            size_t chunk = remaining < sizeof(discard) ? remaining : sizeof(discard);
+            if (file.read(discard, chunk) != chunk) return false;
+            remaining -= (uint32_t)chunk;
+        }
+        offset += inclLen;
+    }
+    return offset == fileSize;
+}
+
+static bool locateEapolKey(const Slot& s, const uint8_t*& eapol);
+static uint8_t classifyPendingEapol(const Slot& s);
+static bool replayIncremented(const uint8_t* base, const uint8_t* candidate);
+
+struct ExistingPcapStation {
+    uint8_t station[6];
+    bool haveM1;
+    bool haveM2;
+    bool haveM3;
+    bool haveM4;
+    uint8_t m1Replay[8];
+    uint8_t m2Replay[8];
+    uint8_t m3Replay[8];
+};
+
+static bool hasHandshakeAtDepth(File& file, size_t fileSize,
+                                const uint8_t* bssid, uint8_t depth) {
+    static const uint8_t MAX_TRACKED_STATIONS = 16;
+    ExistingPcapStation stations[MAX_TRACKED_STATIONS] = {};
+    uint8_t stationCount = 0;
+    if (!file.seek(sizeof(Pcap::FileHeader))) return false;
+
+    size_t offset = sizeof(Pcap::FileHeader);
+    uint8_t packet[FRAME_MAX + Pcap::RADIOTAP_FAT_LEN];
+    uint8_t discard[64];
+    while (offset < fileSize) {
+        if (fileSize - offset < sizeof(Pcap::PacketHeader)) return false;
+        uint8_t ph[sizeof(Pcap::PacketHeader)];
+        if (file.read(ph, sizeof(ph)) != sizeof(ph)) return false;
+        offset += sizeof(ph);
+
+        const uint32_t incl = (uint32_t)ph[8] | ((uint32_t)ph[9] << 8) |
+                              ((uint32_t)ph[10] << 16) |
+                              ((uint32_t)ph[11] << 24);
+        if (incl == 0 || incl > fileSize - offset) return false;
+        if (incl > sizeof(packet)) {
+            uint32_t remaining = incl;
+            while (remaining) {
+                size_t chunk = remaining < sizeof(discard) ? remaining : sizeof(discard);
+                if (file.read(discard, chunk) != chunk) return false;
+                remaining -= (uint32_t)chunk;
+            }
+            offset += incl;
+            continue;
+        }
+        if (file.read(packet, incl) != incl) return false;
+        offset += incl;
+
+        if (incl < 8) continue;
+        const uint16_t rtLen = (uint16_t)(packet[2] | (packet[3] << 8));
+        if (rtLen < 8 || rtLen > incl) continue;
+        const uint16_t frameLen = (uint16_t)(incl - rtLen);
+        if (frameLen < 24 || frameLen > FRAME_MAX) continue;
+
+        Slot frameSlot{};
+        frameSlot.len = frameLen;
+        memcpy(frameSlot.frame, packet + rtLen, frameLen);
+        const uint8_t* f = frameSlot.frame;
+        if ((f[0] & 0x0C) != 0x08) continue;
+        const bool toDs = (f[1] & 0x01) != 0;
+        const bool fromDs = (f[1] & 0x02) != 0;
+        const uint8_t* frameBssid = nullptr;
+        const uint8_t* frameStation = nullptr;
+        if (toDs && !fromDs) {
+            frameBssid = f + 4;
+            frameStation = f + 10;
+        } else if (!toDs && fromDs) {
+            frameBssid = f + 10;
+            frameStation = f + 4;
+        } else if (toDs && fromDs) {
+            if (frameLen < 30) continue;
+            frameBssid = f + 16;
+            frameStation = f + 10;
+        } else {
+            frameBssid = f + 16;
+            frameStation = f + 10;
+        }
+        if (memcmp(frameBssid, bssid, 6) != 0) continue;
+        memcpy(frameSlot.bssid, frameBssid, 6);
+        memcpy(frameSlot.station, frameStation, 6);
+
+        const uint8_t message = classifyPendingEapol(frameSlot);
+        if (message == 0) continue;
+        const uint8_t* eapol = nullptr;
+        if (!locateEapolKey(frameSlot, eapol)) continue;
+
+        uint8_t si = 0;
+        while (si < stationCount &&
+               memcmp(stations[si].station, frameStation, 6) != 0) si++;
+        if (si == stationCount) {
+            if (stationCount == MAX_TRACKED_STATIONS) continue;
+            memcpy(stations[si].station, frameStation, 6);
+            stationCount++;
+        }
+        ExistingPcapStation& station = stations[si];
+        const uint8_t* replay = eapol + 9;
+        if (message == 1) {
+            if (!station.haveM1 || memcmp(station.m1Replay, replay, 8) != 0) {
+                memcpy(station.m1Replay, replay, 8);
+                station.haveM1 = true;
+                if (station.haveM2 && memcmp(station.m2Replay, replay, 8) != 0)
+                    station.haveM2 = false;
+                if (station.haveM3 && !replayIncremented(replay, station.m3Replay)) {
+                    station.haveM3 = false;
+                    station.haveM4 = false;
+                }
+            }
+        } else if (message == 2) {
+            if (!station.haveM1) {
+                if (!station.haveM2) {
+                    memcpy(station.m2Replay, replay, 8);
+                    station.haveM2 = true;
+                }
+            } else if (memcmp(station.m1Replay, replay, 8) == 0) {
+                memcpy(station.m2Replay, replay, 8);
+                station.haveM2 = true;
+            }
+        } else if (message == 3) {
+            if (station.haveM1 && station.haveM2 &&
+                memcmp(station.m1Replay, station.m2Replay, 8) == 0 &&
+                replayIncremented(station.m1Replay, replay)) {
+                memcpy(station.m3Replay, replay, 8);
+                station.haveM3 = true;
+            }
+        } else if (message == 4) {
+            if (station.haveM3 && memcmp(station.m3Replay, replay, 8) == 0)
+                station.haveM4 = true;
+        }
+
+        const bool pair = station.haveM1 && station.haveM2 &&
+                          memcmp(station.m1Replay, station.m2Replay, 8) == 0;
+        const bool m3 = pair && station.haveM3 &&
+                        replayIncremented(station.m1Replay, station.m3Replay);
+        const bool m4 = m3 && station.haveM4;
+        if (pair && (depth == 0 || (depth == 1 && m3) ||
+                     (depth >= 2 && m4)))
+            return true;
+    }
+    return false;
+}
+
 static bool openFileForBssid(const uint8_t* bssid) {
     if (s_fileOpen) closeFile();
 
@@ -1104,19 +1300,26 @@ static bool openFileForBssid(const uint8_t* bssid) {
         File probe = SD.open(path, "r");
         if (!probe) {
             Serial.printf("[CAP] cannot inspect existing pcap, refusing capture: %s\n", name);
-            addSkip(bssid);
             return false;
         }
         preSize = probe.size();
+        const bool appendable = preSize >= sizeof(Pcap::FileHeader) &&
+                                isAppendablePcap(probe, preSize);
+        const bool alreadyCaptured = appendable &&
+            hasHandshakeAtDepth(probe, preSize, bssid, s_hsDepth);
         probe.close();
         if (preSize > 0 && preSize < sizeof(Pcap::FileHeader)) {
             Serial.printf("[CAP] removed corrupt %u-byte pcap: %s\n", (unsigned)preSize, name);
             SD.remove(path);
             exists = false;
             preSize = 0;
-        } else if (preSize >= sizeof(Pcap::FileHeader)) {
-            Serial.printf("[CAP] pcap already exists, refusing append: %s (%u bytes)\n",
+        } else if (preSize >= sizeof(Pcap::FileHeader) && !appendable) {
+            Serial.printf("[CAP] existing pcap is invalid, preserving and refusing append: %s (%u bytes)\n",
                           name, (unsigned)preSize);
+            return false;
+        } else if (alreadyCaptured) {
+            Serial.printf("[CAP] existing pcap already has HS depth %u, skipping %s\n",
+                          (unsigned)s_hsDepth, name);
             addSkip(bssid);
             return false;
         }
