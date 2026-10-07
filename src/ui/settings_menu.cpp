@@ -98,6 +98,7 @@ static const Item RADIO[] = {
     {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
     {"BURST",     Kind::VALUE,  31, 0, 3, 1},   
+    {"HS TIMEOUT",Kind::VALUE, 34, 0, 120, 30},
     {"RESET",   Kind::ACTION, 19, 0, 0, 0},   // reset to stock
 };
 
@@ -247,6 +248,7 @@ static const char* const H_RADIO[] = {
     "ATTACK BURST PATTERN.",
     "SECONDS AFTER PAIR BEFORE SKIPPING AP.",
     "RESTORE DEFAULT RADIO SETTINGS.",
+    "INCOMPLETE HS IDLE TIME; 0=NEVER.",
 };
 // Hints for RADIO_EDIT — parallel to ALL_RADIO_KNOBS (same order).
 static const char* const H_KNOBS[] = {
@@ -500,6 +502,7 @@ static int getValue(const Item& it) {
             case 29: return r.ringSlots;
             case 32: return r.pendingSlots;
             case 33: return r.autoSkipCompleted ? 1 : 0;
+            case 34: return r.pendingTimeoutSec;
             case 18: return r.pack;
             // Porkchop-style knobs (IDs 20..23).
             case 20: return r.jitterMs;
@@ -579,6 +582,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
     } else if (isRadioPage() && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
     } else if (isRadioPage() && it.id == 27) {
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dS", v);
+    } else if (isRadioPage() && it.id == 34) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
@@ -892,6 +899,7 @@ static bool setValue(const Item& it, int v) {
             case 27: r.depthHoldSec = (uint8_t)v; break;
             case 30: r.txPowerDb = (int8_t)v; break;
             case 31: r.burstPattern = (uint8_t)v; break;
+            case 34: r.pendingTimeoutSec = (uint8_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

@@ -31,7 +31,6 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
-static const uint32_t PENDING_STALE_MS = 30000;
 // Keep the capture queue bounded so WPA-sec sync still has a large
 // contiguous heap block available after radio capture. The selected size is
 // loaded from RadioConfig before each capture session starts.
@@ -1298,9 +1297,12 @@ static bool pendingReadyForDepth(const PendingCapture& p) {
 }
 
 static void expireStalePending(uint32_t now) {
+    const uint8_t timeoutSec = Config::radio().pendingTimeoutSec;
+    if (timeoutSec == 0) return;
+    const uint32_t timeoutMs = (uint32_t)timeoutSec * 1000u;
     for (uint8_t i = 0; i < s_pendingSlots; i++) {
         PendingCapture& p = s_pending[i];
-        if (!p.used || now - p.lastSeenMs < PENDING_STALE_MS ||
+        if (!p.used || now - p.lastSeenMs < timeoutMs ||
             pendingReadyForDepth(p))
             continue;
         Serial.printf("[HS] expired incomplete capture %02X:%02X:%02X:%02X:%02X:%02X / %02X:%02X:%02X:%02X:%02X:%02X\n",
