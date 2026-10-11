@@ -466,43 +466,40 @@ static const Note SND_IR_FIRE[] = {
 // Morse GG was too long (600ms+), replaced with warm resolve in HANDSHAKE
 
 // ==[ PER-SOUND VOLUME SCALING ]==
-// Frequent/ambient sounds play quieter than celebrations.
-// Schultz (1997): predicted events → subdued feedback; rare events → full punch.
+// Farm, animal, weather, and ambient cues share one mixer level to avoid
+// apparent jumps between quiet background events and pig reactions.
 static uint8_t currentVolumeScale = 100;  // 0-100%, set before each sound
 
 static uint8_t eventVolumeScale(Event e) {
     switch (e) {
-        // WHISPER (20%) — rain drip: quiet so it never tortures
+        // Consistent farm/environment mix.
         case RAIN_TICK:
-            return 20;
-        // AMBIENT (35%) — below conscious attention threshold
         case BIRD_HIT:
         case BIRD_IMPACT:
         case SCAN_TICK:
         case SONAR_PING:
-            return 35;
-        // FREQUENT (50%) — acknowledged but not alarming
+        case RADAR_SWEEP:
+        case WOLF:
+        case WOLF_HIT:
+        case THUNDER:
+        case DIG:
+        case JUMP:
+        case ATTACK_HOP:
+        case OINK_HAPPY:
+        case OINK_GRUNT:
+        case OINK_SQUEAL:
+        case OINK_CURIOUS:
+            return 45;
+        // System and UI feedback remain independent of farm ambience.
         case TERMINAL_TICK:
         case NETWORK_NEW:
         case CLIENT_FOUND:
-        case RADAR_SWEEP:
         case CLICK:
         case DEAUTH:
-        case JUMP:
             return 50;
-        case DIG:
-            return 38;
-        case ATTACK_HOP:
-            return 75;
         case IR_FIRE:
             return 80;
-        // SCENE (70%) — thunder / wolf present but not full fanfare
-        case THUNDER:
-        case WOLF:
-            return 70;
-        case WOLF_HIT:
-            return 65;
-        // FULL (100%) — celebrations, captures, UI, pig voices
+        // FULL (100%) — priority celebrations, captures, and UI feedback
         default:
             return 100;
     }
