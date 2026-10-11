@@ -314,6 +314,8 @@ static const PigPalette kPigPalettes[PIG_SKIN_COUNT] = {
     { 0x9B20, 0xFE60, 0xFFF1, 0xC480, 0xFDC0, 0xD4A0, 0x8200, 0x4100, 0xFFFF, 0xAB40, 0x9360, 0xFCC0 },
     // DIRTY — alley / dumpster pig (mud, soot, sad iris)
     { 0x5140, 0x9A85, 0xC548, 0x6B23, 0x8B43, 0x7A22, 0x4208, 0x2104, 0xC618, 0x5180, 0x4208, 0x6B4D },
+    // BOAR — warm forest-brown coat, darker mane, and a muted rose snout
+    { 0x4208, 0x8B66, 0xBDAA, 0x6B4D, 0xC289, 0xA881, 0x6A46, 0x2010, 0xFFFF, 0x4830, 0x5A30, 0x9A65 },
 };
 static int8_t s_skinOverride = -1;  // -1 = player config; companion can force skin
 
@@ -380,6 +382,7 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     const uint8_t skin = (s_skinOverride >= 0) ? (uint8_t)s_skinOverride
                        : Config::personality().pigSkin;
     const bool zombie = (skin == (uint8_t)PigSkin::ZOMBIE);
+    const bool boar = (skin == (uint8_t)PigSkin::BOAR);
 
     const uint16_t O  = pal.out;
     const uint16_t B  = pal.body;
@@ -432,6 +435,12 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     block(-4, -14, 5, 1, H);
     block(-5, -8, 10, 2, Sb);
     block(-4, -7, 8, 1, S);
+    if (boar) {
+        // A short dark bristle ridge on the nape gives the new skin a boar
+        // silhouette while keeping the established body proportions.
+        P(-7, -16, O); P(-6, -17, S); P(-5, -17, S);
+        P(-4, -16, S); P(-3, -17, S); P(-2, -16, S);
+    }
 
     // ========== HEAD ==========
     block(0, -17, 9, 1, O);
@@ -558,6 +567,11 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
         P(sx + 3, sy + 1, N);
     }
     P(sx + 2, sy + 2, SNh);
+    if (Config::personality().tusksEnabled) {
+        const uint16_t tusk = 0xF6B4;
+        P(sx - 1, sy + 1, tusk); P(sx - 1, sy + 2, tusk);
+        P(sx + 5, sy + 1, tusk); P(sx + 5, sy + 2, tusk);
+    }
 
     // ========== MOUTH — unique per mood / FX ==========
     int my = sy + 4;
