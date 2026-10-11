@@ -83,7 +83,8 @@ enum Event {
     JUMP,               // pig hop - short rising boing
     ATTACK_HOP,         // pounce / stomp attack
     RAIN_TICK,          // quiet ambient drip (rain) — keep very soft
-    IR_FIRE             // IR blaster charge / laser zap (play before mute TX)
+    IR_FIRE,            // IR blaster charge / laser zap (play before mute TX)
+    DIG                 // soft earthy scrape when the pig digs
 };
 
 // Initialize audio system (call once at startup)

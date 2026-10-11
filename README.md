@@ -161,9 +161,17 @@ Z-order (back → front), modular files under `src/piglet/`:
 
 ### Controls (farm, typical)
 
-- Walk / edge scroll, jump, attack-hop, sit, play-dead  
+- `,` / `/`: walk; `;`: jump; `SPACE`: attack-hop; `.`: sit / dig
+- Tap `.` once to sit. After the sit animation finishes, release and hold `.` again to dig.
+  Digging rocks the head and tail, throws season-themed ground debris, and plays a
+  quiet scrape. Release to stop digging; the pig stays seated. The sit key is ignored
+  during jumps and attack-hops.
 - **ANIM TEST** (SCENE): cycle demos with `-` / `=` on the farm  
 - **G0**: screen/sound off while some radio work can continue (as designed for capture)
+
+Digging debris follows the farm season: soil and grass in spring/summer, soil and
+leaves in autumn, snow in winter, sand in the desert, and scene-tinted soil in
+RETRO / NOIR / CITY. Ants appear outside winter and RETRO.
 
 ### Personality / SCENE menu (highlights)
 

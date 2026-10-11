@@ -143,6 +143,8 @@ public:
 
     // Player poses (IDLE free roam)
     static void setSitting(bool on);     // sit on haunches
+    static void setDigging(bool on);     // held-down digging animation
+    static bool isSitPoseComplete();
     // Same pixel pig silhouette (friend / NPC). feet = ground contact.
     static void drawCompanion(M5Canvas& canvas, int16_t feetX, int16_t feetY,
                              bool faceRight, bool walking, bool sitting,
