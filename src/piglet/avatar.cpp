@@ -467,17 +467,13 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     // ========== EYES — soft round chibi (not angular cone/drop) ==========
     // Priority: blink > happy-squint > sniff focus > sleepy > sad > angry > hunt > excited > neutral
     if (blink) {
-        // Soft closed curve (cute blink, not a hard slash)
-        P(2, -13, O); P(3, -14, O); P(4, -14, O); P(5, -13, O);
-        P(3, -13, B); P(4, -13, B);
+        // Lift the closed curve one cell so it sits clearly above the cheek.
+        P(2, -14, O); P(3, -15, O); P(4, -15, O); P(5, -14, O);
+        P(3, -14, B); P(4, -14, B);
     } else if (happySquint) {
-        // ^_^ squint smile eyes — same closed arc as blink, but with our
-        // signature twinkle sitting just ABOVE the curve (mirrors the
-        // "extra star glint" trick used on EXCITED) instead of punching
-        // a single stray white pixel into the middle of the black arc
-        P(2, -13, O); P(3, -14, O); P(4, -14, O); P(5, -13, O);
-        P(3, -13, B); P(4, -13, B);
-        P(3, -15, EG); P(4, -15, EG);
+        // Happy closed arc with the sclera and pupil left visible inside it.
+        P(2, -14, O); P(3, -15, O); P(4, -15, O); P(5, -14, O);
+        P(3, -14, EW); P(4, -14, EP);
     } else if (sniff) {
         // Half-open lid, but full white+iris+pupil showing — "curious
         // focus", not a flat black bar on top. Top row gets a bright glint
