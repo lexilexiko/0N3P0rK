@@ -732,80 +732,6 @@ static DigParticle digParticles[DIG_PARTICLE_COUNT] = {};
 static uint8_t digParticleSpawnIdx = 0;
 static uint32_t lastDigParticleUpdate = 0;
 static uint32_t lastDigBurstCycle = UINT32_MAX;
-struct DigMound {
-    int16_t x;
-    int16_t groundY;
-    uint32_t createdAt;
-    Season season;
-    bool active;
-};
-static constexpr uint8_t DIG_MOUND_COUNT = 3;
-static constexpr uint32_t DIG_MOUND_LIFETIME_MS = 4200;
-static DigMound digMounds[DIG_MOUND_COUNT] = {};
-static uint8_t digMoundSpawnIdx = 0;
-static bool digWasActive = false;
-static int16_t lastDigX = -1;
-static int16_t lastDigGroundY = 104;
-static Season lastDigSeason = Season::SUMMER;
-
-static void digMoundPalette(Season season, uint16_t& soil, uint16_t& highlight,
-                            uint16_t& ground) {
-    switch (season) {
-        case Season::SPRING: soil = 0x8A40; highlight = 0xBFE0; ground = 0x6D80; break;
-        case Season::AUTUMN: soil = 0x7A40; highlight = 0xD280; ground = 0x6A40; break;
-        case Season::WINTER: soil = 0x6B6D; highlight = 0xDEFB; ground = 0x420C; break;
-        case Season::RETRO:  soil = 0x4208; highlight = 0xBDF7; ground = 0x18C3; break;
-        case Season::NOIR:   soil = 0x2104; highlight = 0x7BCF; ground = 0x0841; break;
-        case Season::CITY:   soil = 0x4208; highlight = 0x9CF3; ground = 0x3186; break;
-        case Season::DESERT: soil = 0xD4A0; highlight = 0xF6E0; ground = 0xD4A0; break;
-        default:             soil = 0x8A40; highlight = 0xA3E0; ground = 0x3480; break;
-    }
-}
-
-static void updateAndDrawDigMounds(M5Canvas& canvas, bool digging,
-                                   int16_t snoutX, int16_t groundY) {
-    const uint32_t now = millis();
-    if (digging && snoutX >= 12 && snoutX < 228) {
-        lastDigX = snoutX;
-        lastDigGroundY = groundY;
-        lastDigSeason = Weather::getActiveSeason();
-    }
-    if (!digging && digWasActive && lastDigX >= 12 && lastDigX < 228 &&
-        now - s_digStartMs >= 500u) {
-        digMounds[digMoundSpawnIdx] = {lastDigX, lastDigGroundY, now, lastDigSeason, true};
-        digMoundSpawnIdx = (uint8_t)((digMoundSpawnIdx + 1u) % DIG_MOUND_COUNT);
-    }
-    digWasActive = digging;
-
-    for (DigMound& mound : digMounds) {
-        if (!mound.active) continue;
-        const uint32_t age = now - mound.createdAt;
-        if (age >= DIG_MOUND_LIFETIME_MS) {
-            mound.active = false;
-            continue;
-        }
-
-        const uint8_t fade = (uint8_t)((age * 16u) / DIG_MOUND_LIFETIME_MS);
-        const int width = 20 - (int)((age * 19u) / DIG_MOUND_LIFETIME_MS);
-        if (width <= 0) continue;
-
-        uint16_t soil, highlight, ground;
-        digMoundPalette(mound.season, soil, highlight, ground);
-        const uint16_t mid = pigMix(soil, ground, (uint8_t)(fade / 2u));
-        const int16_t half = (int16_t)(width / 2);
-        const int16_t baseY = (int16_t)(mound.groundY - 2);
-        const int16_t left = (int16_t)(mound.x - half);
-        canvas.fillRect(left, baseY, width, 2, maybeFlash(mid));
-        if (fade < 12u) {
-            const int capWidth = width > 7 ? width - 6 : width;
-            canvas.fillRect((int16_t)(mound.x - capWidth / 2),
-                            (int16_t)(baseY - 2), capWidth, 2, maybeFlash(soil));
-        }
-        if (fade < 7u) {
-            canvas.drawPixel(mound.x, (int16_t)(baseY - 3), maybeFlash(highlight));
-        }
-    }
-}
 
 static void updateAndDrawDigParticles(M5Canvas& canvas, bool digging,
                                       int16_t snoutX, int16_t groundY) {
@@ -813,7 +739,6 @@ static void updateAndDrawDigParticles(M5Canvas& canvas, bool digging,
     uint32_t dt = lastDigParticleUpdate ? now - lastDigParticleUpdate : 0;
     if (dt > 50u) dt = 50u;
     lastDigParticleUpdate = now;
-    updateAndDrawDigMounds(canvas, digging, snoutX, groundY);
 
     if (!digging) {
         lastDigBurstCycle = UINT32_MAX;
@@ -976,10 +901,6 @@ void Avatar::init() {
     digParticleSpawnIdx = 0;
     lastDigParticleUpdate = 0;
     lastDigBurstCycle = UINT32_MAX;
-    for (DigMound& mound : digMounds) mound.active = false;
-    digMoundSpawnIdx = 0;
-    digWasActive = false;
-    lastDigX = -1;
     currentState = AvatarState::NEUTRAL;
     isBlinking = false;
     isSniffing = false;

@@ -163,10 +163,9 @@ Z-order (back → front), modular files under `src/piglet/`:
 
 - `,` / `/`: walk; `;`: jump; `SPACE`: attack-hop; `.`: sit / dig
 - Tap `.` once to sit. After the sit animation finishes, release and hold `.` again to dig.
-  Digging rocks the head and tail, throws season-themed ground debris, leaves a
-  small mound that fades over a few seconds, and plays a quiet scrape. Farm and
-  environmental sound cues use a shared mixer level. Release to stop digging; the
-  pig stays seated. The sit key is ignored during jumps and attack-hops.
+  Digging rocks the head and tail, throws season-themed ground debris, and plays
+  a scrape. Release to stop digging; the pig stays seated. The sit key is ignored
+  during jumps and attack-hops.
 - **ANIM TEST** (SCENE): cycle demos with `-` / `=` on the farm  
 - **G0**: screen/sound off while some radio work can continue (as designed for capture)
 
