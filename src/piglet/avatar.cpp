@@ -435,12 +435,6 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     block(-4, -14, 5, 1, H);
     block(-5, -8, 10, 2, Sb);
     block(-4, -7, 8, 1, S);
-    if (boar) {
-        // A short dark bristle ridge on the nape gives the new skin a boar
-        // silhouette while keeping the established body proportions.
-        P(-7, -16, O); P(-6, -17, S); P(-5, -17, S);
-        P(-4, -16, S); P(-3, -17, S); P(-2, -16, S);
-    }
 
     // ========== HEAD ==========
     block(0, -17, 9, 1, O);
