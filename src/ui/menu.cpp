@@ -220,10 +220,6 @@ static bool s_keyWas = false;
 static uint32_t s_openMs = 0;
 static const uint8_t VISIBLE = 4;
 static const uint8_t MODAL_VIS = 4;
-static bool s_returnPending = false;
-static uint8_t s_returnRootIdx = 0;
-static GroupId s_returnGroup = GroupId::NONE;
-static uint8_t s_returnModalIdx = 0;
 
 // leftover screens (PIG tweak / WIFI)
 static int s_sel = 0;
@@ -246,14 +242,6 @@ static uint8_t groupSize(GroupId g) {
     return 0;
 }
 
-static void rememberReturnContext() {
-    if (!s_active || App::mode() != AppMode::MENU) return;
-    s_returnRootIdx = s_rootIdx;
-    s_returnGroup = s_group;
-    s_returnModalIdx = s_modalIdx;
-    s_returnPending = true;
-}
-
 static const char* groupName(GroupId g) {
     if (g == GroupId::ATTACK) return "ATTACK";
     if (g == GroupId::SET) return "SET";
@@ -262,8 +250,6 @@ static const char* groupName(GroupId g) {
 }
 
 static void doAction(uint8_t id) {
-    const AppMode modeBeforeAction = App::mode();
-    rememberReturnContext();
     switch (id) {
         case 1:
             if (Cap::isRunning() && Cap::runMode() == Cap::RunMode::Light) {
@@ -382,8 +368,6 @@ static void doAction(uint8_t id) {
         default:
             break;
     }
-    if (App::mode() == modeBeforeAction || App::mode() == AppMode::FARM)
-        s_returnPending = false;
 }
 
 void begin() {
@@ -423,23 +407,8 @@ bool closeModal() {
 void onEnter(AppMode mode) {
     s_editing = false;
     s_sel = 0;
-    if (mode == AppMode::MENU && s_returnPending) {
-        s_active = true;
-        s_rootIdx = s_returnRootIdx;
-        s_rootScroll = (s_rootIdx >= VISIBLE)
-                     ? (uint8_t)(s_rootIdx - VISIBLE + 1) : 0;
-        s_group = s_returnGroup;
-        s_modalIdx = s_returnModalIdx;
-        s_modalScroll = (s_modalIdx >= MODAL_VIS)
-                      ? (uint8_t)(s_modalIdx - MODAL_VIS + 1) : 0;
-        s_keyWas = true;
-        s_openMs = millis();
-        s_returnPending = false;
-    } else if (mode == AppMode::MENU) {
-        show();
-    } else {
-        hide();
-    }
+    if (mode == AppMode::MENU) show();
+    else hide();
     s_count = 0;
 }
 
@@ -545,8 +514,8 @@ void update() {
             SFX::play(SFX::MENU_CLICK);
             const Item* it = groupItems(s_group);
             uint8_t id = (it && s_modalIdx < n) ? it[s_modalIdx].actionId : 0;
+            closeModal();
             doAction(id);
-            if (s_group != GroupId::NONE) closeModal();
         }
         return;
     }
