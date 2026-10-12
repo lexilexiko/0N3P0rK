@@ -12,6 +12,8 @@ namespace SeasonalFx {
 // === Lifecycle ===
 void init();
 void update();
+// Start the rare seasonal meteor shower immediately (ANIM TEST hook).
+void triggerMeteorShower();
 // Foreground season decor (banks, leaves, tumbleweed, butterflies)
 void draw(M5Canvas& canvas);
 // Backdrop season decor — call after clouds, BEFORE tree/pig

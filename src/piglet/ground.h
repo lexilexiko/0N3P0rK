@@ -36,6 +36,7 @@ void setSpeed(uint16_t ms);
 uint16_t getSpeed();
 void updateScroll(bool moving, bool directionRight, int steps);
 void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx);
+void meteorImpact(int16_t impactX);
 int16_t offset();
 uint16_t burrowScrollPhase();
 void drawUndergroundRoots(M5Canvas& canvas, uint16_t rootColor,

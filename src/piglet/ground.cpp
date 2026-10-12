@@ -20,6 +20,14 @@ static uint16_t s_burrowScrollPhase = 0;
 static uint16_t s_speed = 80;
 static uint32_t s_lastUpdate = 0;
 static constexpr uint16_t BURROW_PATTERN_W = Trees::WORLD_SPAN;
+struct BurnPatch {
+    int16_t x;
+    uint32_t born;
+    bool active;
+};
+static BurnPatch s_burnPatches[8] = {};
+static uint8_t s_burnPatchCursor = 0;
+static constexpr uint32_t BURN_PATCH_LIFE_MS = 15000u;
 
 
 static constexpr int16_t PX = 3;
@@ -52,6 +60,31 @@ static uint16_t flash(uint16_t c) {
     uint16_t g = (((c >> 5) & 0x3F) + 63) >> 1;
     uint16_t b = ((c & 0x1F) + 31) >> 1;
     return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static void scrollBurnPatches(int dir) {
+    for (uint8_t i = 0; i < 8; i++) {
+        if (!s_burnPatches[i].active) continue;
+        s_burnPatches[i].x = (int16_t)(s_burnPatches[i].x + dir);
+        if (s_burnPatches[i].x < 0) s_burnPatches[i].x += 240;
+        else if (s_burnPatches[i].x >= 240) s_burnPatches[i].x -= 240;
+    }
+}
+
+static bool isInBurnPatch(int16_t x, uint32_t now) {
+    for (uint8_t i = 0; i < 8; i++) {
+        BurnPatch& patch = s_burnPatches[i];
+        if (!patch.active) continue;
+        if (now - patch.born >= BURN_PATCH_LIFE_MS) {
+            patch.active = false;
+            continue;
+        }
+        int distance = (int)x - patch.x;
+        if (distance < 0) distance = -distance;
+        if (distance > 120) distance = 240 - distance;
+        if (distance <= 10) return true;
+    }
+    return false;
 }
 
 static void grassStroke(M5Canvas& canvas, int16_t x1, int16_t y1,
@@ -99,6 +132,13 @@ void begin() {
     s_lastUpdate = millis();
 }
 
+void meteorImpact(int16_t impactX) {
+    BurnPatch& patch = s_burnPatches[s_burnPatchCursor++ % 8u];
+    patch.x = impactX;
+    patch.born = millis();
+    patch.active = true;
+}
+
 void setSpeed(uint16_t ms) {
     if (ms < 10) ms = 10;
     s_speed = ms;
@@ -130,6 +170,8 @@ void drawUndergroundRoots(M5Canvas& canvas, uint16_t rootColor,
 void resetBlades() {
     s_offset = 0;
     s_burrowScrollPhase = 0;
+    for (uint8_t i = 0; i < 8; i++) s_burnPatches[i].active = false;
+    s_burnPatchCursor = 0;
     for (int i = 0; i < BLADE_COUNT; i++) {
         uint8_t r = (uint8_t)(esp_random() % 100);
         if (r < 10) {
@@ -176,6 +218,7 @@ void updateScroll(bool moving, bool directionRight, int steps) {
     for (int n = 0; n < steps; n++) {
         if (directionRight) {
             s_offset++;
+            scrollBurnPatches(1);
             s_burrowScrollPhase =
                 (uint16_t)((s_burrowScrollPhase + 1) % BURROW_PATTERN_W);
             Trees::scroll(+1);
@@ -193,6 +236,7 @@ void updateScroll(bool moving, bool directionRight, int steps) {
             }
         } else {
             s_offset--;
+            scrollBurnPatches(-1);
             s_burrowScrollPhase = s_burrowScrollPhase == 0
                 ? (uint16_t)(BURROW_PATTERN_W - 1)
                 : (uint16_t)(s_burrowScrollPhase - 1);
@@ -393,6 +437,21 @@ void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx) {
                     canvas.drawPixel(x, fy, flash(0xFFE0));
             }
         }
+
+        for (uint8_t i = 0; i < 8; i++) {
+            BurnPatch& patch = s_burnPatches[i];
+            if (!patch.active) continue;
+            if (now - patch.born >= BURN_PATCH_LIFE_MS) {
+                patch.active = false;
+                continue;
+            }
+            const int x = patch.x;
+            canvas.fillRect(x - 11, 97, 23, 10, flash(0x5100));
+            canvas.fillRect(x - 8, 96, 16, 2, flash(0x8A60));
+            canvas.fillRect(x - 5, 99, 10, 4, flash(0x4200));
+            canvas.fillRect(x - 13, 102, 4, 2, flash(0x8A60));
+            canvas.fillRect(x + 10, 103, 4, 2, flash(0x8A60));
+        }
     }
 
     bool pigOnGround = ctx.pigOnGround;
@@ -415,6 +474,7 @@ void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx) {
         if (cx >= 240) continue;
 
         const Blade& b = s_blades[i];
+        if (isInBurnPatch(cx, now)) continue;
         // The back pass is the full grass field; marked blades get a separate
         // foreground pass so the back layer stays dense when that pass is off.
         bool nearPig = (cx >= pigLeft - 6 && cx <= pigRight + 6);

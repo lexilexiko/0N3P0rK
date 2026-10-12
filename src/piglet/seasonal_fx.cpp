@@ -4,6 +4,7 @@
 #include "seasonal_fx.h"
 #include "weather.h"
 #include "trees.h"
+#include "ground.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include <esp_random.h>
@@ -68,10 +69,42 @@ struct Tumbleweed {
     float x, y;
     float vx;
     uint8_t phase;
+    uint8_t shedStage;
     bool active;
 };
 static Tumbleweed tumble = {};
 static uint32_t lastTumbleSpawnMs = 0;
+struct TumbleDebris {
+    float x, y, vx, vy;
+    uint32_t settledAt;
+    uint8_t kind;
+    bool settled, active;
+};
+static TumbleDebris tumbleDebris[3] = {};
+
+// Meteor shower: fixed-size state only; no heap allocation during the event.
+struct Meteor {
+    float x, y, vx, vy;
+    bool active;
+};
+struct MeteorFragment {
+    float x, y, vx, vy;
+    uint32_t born;
+    uint8_t shade;
+    bool settled, active;
+};
+static constexpr uint8_t METEOR_FLIGHT_COUNT = 2;
+static constexpr uint8_t METEOR_FRAGMENT_COUNT = 64;
+static constexpr uint32_t GAME_DAY_MS = 360000u;
+static constexpr uint32_t METEOR_INTERVAL_DAYS = 2u;
+static Meteor meteors[METEOR_FLIGHT_COUNT] = {};
+static MeteorFragment meteorFragments[METEOR_FRAGMENT_COUNT] = {};
+static uint8_t meteorLaunched = 0;
+static bool meteorShowerActive = false;
+static uint32_t nextMeteorAt = 0;
+static uint32_t meteorShowerEndsAt = 0;
+static uint32_t nextMeteorGameDay = 2;
+static uint8_t meteorFragmentCursor = 0;
 
 // ---------------------------------------------------------------------------
 // Summer: butterflies (brighter, more of them)
@@ -430,18 +463,23 @@ static void drawSnowBanks(M5Canvas& canvas, bool flash) {
 }
 
 void scroll(int dir) {
-    if (!snowBanksInited) return;
     const int16_t d = (dir > 0) ? 1 : -1;
-    for (int i = 0; i < SNOW_BANK_COUNT; i++) {
-        if (snowBanks[i].h < 1) continue;
-        snowBanks[i].x = (int16_t)(snowBanks[i].x + d);
-        wrapWorldX(snowBanks[i].x);
+    if (snowBanksInited) {
+        for (int i = 0; i < SNOW_BANK_COUNT; i++) {
+            if (snowBanks[i].h < 1) continue;
+            snowBanks[i].x = (int16_t)(snowBanks[i].x + d);
+            wrapWorldX(snowBanks[i].x);
+        }
+        for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
+            if (!snowScars[i].active) continue;
+            snowScars[i].x = (int16_t)(snowScars[i].x + d);
+            wrapWorldX(snowScars[i].x);
+        }
     }
-    for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
-        if (!snowScars[i].active) continue;
-        snowScars[i].x = (int16_t)(snowScars[i].x + d);
-        wrapWorldX(snowScars[i].x);
-    }
+    for (uint8_t i = 0; i < 3; i++)
+        if (tumbleDebris[i].active) tumbleDebris[i].x += (float)d;
+    for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++)
+        if (meteorFragments[i].active) meteorFragments[i].x += (float)d;
 }
 
 void trampleSnow(int pigFeetX) {
@@ -569,6 +607,39 @@ static void drawLeaves(M5Canvas& canvas, bool flash) {
     }
 }
 
+static void shedTumbleDebris(uint8_t stage, uint32_t now) {
+    TumbleDebris& bit = tumbleDebris[stage % 3u];
+    bit.x = tumble.x + (tumble.vx > 0.0f ? -7.0f : 7.0f);
+    bit.y = tumble.y - 6.0f;
+    bit.vx = -tumble.vx * 0.18f + (float)random(-5, 6) / 10.0f;
+    bit.vy = (float)random(-16, -5) / 10.0f;
+    bit.settledAt = now;
+    bit.kind = (stage == 1) ? 1 : 0;
+    bit.settled = false;
+    bit.active = true;
+}
+
+static void updateTumbleDebris(uint32_t now) {
+    for (uint8_t i = 0; i < 3; i++) {
+        TumbleDebris& bit = tumbleDebris[i];
+        if (!bit.active) continue;
+        if (bit.settled) {
+            if (now - bit.settledAt >= 7000u) bit.active = false;
+            continue;
+        }
+        bit.x += bit.vx;
+        bit.y += bit.vy;
+        bit.vy += 0.12f;
+        if (bit.y >= 104.0f) {
+            bit.y = 104.0f;
+            bit.vx = 0.0f;
+            bit.vy = 0.0f;
+            bit.settledAt = now;
+            bit.settled = true;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Autumn tumbleweed
 // ---------------------------------------------------------------------------
@@ -587,6 +658,7 @@ static void updateTumbleweed(uint32_t now) {
         tumble.active = true;
         tumble.y = 99.0f;
         tumble.phase = 0;
+        tumble.shedStage = 0;
         bool goRight = (random(0, 2) == 0);
         tumble.vx = goRight ? (1.8f + (float)random(0, 12) / 10.0f)
                             : -(1.8f + (float)random(0, 12) / 10.0f);
@@ -600,6 +672,11 @@ static void updateTumbleweed(uint32_t now) {
     float bounce = (float)((tumble.phase / 2) % 5);
     if (bounce > 2.5f) bounce = 5.0f - bounce;
     tumble.y = 99.0f - bounce * 1.1f;
+    if (tumble.shedStage < 3 &&
+        tumble.phase >= 24u + (uint16_t)tumble.shedStage * 20u) {
+        shedTumbleDebris(tumble.shedStage, now);
+        tumble.shedStage++;
+    }
 
     if (tumble.x < -32.0f || tumble.x > (float)DISPLAY_W + 32.0f) {
         tumble.active = false;
@@ -607,54 +684,253 @@ static void updateTumbleweed(uint32_t now) {
     }
 }
 
+static void drawPixelTwigLine(M5Canvas& canvas, int x1, int y1, int x2,
+                              int y2, uint16_t color, uint8_t block = 2) {
+    int dx = abs(x2 - x1), dy = abs(y2 - y1);
+    int sx = x1 < x2 ? 1 : -1;
+    int sy = y1 < y2 ? 1 : -1;
+    int error = dx - dy;
+    for (;;) {
+        canvas.fillRect(x1, y1, block, block, color);
+        if (x1 == x2 && y1 == y2) break;
+        const int twiceError = error * 2;
+        if (twiceError > -dy) { error -= dy; x1 += sx; }
+        if (twiceError < dx) { error += dx; y1 += sy; }
+    }
+}
+
 static void drawTumbleweed(M5Canvas& canvas, bool flash) {
-    if (!tumble.active || !isAutumn()) return;
+    if (!isAutumn()) return;
+    static const uint16_t leafColors[] = {
+        0xE2C0, 0xFD20, 0xFB40, 0xC300, 0x9A40
+    };
+    const uint16_t twDark = flash ? 0xFFFF : 0x6A20;
+    if (tumble.active) {
     int16_t tx = (int16_t)tumble.x;
     int16_t ty = (int16_t)tumble.y - 6;
     int spin = (tumble.phase / 2) % 4;
     const uint16_t twDry  = flash ? 0xFFFF : 0x9A40;
     const uint16_t twHi   = flash ? 0xFFFF : 0xC300;
-    const uint16_t twDark = flash ? 0xFFFF : 0x6A20;
+    static const int8_t spiral[][2] = {
+        { 0, 0}, { 1, 0}, { 2, 0}, { 2, 1}, { 2, 2}, { 1, 2},
+        { 0, 2}, {-1, 2}, {-2, 2}, {-2, 1}, {-2, 0}, {-2,-1},
+        {-2,-2}, {-1,-2}, { 0,-2}, { 1,-2}, { 3,-2}, { 4,-1},
+        { 4, 1}, { 3, 3}, { 1, 4}, {-2, 4}, {-4, 2}, {-5,-1},
+        {-4,-4}, {-1,-5}, { 3,-5}, { 5,-3}, { 6, 0}, { 5, 4}
+    };
     struct Twig { int8_t x1, y1, x2, y2; };
     static const Twig twigs[] = {
-        {-1,-6,  2,-5}, { 2,-5,  5,-3}, { 5,-3,  6, 0},
-        { 6, 0,  4, 3}, { 4, 3,  1, 5}, { 1, 5, -2, 6},
-        {-2, 6, -5, 3}, {-5, 3, -6, 0}, {-6, 0, -4,-3},
-        {-4,-3, -1,-6},
-        {-1,-6,  1, 1}, { 5,-3, -1, 1}, { 6, 0, -1, 1},
-        { 4, 3, -1, 1}, { 1, 5, -1, 1}, {-5, 3, -1, 1},
-        {-4,-3,  1, 1}, {-1, 1,  2,-5},
-        {-3,-4, -1,-2}, { 3,-4,  1,-2}, { 4, 2,  1, 1},
-        {-4, 2, -1, 1}, {-2, 5, -1, 2}, { 2, 5,  1, 2}
+        {-4,-4, -7,-6}, {-5,-1, -8, 1}, {-3, 4, -5, 7},
+        { 1, 5,  2, 8}, { 4, 3,  7, 5}, { 5,-1, 8,-3},
+        { 2,-4,  4,-7}, {-1,-4, -3,-7}
     };
-    for (uint8_t i = 0; i < sizeof(twigs) / sizeof(twigs[0]); i++) {
-        int x1 = twigs[i].x1;
-        int y1 = twigs[i].y1;
-        int x2 = twigs[i].x2;
-        int y2 = twigs[i].y2;
+    static const int8_t leafPoints[][2] = {
+        {-4,-4}, { 3,-5}, { 6, 0}, { 4, 4}, {-3, 5}, {-6,-1}
+    };
+    const int pointCount = (int)(sizeof(spiral) / sizeof(spiral[0])) -
+                           (int)tumble.shedStage * 4;
+    for (int i = 0; i < pointCount - 1; i++) {
+        int x1 = spiral[i][0], y1 = spiral[i][1];
+        int x2 = spiral[i + 1][0], y2 = spiral[i + 1][1];
         for (int turn = 0; turn < spin; turn++) {
             const int oldX1 = x1, oldX2 = x2;
             x1 = -y1; y1 = oldX1;
             x2 = -y2; y2 = oldX2;
         }
+        uint16_t color = twDry;
+        if (i % 7 == 0) color = twHi;
+        else if (i % 4 == 0) color = twDark;
+        drawPixelTwigLine(canvas, tx + x1 * 2, ty + y1 * 2,
+                          tx + x2 * 2, ty + y2 * 2,
+                          flash ? 0xFFFF : color);
+    }
+    const int twigCount = (int)(sizeof(twigs) / sizeof(twigs[0])) -
+                          (int)tumble.shedStage * 2;
+    for (int i = 0; i < twigCount; i++) {
+        int x1 = twigs[i].x1, y1 = twigs[i].y1;
+        int x2 = twigs[i].x2, y2 = twigs[i].y2;
+        for (int turn = 0; turn < spin; turn++) {
+            const int oldX1 = x1, oldX2 = x2;
+            x1 = -y1; y1 = oldX1;
+            x2 = -y2; y2 = oldX2;
+        }
+        drawPixelTwigLine(canvas, tx + x1 * 2, ty + y1 * 2,
+                          tx + x2 * 2, ty + y2 * 2,
+                          flash ? 0xFFFF : (i % 2 ? twHi : twDark));
+    }
+    const int leafCount = 6 - tumble.shedStage * 2;
+    for (int i = 0; i < leafCount; i++) {
+        int lx = leafPoints[i][0], ly = leafPoints[i][1];
+        for (int turn = 0; turn < spin; turn++) {
+            const int oldX = lx;
+            lx = -ly;
+            ly = oldX;
+        }
+        uint16_t color = flash ? 0xFFFF : leafColors[(i + spin) % 5];
+        canvas.fillRect(tx + lx * 2 - 1, ty + ly * 2 - 1, 4, 3, color);
+        canvas.drawPixel(tx + lx * 2 + 2, ty + ly * 2, flash ? 0xFFFF : twDark);
+    }
+    canvas.fillRect(tx - 12, 105, 24, 2, flash ? 0xFFFF : 0x4208);
+    }
+
+    for (uint8_t i = 0; i < 3; i++) {
+        const TumbleDebris& bit = tumbleDebris[i];
+        if (!bit.active) continue;
+        const int bx = (int)bit.x;
+        const int by = (int)bit.y;
         const uint16_t color = flash ? 0xFFFF
-            : (i % 5 == 0 ? twHi : (i % 3 == 0 ? twDark : twDry));
-        x1 *= 2; y1 *= 2;
-        x2 *= 2; y2 *= 2;
-        int dx = abs(x2 - x1), dy = abs(y2 - y1);
-        int sx = (x1 < x2) ? 1 : -1;
-        int sy = (y1 < y2) ? 1 : -1;
-        int error = dx - dy;
-        for (;;) {
-            canvas.fillRect(tx + x1, ty + y1, 2, 2, color);
-            if (x1 == x2 && y1 == y2) break;
-            const int twiceError = error * 2;
-            if (twiceError > -dy) { error -= dy; x1 += sx; }
-            if (twiceError < dx) { error += dx; y1 += sy; }
+            : (bit.kind ? twDark : leafColors[i % 5]);
+        if (bit.kind) {
+            canvas.fillRect(bx - 3, by - 1, 6, 3, color);
+            canvas.fillRect(bx - 1, by - 2, 3, 5, twDark);
+        } else {
+            canvas.fillRect(bx, by, 3, 2, color);
+            canvas.fillRect(bx + 1, by - 1, 1, 1, color);
+            canvas.drawPixel(bx + 1, by + 2, color);
         }
     }
-    canvas.fillRect(tx - 1, ty - 1, 2, 2, flash ? 0xFFFF : twDark);
-    canvas.fillRect(tx - 8, 105, 16, 2, flash ? 0xFFFF : 0x4208);
+}
+
+struct MeteorColors {
+    uint16_t tail, hot, core, fragments;
+};
+
+static MeteorColors meteorColors() {
+    switch (Weather::getActiveSeason()) {
+        case Season::SPRING: return { 0xF81F, 0xFD2F, 0xFFFF, 0xFBA0 };
+        case Season::SUMMER: return { 0xF980, 0xFEA0, 0xFFFF, 0xB3E0 };
+        case Season::AUTUMN: return { 0xB280, 0xFCA0, 0xFFE0, 0x8200 };
+        case Season::WINTER: return { 0x3D7F, 0x8EFF, 0xFFFF, 0x5DDF };
+        case Season::DESERT: return { 0xA280, 0xFC80, 0xFFE0, 0x7240 };
+        case Season::NOIR:   return { 0x781F, 0xD21F, 0xFFF0, 0x500F };
+        case Season::RETRO:  return { 0x4208, 0x9CF3, 0xFFFF, 0x630C };
+        case Season::CITY:   return { 0x3D6F, 0x9E7F, 0xFFFF, 0x5AEB };
+        default:             return { 0xFD20, 0xFEA0, 0xFFFF, 0x9A40 };
+    }
+}
+
+static void startMeteorShower(uint32_t now) {
+    meteorShowerActive = true;
+    meteorLaunched = 0;
+    nextMeteorAt = now;
+    meteorShowerEndsAt = now + (uint32_t)random(10000, 15001);
+    for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++)
+        meteors[i].active = false;
+}
+
+static void launchMeteor(uint32_t now) {
+    for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) {
+        Meteor& meteor = meteors[i];
+        if (meteor.active) continue;
+        meteor.x = (float)random(24, DISPLAY_W - 24);
+        meteor.y = -8.0f;
+        meteor.vx = (float)random(-8, 9) / 10.0f;
+        meteor.vy = 3.0f + (float)random(0, 11) / 10.0f;
+        meteor.active = true;
+        meteorLaunched++;
+        nextMeteorAt = now + (uint32_t)random(500, 1001);
+        return;
+    }
+}
+
+static void spawnMeteorFragments(int16_t x, uint32_t now) {
+    for (uint8_t i = 0; i < 12; i++) {
+        MeteorFragment& bit =
+            meteorFragments[meteorFragmentCursor++ % METEOR_FRAGMENT_COUNT];
+        bit.x = (float)x + (float)random(-2, 3);
+        bit.y = 98.0f;
+        bit.vx = (float)random(-55, 56) / 10.0f;
+        bit.vy = (float)random(-58, 8) / 10.0f;
+        bit.born = now;
+        bit.shade = (uint8_t)(i % 3);
+        bit.settled = false;
+        bit.active = true;
+    }
+}
+
+static void updateMeteorShower(uint32_t now) {
+    const uint32_t gameDay = now / GAME_DAY_MS;
+    if (!meteorShowerActive && gameDay >= nextMeteorGameDay) {
+        startMeteorShower(now);
+        nextMeteorGameDay = gameDay + METEOR_INTERVAL_DAYS;
+    }
+
+    if (meteorShowerActive && (int32_t)(now - meteorShowerEndsAt) < 0 &&
+        (int32_t)(now - nextMeteorAt) >= 0)
+        launchMeteor(now);
+
+    for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) {
+        Meteor& meteor = meteors[i];
+        if (!meteor.active) continue;
+        meteor.x += meteor.vx;
+        meteor.y += meteor.vy;
+        if (meteor.y < 98.0f) continue;
+
+        const int16_t impactX = (int16_t)meteor.x;
+        meteor.active = false;
+        if (impactX >= 0 && impactX < DISPLAY_W) {
+            spawnMeteorFragments(impactX, now);
+            Ground::meteorImpact(impactX);
+            Trees::meteorImpact(impactX);
+            Display::triggerScreenShake(7, 420);
+            SFX::play(SFX::THUNDER);
+        }
+    }
+
+    for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++) {
+        MeteorFragment& bit = meteorFragments[i];
+        if (!bit.active) continue;
+        if (now - bit.born >= 9000u) {
+            bit.active = false;
+            continue;
+        }
+        if (bit.settled) continue;
+        bit.x += bit.vx;
+        bit.y += bit.vy;
+        bit.vy += 0.16f;
+        bit.vx *= 0.97f;
+        if (bit.y >= 101.0f) {
+            bit.y = 101.0f;
+            bit.vx = 0.0f;
+            bit.vy = 0.0f;
+            bit.settled = true;
+        }
+    }
+
+    if (meteorShowerActive && (int32_t)(now - meteorShowerEndsAt) >= 0) {
+        bool flying = false;
+        for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++)
+            flying = flying || meteors[i].active;
+        if (!flying) meteorShowerActive = false;
+    }
+}
+
+static void drawMeteorShower(M5Canvas& canvas, bool flash) {
+    const MeteorColors colors = meteorColors();
+    for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) {
+        const Meteor& meteor = meteors[i];
+        if (!meteor.active) continue;
+        const int x = (int)meteor.x;
+        const int y = (int)meteor.y;
+        const uint16_t tail = flash ? 0xFFFF : colors.tail;
+        const uint16_t hot = flash ? 0xFFFF : colors.hot;
+        drawPixelTwigLine(canvas, x - (int)(meteor.vx * 5.0f),
+                          y - (int)(meteor.vy * 5.0f), x, y, tail, 3);
+        canvas.fillRect(x - 4, y - 4, 8, 8, hot);
+        canvas.fillRect(x - 2, y - 2, 4, 4, flash ? 0xFFFF : colors.core);
+    }
+    for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++) {
+        const MeteorFragment& bit = meteorFragments[i];
+        if (!bit.active) continue;
+        const int x = (int)bit.x;
+        const int y = (int)bit.y;
+        const uint16_t color = flash ? 0xFFFF
+            : (bit.shade == 0 ? colors.hot : colors.fragments);
+        const int size = bit.shade == 0 ? 4 : 3;
+        canvas.fillRect(x, y, size, size, color);
+        if (!bit.settled && bit.shade != 2)
+            canvas.fillRect(x - 1, y - 2, size, 2, flash ? 0xFFFF : colors.tail);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -893,6 +1169,9 @@ static void drawLightningBolts(M5Canvas& canvas) {
 // ---------------------------------------------------------------------------
 void init() {
     reset();
+    const uint32_t gameDay = millis() / GAME_DAY_MS;
+    nextMeteorGameDay = (gameDay / METEOR_INTERVAL_DAYS + 1u) *
+                        METEOR_INTERVAL_DAYS;
 }
 
 void reset() {
@@ -902,6 +1181,7 @@ void reset() {
     for (int i = 0; i < SNOW_SCAR_COUNT; i++) snowScars[i].active = false;
     for (int i = 0; i < LEAF_COUNT; i++) leaves[i].active = false;
     tumble = {};
+    for (uint8_t i = 0; i < 3; i++) tumbleDebris[i].active = false;
     lastTumbleSpawnMs = 0;
     lastLeafUpdate = 0;
     lastBankGrowMs = 0;
@@ -913,16 +1193,25 @@ void reset() {
     for (int i = 0; i < BOLT_COUNT; i++) bolts[i].active = false;
     lastBoltSpawnMs = 0;
     wasThunderFlash = false;
+    meteorShowerActive = false;
+    meteorLaunched = 0;
+    meteorShowerEndsAt = 0;
+    for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) meteors[i].active = false;
+    for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++)
+        meteorFragments[i].active = false;
+    meteorFragmentCursor = 0;
 }
 
 void update() {
+    uint32_t now = millis();
+    updateMeteorShower(now);
+    updateTumbleDebris(now);
     // RETRO film world: only pixel rain (weather module) — no color FX
     if (Weather::getActiveSeason() == Season::RETRO) return;
     if (isNoir()) {
-        updateMoths(millis());
+        updateMoths(now);
         return;
     }
-    uint32_t now = millis();
     updateSnowBanks(now);
     updateSandstorm(now);
     updateLeaves(now);
@@ -933,6 +1222,10 @@ void update() {
     updateRainSfx(now);
 }
 
+void triggerMeteorShower() {
+    startMeteorShower(millis());
+}
+
 void drawBackdrop(M5Canvas& canvas) {
     if (Weather::getActiveSeason() == Season::RETRO) return;
     if (isNoir()) return;
@@ -941,10 +1234,14 @@ void drawBackdrop(M5Canvas& canvas) {
 }
 
 void draw(M5Canvas& canvas) {
-    if (Weather::getActiveSeason() == Season::RETRO) return;
     const bool flash = Weather::isThunderFlashing();
+    if (Weather::getActiveSeason() == Season::RETRO) {
+        drawMeteorShower(canvas, flash);
+        return;
+    }
     if (isNoir()) {
         drawMoths(canvas, flash);
+        drawMeteorShower(canvas, flash);
         return;
     }
     // Order: ground decor first, then air
@@ -952,6 +1249,7 @@ void draw(M5Canvas& canvas) {
     drawSandstorm(canvas, flash);
     drawLeaves(canvas, flash);
     drawTumbleweed(canvas, flash);
+    drawMeteorShower(canvas, flash);
     drawPollen(canvas, flash);
     drawButterflies(canvas, flash);
 }

@@ -23,6 +23,7 @@
 #include "../piglet/credits.h"
 #include "../piglet/mood.h"
 #include "../piglet/wolf.h"
+#include "../piglet/seasonal_fx.h"
 #include "../audio/sfx.h"
 #include "../core/config.h"
 #include <M5Cardputer.h>
@@ -154,7 +155,7 @@ static void animTestPoll() {
         "FACE LEFT", "FACE RIGHT", "TREE ON", "TREE OFF", "WOLF",
         "SIT", "PLAY DEAD", "STAND",
         "PROP HIVE", "PROP SNOWMAN", "PROP FOX", "PROP FIRE",
-        "PROP CAT", "PROP SKULL", "PROP CLEAR",
+        "PROP CAT", "PROP SKULL", "PROP CLEAR", "METEOR SHOWER",
     };
     static const uint8_t kAnimCount =
         (uint8_t)(sizeof(kAnimNames) / sizeof(kAnimNames[0]));
@@ -218,6 +219,7 @@ static void animTestPoll() {
         case 31: Props::forceDemo(4); break;  // cat
         case 32: Props::forceDemo(5); break;  // skull
         case 33: Props::forceDemo(6); break;  // clear
+        case 34: SeasonalFx::triggerMeteorShower(); break;
         default: break;
     }
 

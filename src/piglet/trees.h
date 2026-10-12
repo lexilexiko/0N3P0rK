@@ -61,6 +61,8 @@ void scroll(int dir);  // +1 or -1 per grass step
 
 // Wave hit shake (optional)
 void shakeFromWave();
+// Temporarily bend and thin the nearest living tree after a meteor impact.
+void meteorImpact(int16_t impactX);
 
 // Extra jitter while pig stomps
 void setStompShake(int8_t shake);

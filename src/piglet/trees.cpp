@@ -145,6 +145,8 @@ struct Slot {
     uint8_t pendingFruits;
     uint8_t stompHits;
     bool stompArmed;
+    uint32_t meteorDamageStart;
+    int8_t meteorDamageSide;
 };
 
 // 0=FRUIT 1=DECOR 2=BERRY — one of each kind max for simplicity
@@ -245,6 +247,8 @@ static Slot& berrySlot() { return slots[(int)Kind::BERRY]; }
 static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
     t.seed = esp_random();
     t.scroll = 0;
+    t.meteorDamageStart = 0;
+    t.meteorDamageSide = 0;
     uint32_t s = t.seed;
     if (t.kind != Kind::BERRY) {
         t.style = currentStyle();
@@ -1015,6 +1019,29 @@ int16_t nearestFloraScreenX(int fromX) {
     return (int16_t)best;
 }
 
+void meteorImpact(int16_t impactX) {
+    int bestSlot = -1;
+    int bestDistance = 48;
+    for (int i = 0; i < 3; i++) {
+        const Slot& t = slots[i];
+        if (t.phase == Phase::HIDDEN || t.phase == Phase::COLLAPSING ||
+            t.growth <= 0.25f || t.style == SeasonTree::LAMP ||
+            t.style == SeasonTree::STALL || t.style == SeasonTree::TRASH)
+            continue;
+        int distance = (int)screenX(t) - impactX;
+        if (distance < 0) distance = -distance;
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestSlot = i;
+        }
+    }
+    if (bestSlot >= 0) {
+        Slot& t = slots[bestSlot];
+        t.meteorDamageStart = millis();
+        t.meteorDamageSide = (impactX < screenX(t)) ? 1 : -1;
+    }
+}
+
 // Stomp any flora within range (jump/attack only). 3 hits → dump produce + collapse.
 bool tryStompFruitTree(int pigFeetX, bool airborne) {
     if (!airborne) {
@@ -1132,6 +1159,22 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     uint32_t now = millis();
     const int16_t baseY = (int16_t)(106 + yOffset);
     int16_t bx = screenX(t);
+    const uint32_t damageAge = now - t.meteorDamageStart;
+    const bool meteorDamaged = t.meteorDamageSide != 0 && damageAge < 18000u;
+    const float damageRecovery = meteorDamaged
+        ? (float)damageAge / 18000.0f : 1.0f;
+    int8_t meteorLean = 0;
+    if (meteorDamaged) {
+        int leanAmount = damageAge < 1600u
+            ? 14 - (int)(damageAge * 6u / 1600u)
+            : 8 - (int)((damageAge - 1600u) * 8u / 16400u);
+        if (leanAmount < 0) leanAmount = 0;
+        int shake = damageAge < 2200u
+            ? (((damageAge / 90u) & 1u) ? 3 : -3) *
+                (2200u - damageAge) / 2200u
+            : 0;
+        meteorLean = (int8_t)(t.meteorDamageSide * (leanAmount + shake));
+    }
     int8_t sway = 0;
     if (t.phase == Phase::ALIVE) {
         int wave = (int)(now % 3200);
@@ -1160,8 +1203,15 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     uint16_t snow2 = fl(retro ? R_SNOW2 : 0xDEFB);
     uint16_t snow3 = fl(retro ? R_LEAF2 : 0xEF7D);
     if (trunkH > 0) {
-        canvas.fillRect(bx - PX + sway, baseY - trunkH, PX * 2, trunkH, bark);
-        canvas.fillRect(bx + sway, baseY - trunkH, PX, trunkH, barkLite);
+        for (int16_t row = 0; row < trunkH; row += PX) {
+            int16_t lean = (int16_t)(meteorLean * (trunkH - row) /
+                                     (trunkH ? trunkH : 1));
+            const int16_t h = row + PX > trunkH ? trunkH - row : PX;
+            canvas.fillRect(bx - PX + sway + lean, baseY - trunkH + row,
+                            PX * 2, h, bark);
+            canvas.fillRect(bx + sway + lean, baseY - trunkH + row,
+                            PX, h, barkLite);
+        }
     }
 
     // Needle tiers (branch rows)
@@ -1170,6 +1220,8 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     if (bp > 0.05f) {
         uint8_t vis = (uint8_t)(t.branchCount * bp + 0.5f);
         if (vis > t.branchCount) vis = t.branchCount;
+        if (meteorDamaged)
+            vis = (uint8_t)(vis * (0.55f + 0.45f * damageRecovery));
         for (uint8_t i = 0; i < vis; i++) {
             const Branch& br = t.branches[i];
             int16_t ty = baseY + br.y1;
@@ -1178,26 +1230,29 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
                 ty += (int16_t)(ct * ct * (baseY - ty));
                 if (ty > baseY) continue;
             }
+            const int16_t tierLean = (int16_t)(meteorLean * (baseY - ty) /
+                                               (trunkH ? trunkH : 1));
+            const int16_t tierX = bx + sway + tierLean;
             int16_t half = (br.x2 - br.x1) / 2;
             // Filled triangle tiers (fat rows)
             for (int16_t row = 0; row < half / 2 + PX; row += PX) {
                 int16_t w = half - row;
                 if (w < PX) w = PX;
                 uint16_t col = (row == 0) ? firD : (((i + row / PX) & 1) ? firM : firL);
-                canvas.fillRect(bx - w + sway, ty + row, w * 2, PX, col);
+                canvas.fillRect(tierX - w, ty + row, w * 2, PX, col);
             }
             // tip
-            canvas.fillRect(bx - PX + sway, ty - PX, PX * 2, PX, firL);
+            canvas.fillRect(tierX - PX, ty - PX, PX * 2, PX, firL);
             // Cap / side patches (snow in winter, film grain white in retro)
             int16_t snowW = half > PX ? half : PX * 2;
-            canvas.fillRect(bx - half / 2 + sway, ty - PX, snowW, PX, snow1);
-            canvas.fillRect(bx - half / 3 + sway, ty - 2 * PX, half / 2 + PX, PX, snow2);
+            canvas.fillRect(tierX - half / 2, ty - PX, snowW, PX, snow1);
+            canvas.fillRect(tierX - half / 3, ty - 2 * PX, half / 2 + PX, PX, snow2);
             if (half > PX * 3) {
-                canvas.fillRect(bx - half + PX + sway, ty + PX, PX * 2, PX, snow1);
-                canvas.fillRect(bx + half - PX * 3 + sway, ty + PX, PX * 2, PX, snow2);
+                canvas.fillRect(tierX - half + PX, ty + PX, PX * 2, PX, snow1);
+                canvas.fillRect(tierX + half - PX * 3, ty + PX, PX * 2, PX, snow2);
             }
             if ((i & 1) == 0 && half > PX * 2) {
-                canvas.fillRect(bx - PX + sway, ty + PX * 2, PX * 2, PX, snow3);
+                canvas.fillRect(tierX - PX, ty + PX * 2, PX * 2, PX, snow3);
             }
         }
         // Base pile at trunk foot
@@ -1841,6 +1896,18 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     uint32_t now = millis();
     const int16_t baseY = (int16_t)(106 + yOffset);
     int16_t bx = screenX(t);
+    const uint32_t damageAge = now - t.meteorDamageStart;
+    const bool meteorDamaged = t.meteorDamageSide != 0 && damageAge < 18000u;
+    const float damageRecovery = meteorDamaged
+        ? (float)damageAge / 18000.0f : 1.0f;
+    int8_t meteorLean = 0;
+    if (meteorDamaged) {
+        int leanAmount = damageAge < 700u
+            ? 8 - (int)(damageAge * 4u / 700u)
+            : 4 - (int)((damageAge - 700u) * 4u / 17300u);
+        if (leanAmount < 0) leanAmount = 0;
+        meteorLean = (int8_t)(t.meteorDamageSide * leanAmount);
+    }
 
     int8_t sway = 0;
     if (t.phase == Phase::ALIVE) {
@@ -1874,7 +1941,7 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
         }
         if (trunkH > 0) {
             int16_t trunkTop = baseY - trunkH;
-            int8_t lean = t.lean + sway;
+            int8_t lean = t.lean + sway + meteorLean;
             for (int16_t row = 0; row < trunkH; row += PX) {
                 float tt = (float)row / (float)(trunkH > 1 ? trunkH - 1 : 1);
                 int16_t rowLean = snapPx(lean - (int16_t)((float)lean * tt));
@@ -1905,9 +1972,11 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
 
         for (uint8_t i = 0; i < t.branchCount; i++) {
             const Branch& br = t.branches[i];
-            int16_t sx = bx + br.x1 + sway;
+            int16_t sx = bx + br.x1 + sway +
+                         (meteorLean * -br.y1) / (t.trunkH ? t.trunkH : 1);
             int16_t sy = baseY + br.y1;
-            int16_t fex = bx + br.x2 + sway;
+            int16_t fex = bx + br.x2 + sway +
+                          (meteorLean * -br.y2) / (t.trunkH ? t.trunkH : 1);
             int16_t fey = baseY + br.y2;
             if (collapsing) {
                 int16_t dg = baseY - fey; if (dg < 0) dg = 0;
@@ -1922,7 +1991,7 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             if (t.style == SeasonTree::CHERRY) brCol = fl(C_CHERRY_TRUNK2);
             if (t.style == SeasonTree::WILLOW) brCol = fl(C_WILLOW_TRUNK2);
             fatLine(canvas, sx, sy, ex, ey, brCol);
-            if (bp > 0.85f) {
+            if (bp > 0.85f && (!meteorDamaged || (i & 1u) == 0)) {
                 drawLeafPuff(canvas, ex, ey, leafCol, leafLite, leafHi, 4, i % 3);
             }
         }
@@ -1932,9 +2001,12 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             if (lp > 1) lp = 1;
             uint8_t visL = (uint8_t)((float)t.leafCount * lp + 0.5f);
             if (visL > t.leafCount) visL = t.leafCount;
+            if (meteorDamaged)
+                visL = (uint8_t)(visL * (0.55f + 0.45f * damageRecovery));
             for (uint8_t i = 0; i < visL; i++) {
                 const Leaf& L = t.leaves[i];
-                int16_t lx = bx + L.cx + sway;
+                int16_t lx = bx + L.cx + sway +
+                             (meteorLean * -L.cy) / (t.trunkH ? t.trunkH : 1);
                 int16_t ly = baseY + L.cy;
                 if (collapsing) {
                     int16_t dg = baseY - ly; if (dg < 0) dg = 0;
@@ -1973,7 +2045,9 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             uint8_t vis = (uint8_t)(t.fruitCount * fp + 0.5f);
             if (vis > t.fruitCount) vis = t.fruitCount;
             for (uint8_t i = 0; i < vis; i++) {
-                int16_t fx = bx + t.fruits[i].ox + sway;
+                int16_t fx = bx + t.fruits[i].ox + sway +
+                             (meteorLean * -t.fruits[i].oy) /
+                                 (t.trunkH ? t.trunkH : 1);
                 int16_t fy = baseY + t.fruits[i].oy;
                 if (collapsing) {
                     int16_t dg = baseY - fy; if (dg < 0) dg = 0;
