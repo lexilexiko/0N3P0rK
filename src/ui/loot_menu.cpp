@@ -22,6 +22,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <new>
 
 bool LootMenu::active = false;
 bool LootMenu::keyWasPressed = false;
@@ -49,7 +50,7 @@ struct Row {
     char password[64];
 };
 
-static Row s_rows[48];
+static Row* s_rows = nullptr;
 static char s_syncText[48] = "";
 static char s_syncHost[12] = "";
 static char s_diag[16][42];
@@ -197,7 +198,7 @@ void LootMenu::scan() {
     selected = 0;
     scroll = 0;
     hasMore = false;
-    if (!Storage::available()) return;
+    if (!s_rows || !Storage::available()) return;
 
     const bool capture = (tab != Tab::PWNCRACK);
     if (tab == Tab::WPASEC) WPASec::loadCache();
@@ -398,6 +399,14 @@ void LootMenu::show() {
     OHC::freeCacheMemory();
     Storage::brewHeap();
 
+    if (!s_rows) s_rows = new (std::nothrow) Row[PAGE_SIZE];
+    if (!s_rows) {
+        count = 0;
+        active = false;
+        Display::showToast("LOOT MEMORY LOW", 1400);
+        return;
+    }
+
     active = true;
     detailView = false;
     syncModal = false;
@@ -436,6 +445,11 @@ void LootMenu::hide() {
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
     OHC::freeCacheMemory();
+    delete[] s_rows;
+    s_rows = nullptr;
+    count = 0;
+    selected = 0;
+    scroll = 0;
     Storage::brewHeap();
 }
 
