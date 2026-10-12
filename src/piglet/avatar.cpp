@@ -2145,8 +2145,15 @@ void Avatar::playerWalkHold(int dir, bool fromAi) {
             currentX -= STEP;
             if (currentX < kCamLeftLine) currentX = kCamLeftLine;
         } else {
-            setPlayerWalkScroll(true, false);
-            currentX = kCamLeftLine;
+            if (Ground::canScroll(true)) {
+                setPlayerWalkScroll(true, false);
+                currentX = kCamLeftLine;
+            } else {
+                setPlayerWalkScroll(false, false);
+                setManualWalk(true);
+                currentX -= STEP;
+                if (currentX < 4) currentX = 4;
+            }
         }
     } else {
         if (currentX < kCamRightLine) {
@@ -2154,8 +2161,15 @@ void Avatar::playerWalkHold(int dir, bool fromAi) {
             currentX += STEP;
             if (currentX > kCamRightLine) currentX = kCamRightLine;
         } else {
-            setPlayerWalkScroll(true, true);
-            currentX = kCamRightLine;
+            if (Ground::canScroll(false)) {
+                setPlayerWalkScroll(true, true);
+                currentX = kCamRightLine;
+            } else {
+                setPlayerWalkScroll(false, true);
+                setManualWalk(true);
+                currentX += STEP;
+                if (currentX > 155) currentX = 155;
+            }
         }
     }
     onRightSide = (currentX > 60);

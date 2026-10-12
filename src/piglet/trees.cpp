@@ -3,6 +3,7 @@
 #include "trees.h"
 #include "trees_drops.h"
 #include "avatar.h"
+#include "ground.h"
 #include "weather.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
@@ -12,6 +13,13 @@
 #include <math.h>
 
 namespace Trees {
+
+int16_t worldWidth() {
+    uint16_t width = Config::personality().fieldWidth;
+    if (width < 240) return 240;
+    if (width > WORLD_SPAN) return WORLD_SPAN;
+    return (int16_t)width;
+}
 
 static constexpr int16_t PX = 3;
 static inline int16_t snapPx(int16_t v) {
@@ -231,10 +239,7 @@ static int16_t lcos(uint8_t i) {
 }
 
 static int16_t screenX(const Slot& t) {
-    int16_t bx = t.baseX + t.scroll;
-    while (bx > WORLD_WRAP_HI) bx -= WORLD_SPAN;
-    while (bx < WORLD_WRAP_LO) bx += WORLD_SPAN;
-    return bx;
+    return (int16_t)(t.baseX + t.scroll);
 }
 
 static Slot& fruitSlot() { return slots[(int)Kind::FRUIT]; }
@@ -653,15 +658,11 @@ void reset() {
     globalStompArmed = true;
 }
 
-// Scatter across the 600px loop. Respawn prefers off-screen so a smash
-// here grows "over the hill" while you are not looking.
+// Scatter across the configured field. Respawn prefers off-screen.
 static constexpr int16_t FLORA_MIN_GAP = 56;
 
 static int16_t sharedScroll() {
-    for (int i = 0; i < 3; i++) {
-        if (slots[i].phase != Phase::HIDDEN) return slots[i].scroll;
-    }
-    return 0;
+    return (int16_t)-Ground::worldOffset();
 }
 
 static bool floraLive(const Slot& t) {
@@ -676,24 +677,15 @@ static bool anyFloraLive() {
 }
 
 static int16_t wrapDistWorld(int16_t a, int16_t b) {
-    int16_t d = (int16_t)(a - b);
-    while (d > WORLD_SPAN / 2) d = (int16_t)(d - WORLD_SPAN);
-    while (d < -(WORLD_SPAN / 2)) d = (int16_t)(d + WORLD_SPAN);
-    if (d < 0) d = (int16_t)-d;
-    return d;
+    return (int16_t)abs((int)a - (int)b);
 }
 
 static int16_t floraWorldX(const Slot& t) {
-    int16_t w = (int16_t)(t.baseX + t.scroll);
-    while (w < 0) w = (int16_t)(w + WORLD_SPAN);
-    while (w >= WORLD_SPAN) w = (int16_t)(w - WORLD_SPAN);
-    return w;
+    return t.baseX;
 }
 
 static int16_t worldToScreen(int16_t wx) {
-    while (wx > WORLD_WRAP_HI) wx = (int16_t)(wx - WORLD_SPAN);
-    while (wx < WORLD_WRAP_LO) wx = (int16_t)(wx + WORLD_SPAN);
-    return wx;
+    return (int16_t)(wx + sharedScroll());
 }
 
 static bool worldFits(int16_t wx, Kind self) {
@@ -712,25 +704,31 @@ static bool isOffscreenWorld(int16_t wx) {
 
 static int16_t pickWorldX(Kind self, bool preferOffscreen) {
     if (!anyFloraLive()) {
-        // First plant of a fresh farm — land on the visible field.
-        return (int16_t)(28 + (esp_random() % 185));
+        const int16_t cameraX = Ground::worldOffset();
+        const int16_t maxX = (int16_t)(worldWidth() - 1);
+        int16_t minX = (int16_t)(cameraX + 28);
+        int16_t visibleMax = (int16_t)(cameraX + 213);
+        if (visibleMax > maxX) visibleMax = maxX;
+        if (minX > visibleMax) minX = visibleMax;
+        const uint32_t range = (uint32_t)(visibleMax - minX + 1);
+        return (int16_t)(minX + (esp_random() % range));
     }
     for (int pass = 0; pass < 2; pass++) {
         bool needOff = preferOffscreen && (pass == 0);
         for (int tries = 0; tries < 28; tries++) {
-            int16_t wx = (int16_t)(esp_random() % (uint32_t)WORLD_SPAN);
+            int16_t wx = (int16_t)(esp_random() % (uint32_t)worldWidth());
             if (!worldFits(wx, self)) continue;
             if (needOff && !isOffscreenWorld(wx)) continue;
             return wx;
         }
     }
-    return (int16_t)(esp_random() % (uint32_t)WORLD_SPAN);
+    return (int16_t)(esp_random() % (uint32_t)worldWidth());
 }
 
 static void placeInWorld(Slot& t, bool preferOffscreen) {
     t.scroll = sharedScroll();
     int16_t wx = pickWorldX(t.kind, preferOffscreen);
-    t.baseX = (int16_t)(wx - t.scroll);
+    t.baseX = wx;
 }
 
 static uint8_t produceWant(const Slot& t) {
@@ -1100,13 +1098,7 @@ bool checkFruitPush(int /*pigLeft*/, int /*pigRight*/, int16_t& treeScreenX) {
 void scroll(int dir) {
     for (int i = 0; i < 3; i++) {
         if (slots[i].phase == Phase::HIDDEN) continue;
-        if (dir > 0) {
-            slots[i].scroll++;
-            if (slots[i].scroll > WORLD_SPAN) slots[i].scroll -= WORLD_SPAN;
-        } else {
-            slots[i].scroll--;
-            if (slots[i].scroll < -WORLD_SPAN) slots[i].scroll += WORLD_SPAN;
-        }
+        slots[i].scroll = (int16_t)(slots[i].scroll + (dir > 0 ? 1 : -1));
     }
     // Critical: fallen fruit must ride the same treadmill as trees/grass.
     // Without this, drops freeze at the ~33% camera rail and the pig can't reach them.

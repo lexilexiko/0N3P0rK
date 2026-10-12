@@ -2,6 +2,7 @@
 #include "props.h"
 #include "weather.h"
 #include "avatar.h"
+#include "ground.h"
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../ui/display.h"
@@ -61,10 +62,7 @@ static uint16_t dayId() {
 }
 
 static int16_t screenX() {
-    int16_t x = (int16_t)(s_worldX + s_scroll);
-    while (x > 280) x = (int16_t)(x - 300);
-    while (x < -40) x = (int16_t)(x + 300);
-    return x;
+    return (int16_t)(s_worldX + s_scroll);
 }
 
 static bool unlockedNow() {
@@ -158,12 +156,13 @@ static Kind kindForSeason(Season s) {
 }
 
 static void placeOffscreen() {
-    s_scroll = 0;
+    const int16_t cameraX = Ground::worldOffset();
+    s_scroll = (int16_t)-cameraX;
     bool walkRight = Avatar::isGrassDirectionRight();
     if (walkRight)
-        s_worldX = (int16_t)(-70 - (int)(esp_random() % 40));
+        s_worldX = (int16_t)(cameraX - 70 - (int)(esp_random() % 40));
     else
-        s_worldX = (int16_t)(270 + (int)(esp_random() % 40));
+        s_worldX = (int16_t)(cameraX + 270 + (int)(esp_random() % 40));
 }
 
 static void trySpawnNatural() {
@@ -611,8 +610,8 @@ void forceDemo(uint8_t which) {
     s_phase = Phase::Live;
     s_forceDemo = true;
     s_announced = true;  // already in view
-    s_scroll = 0;
-    s_worldX = 160;
+    s_scroll = (int16_t)-Ground::worldOffset();
+    s_worldX = (int16_t)(Ground::worldOffset() + 160);
     s_spawnAt = millis();
     s_actionAt = 0;
     s_breakFrame = 0;

@@ -2,6 +2,7 @@
 #include "friend_pig.h"
 #include "avatar.h"
 #include "trees.h"
+#include "ground.h"
 #include "weather.h"
 #include "../core/xp.h"
 #include "../core/config.h"
@@ -39,10 +40,7 @@ static char     s_phrase[28] = {};
 static uint32_t s_phraseUntil = 0;
 
 static int16_t worldToScreen(int16_t worldX) {
-    int16_t bx = (int16_t)(worldX + s_scroll);
-    while (bx > Trees::WORLD_WRAP_HI) bx = (int16_t)(bx - Trees::WORLD_SPAN);
-    while (bx < Trees::WORLD_WRAP_LO) bx = (int16_t)(bx + Trees::WORLD_SPAN);
-    return bx;
+    return (int16_t)(worldX + s_scroll);
 }
 
 static int16_t screenX() { return worldToScreen(s_baseX); }
@@ -115,8 +113,11 @@ bool isFallen() {
 int getFeetX() { return (int)screenX(); }
 
 void begin() {
-    s_baseX = (int16_t)(180 + (int)(esp_random() % 200));
-    s_scroll = 0;
+    const int16_t width = Trees::worldWidth();
+    const int16_t startMin = width < 180 ? 0 : 180;
+    const int16_t startRange = width - startMin + 1;
+    s_baseX = (int16_t)(startMin + (int)(esp_random() % startRange));
+    s_scroll = (int16_t)-Ground::worldOffset();
     s_walk = 0.f;
     s_vx = 0.f;
     s_faceRight = (esp_random() & 1) != 0;
@@ -262,10 +263,9 @@ void update() {
     s_walk += s_vx;
     while (s_walk >= 1.f) { s_baseX = (int16_t)(s_baseX + 1); s_walk -= 1.f; }
     while (s_walk <= -1.f) { s_baseX = (int16_t)(s_baseX - 1); s_walk += 1.f; }
-    while (s_baseX >= Trees::WORLD_SPAN)
-        s_baseX = (int16_t)(s_baseX - Trees::WORLD_SPAN);
-    while (s_baseX < 0)
-        s_baseX = (int16_t)(s_baseX + Trees::WORLD_SPAN);
+    if (s_baseX < 0) s_baseX = 0;
+    const int16_t worldWidth = Trees::worldWidth();
+    if (s_baseX > worldWidth) s_baseX = worldWidth;
 
     // Rare talk ~ every 20s (own bubble only)
     if (now >= s_chatCool) {

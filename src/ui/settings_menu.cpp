@@ -40,6 +40,7 @@ struct Item {
 static const Item SCENE[] = {
     {"NAME",      Kind::TEXT,   0,  0, 0, 0},
     {"SKIN",      Kind::VALUE,  1,  0, PIG_SKIN_COUNT - 1, 1},
+    {"FIELD",     Kind::VALUE, 25, 240, 1200, 50},
     {"TUSKS",     Kind::TOGGLE, 24, 0, 1, 1},
     {"SEASON",    Kind::VALUE,  2,  0, SEASON_MODE_COUNT - 1, 1},
     {"SKY",       Kind::VALUE,  3,  0, SKY_MODE_COUNT - 1, 1},
@@ -198,6 +199,7 @@ static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 static const char* const H_SCENE[] = {
     "TYPE NAME. ENT SAVE.",
     "SKIN OF THE HOG.",
+    "FIELD WIDTH IN PIXELS.",
     "AUTO OR LOCK A SEASON.",
     "AUTO DUSK / DAY / NIGHT.",
     "WALK SPEED AT THE EDGES.",
@@ -445,6 +447,7 @@ static int getValue(const Item& it) {
     if (s_page == SettingsPage::SCENE) {
         switch (it.id) {
             case 1: return p.pigSkin;
+            case 25: return p.fieldWidth;
             case 24: return p.tusksEnabled ? 1 : 0;
             case 2: return p.seasonMode;
             case 3: return p.skyMode;
@@ -563,6 +566,7 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         if (it.id == 1) strncpy(raw, skinName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 2) strncpy(raw, seasonName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 3) strncpy(raw, skyName((uint8_t)getValue(it)), sizeof(raw) - 1);
+        else if (it.id == 25) snprintf(raw, sizeof(raw), "%dPX", getValue(it));
         else snprintf(raw, sizeof(raw), "%d", getValue(it));
     } else if (s_page == SettingsPage::SYSTEM && it.id == 2) {
         int v = getValue(it);
@@ -625,6 +629,22 @@ static bool setValue(const Item& it, int v) {
         if (v < 0) v = maxV;
         if (v > maxV) v = 0;
         r.hsMethod = (uint8_t)v;
+        Config::save();
+        return true;
+    }
+
+    if (s_page == SettingsPage::SCENE && it.id == 25) {
+        static const uint16_t widths[] = {
+            240, 290, 340, 390, 440, 490, 540, 590, 640, 690, 740,
+            790, 840, 890, 940, 990, 1040, 1090, 1140, 1190, 1200
+        };
+        uint8_t slot = 0;
+        while (slot < 20 && widths[slot] != p.fieldWidth) slot++;
+        if (widths[slot] != p.fieldWidth) slot = 7;
+        const bool stepUp = v > (int)p.fieldWidth;
+        if (stepUp && slot < 20) slot++;
+        else if (!stepUp && slot > 0) slot--;
+        p.fieldWidth = widths[slot];
         Config::save();
         return true;
     }

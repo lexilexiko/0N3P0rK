@@ -5,6 +5,7 @@
 #include "weather.h"
 #include "trees.h"
 #include "ground.h"
+#include "ground.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include <esp_random.h>
@@ -202,18 +203,12 @@ static void drawMoths(M5Canvas& canvas, bool flash) {
 // ---------------------------------------------------------------------------
 // Winter banks
 // ---------------------------------------------------------------------------
-static void wrapWorldX(int16_t& x) {
-    while (x > Trees::WORLD_WRAP_HI) x = (int16_t)(x - Trees::WORLD_SPAN);
-    while (x < Trees::WORLD_WRAP_LO) x = (int16_t)(x + Trees::WORLD_SPAN);
-}
-
 static bool rangesOverlap(int16_t ax, int16_t aw, int16_t bx, int16_t bw) {
     return ax < (int16_t)(bx + bw) && bx < (int16_t)(ax + aw);
 }
 
 static void addScar(int16_t x, uint8_t w) {
     if (w < 8) w = 8;
-    wrapWorldX(x);
     for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
         if (snowScars[i].active) continue;
         snowScars[i].x = x;
@@ -224,22 +219,18 @@ static void addScar(int16_t x, uint8_t w) {
 }
 
 static bool hitsScar(int16_t x, uint8_t w) {
-    wrapWorldX(x);
     for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
         if (!snowScars[i].active) continue;
         int16_t sx = snowScars[i].x;
-        wrapWorldX(sx);
         if (rangesOverlap(x, (int16_t)w, sx, (int16_t)snowScars[i].w)) return true;
     }
     return false;
 }
 
 static bool hitsLiveBank(int16_t x, uint8_t w, int skip) {
-    wrapWorldX(x);
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         if (i == skip || snowBanks[i].h < 1) continue;
         int16_t bx = snowBanks[i].x;
-        wrapWorldX(bx);
         if (rangesOverlap(x, (int16_t)w, bx, (int16_t)snowBanks[i].w)) return true;
     }
     return false;
@@ -257,11 +248,9 @@ static bool trySpawnBank(bool preferOffscreen) {
     if (slot < 0) return false;
     for (int tries = 0; tries < 22; tries++) {
         uint8_t w = (uint8_t)(20 + (esp_random() % 22));  // 20..41
-        int16_t x = (int16_t)(esp_random() % (uint32_t)Trees::WORLD_SPAN);
-        wrapWorldX(x);
-        int16_t sx = x;
-        wrapWorldX(sx);
-        bool onScreen = (sx >= -8 && sx <= 248);
+        int16_t x = (int16_t)(esp_random() % (uint32_t)Trees::worldWidth());
+        x = (int16_t)(x - Ground::worldOffset());
+        bool onScreen = (x >= -8 && x <= 248);
         if (preferOffscreen && onScreen) continue;
         if (hitsScar(x, w)) continue;
         if (hitsLiveBank(x, w, slot)) continue;
@@ -406,7 +395,6 @@ static void drawSnowBanks(M5Canvas& canvas, bool flash) {
             if (rows < 1) continue;
             if (rows > 9) rows = 9;  // higher visible ridges
             int16_t bx = snowBanks[i].x;
-            wrapWorldX(bx);
             int w = (int)snowBanks[i].w;
             if (w < 26) w = 26;
             if (w > 64) w = 64;
@@ -437,7 +425,6 @@ static void drawSnowBanks(M5Canvas& canvas, bool flash) {
         if (rows < 1) continue;
         if (rows > (int)SNOW_BANK_MAX_H) rows = SNOW_BANK_MAX_H;
         int16_t bx = snowBanks[i].x;
-        wrapWorldX(bx);
         int w = (int)snowBanks[i].w;
         if (w < 12) w = 12;
 
@@ -468,12 +455,10 @@ void scroll(int dir) {
         for (int i = 0; i < SNOW_BANK_COUNT; i++) {
             if (snowBanks[i].h < 1) continue;
             snowBanks[i].x = (int16_t)(snowBanks[i].x + d);
-            wrapWorldX(snowBanks[i].x);
         }
         for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
             if (!snowScars[i].active) continue;
             snowScars[i].x = (int16_t)(snowScars[i].x + d);
-            wrapWorldX(snowScars[i].x);
         }
     }
     for (uint8_t i = 0; i < 3; i++)
@@ -497,7 +482,6 @@ void trampleSnow(int pigFeetX) {
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         if (snowBanks[i].h < 1) continue;
         int16_t bx = snowBanks[i].x;
-        wrapWorldX(bx);
         int16_t left = bx;
         int16_t right = (int16_t)(bx + snowBanks[i].w);
         if (pathR <= left || pathL >= right) continue;
@@ -513,7 +497,6 @@ void trampleSnow(int pigFeetX) {
             snowBanks[i].w = (uint8_t)leftW;
             if (extra >= 0) {
                 snowBanks[extra].x = pathR;
-                wrapWorldX(snowBanks[extra].x);
                 snowBanks[extra].w = (uint8_t)rightW;
                 snowBanks[extra].h = snowBanks[i].h;
             }
@@ -522,7 +505,6 @@ void trampleSnow(int pigFeetX) {
             snowBanks[i].w = (uint8_t)leftW;  // ate the right
         } else if (rightW >= 10 && leftW < 10) {
             snowBanks[i].x = pathR;
-            wrapWorldX(snowBanks[i].x);
             snowBanks[i].w = (uint8_t)rightW;
         } else {
             snowBanks[i].h = 0;  // whole drift stomped

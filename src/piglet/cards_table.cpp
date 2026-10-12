@@ -88,10 +88,7 @@ bool unlocked() {
 bool isActive() { return s_active; }
 
 static int16_t screenX() {
-    int16_t x = (int16_t)(s_worldX + s_scroll);
-    while (x > 280) x = (int16_t)(x - 300);
-    while (x < -40) x = (int16_t)(x + 300);
-    return x;
+    return (int16_t)(s_worldX + s_scroll);
 }
 
 static uint8_t rndPow() { return (uint8_t)(1 + (esp_random() % 3)); }

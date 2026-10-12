@@ -16,11 +16,6 @@ static inline int16_t snapPx(int16_t v) {
     return (v >= 0) ? (v / PX) * PX : ((v - (PX - 1)) / PX) * PX;
 }
 
-// Match tree screenX wrap band so drops stay in the same world loop
-static constexpr int16_t WRAP_HI = WORLD_WRAP_HI;
-static constexpr int16_t WRAP_LO = WORLD_WRAP_LO;
-static constexpr int16_t WRAP_SPAN = WORLD_SPAN;
-
 static bool thunder() { return Avatar::isThunderFlashing(); }
 static uint16_t fl(uint16_t c) {
     if (!thunder()) return c;
@@ -86,11 +81,6 @@ static Drop drops[MAX_DROP];
 static Splash splashes[8];
 static uint8_t splashIdx = 0;
 
-static void wrapX(int16_t& x) {
-    while (x > WRAP_HI) x -= WRAP_SPAN;
-    while (x < WRAP_LO) x += WRAP_SPAN;
-}
-
 static int16_t fallY(const Drop& d, uint32_t now) {
     if (d.groundSince != 0) return DROP_GROUND_Y;
     float tt = (float)(now - d.dropStart) / 1000.0f;
@@ -111,7 +101,6 @@ void dropsScroll(int dir) {
     for (uint8_t i = 0; i < MAX_DROP; i++) {
         if (!drops[i].active) continue;
         drops[i].x = (int16_t)(drops[i].x + d);
-        wrapX(drops[i].x);
     }
     for (uint8_t i = 0; i < 8; i++) {
         if (!splashes[i].active) continue;
@@ -120,9 +109,7 @@ void dropsScroll(int dir) {
 }
 
 bool dropsSpawn(int16_t x, int16_t y, uint8_t r, Produce p) {
-    // Do NOT clamp X to the visible band — fruit lives in world space.
-    // Soft wrap only so values stay near the tree loop.
-    wrapX(x);
+    // Fruit lives in screen space and follows the same finite camera scroll.
     if (y < 0) y = 0;
     if (y > DROP_GROUND_Y - 4) y = DROP_GROUND_Y - 4;
     if (r < 2) r = 2;
@@ -380,7 +367,7 @@ void drawDropsForeground(M5Canvas& canvas) {
                 sp.produce = drops[i].produce;
             }
         }
-        // Skip draw if fully off-screen (still collectable after wrap)
+        // Skip drawing while off-screen; the fruit remains in the field.
         if (drops[i].x < -20 || drops[i].x > DISPLAY_W + 20) continue;
         drawProduce(canvas, drops[i].x, cy, drops[i].r, drops[i].produce);
     }

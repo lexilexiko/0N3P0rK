@@ -61,6 +61,7 @@ struct PersonalityConfig {
     uint16_t dimTimeout = 30;
     uint8_t skyMode = 0;
     uint8_t pigSkin = 0;
+    uint16_t fieldWidth = 590;  // Scene width in pixels (240..1200).
     bool tusksEnabled = true;
     uint8_t pigSkinAlive = 0;  // last non-zombie skin (restore on 5 hearts)
     uint8_t nightWolfBites = 0;

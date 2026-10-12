@@ -46,7 +46,7 @@ struct BurrowAnt {
 
 static constexpr uint8_t kTunnelCellW = 4;
 static constexpr uint8_t kTunnelLanes = 3;
-static constexpr uint8_t kTunnelCols = Trees::WORLD_SPAN / kTunnelCellW;
+static constexpr uint16_t kTunnelCols = Trees::WORLD_SPAN / kTunnelCellW;
 static constexpr uint8_t kTunnelLife = 180;
 static constexpr uint8_t kTunnelY[kTunnelLanes] = {4, 7, 10};
 static uint8_t tunnelLife[kTunnelCols][kTunnelLanes] = {};
@@ -57,13 +57,14 @@ static BurrowAnt burrowAnts[] = {
 };
 
 static uint16_t wrapWorldX(int32_t x) {
-    while (x < 0) x += Trees::WORLD_SPAN;
-    while (x >= Trees::WORLD_SPAN) x -= Trees::WORLD_SPAN;
+    if (x < 0) x = 0;
+    const int32_t maxX = Trees::worldWidth() - 1;
+    if (x > maxX) x = maxX;
     return (uint16_t)x;
 }
 
-static int screenWorldX(uint16_t worldX, uint16_t scroll) {
-    return (worldX + scroll) % Trees::WORLD_SPAN;
+static int screenWorldX(uint16_t worldX) {
+    return (int)worldX - Ground::worldOffset();
 }
 
 static uint8_t tunnelLane(uint8_t y) {
@@ -85,8 +86,6 @@ static void carveTunnel(uint16_t fromX, uint8_t fromY,
     int x1 = toX / kTunnelCellW;
     int y0 = tunnelLane(fromY);
     const int y1 = tunnelLane(toY);
-    if (x1 - x0 > kTunnelCols / 2) x0 += kTunnelCols;
-    else if (x0 - x1 > kTunnelCols / 2) x1 += kTunnelCols;
     int dx = abs(x1 - x0);
     const int sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0);
@@ -94,8 +93,7 @@ static void carveTunnel(uint16_t fromX, uint8_t fromY,
     int error = dx + dy;
 
     for (;;) {
-        const uint16_t col =
-            (uint16_t)((x0 % kTunnelCols + kTunnelCols) % kTunnelCols);
+        const uint16_t col = (uint16_t)x0;
         tunnelLife[col][y0] = kTunnelLife;
         if (x0 == x1 && y0 == y1) break;
         const int twiceError = error * 2;
@@ -107,8 +105,7 @@ static void carveTunnel(uint16_t fromX, uint8_t fromY,
             error += dx;
             const int nextY = y0 + sy;
             if (nextY >= 0 && nextY < kTunnelLanes) {
-                const uint16_t connector =
-                    (uint16_t)((x0 % kTunnelCols + kTunnelCols) % kTunnelCols);
+                const uint16_t connector = (uint16_t)x0;
                 tunnelLife[connector][nextY] = kTunnelLife;
             }
             y0 = nextY < 0 ? 0 : nextY >= kTunnelLanes
@@ -770,12 +767,10 @@ void Display::drawBottomBar() {
         const uint16_t crawler = blend565(
             season == Season::WINTER ? 0xEF7D : 0xFBE0, DIRT_MID, 236);
         const uint16_t tunnelGlow = blend565(fringeTop, DIRT_MID, 112);
-        const uint16_t scroll = Ground::burrowScrollPhase();
-
         const uint32_t now = millis();
         ageTunnels(now);
         for (uint16_t col = 0; col < kTunnelCols; col++) {
-            const int x = screenWorldX((uint16_t)(col * kTunnelCellW), scroll);
+            const int x = screenWorldX((uint16_t)(col * kTunnelCellW));
             if (x >= DISPLAY_W || x + kTunnelCellW <= 0) continue;
             for (uint8_t lane = 0; lane < kTunnelLanes; lane++) {
                 const uint8_t life = tunnelLife[col][lane];
@@ -819,7 +814,7 @@ void Display::drawBottomBar() {
                 ant.nextStep = now + (uint32_t)random(90, 700);
             }
 
-            const int x = screenWorldX(ant.worldX, scroll);
+            const int x = screenWorldX(ant.worldX);
             if (x < 2 || x > DISPLAY_W - 4) continue;
             const int leg = ((now / 90u + i) & 1u) ? -1 : 1;
             bottomBar.drawPixel(x, ant.y, crawler);

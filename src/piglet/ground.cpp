@@ -19,6 +19,7 @@ static int16_t s_offset = 0;
 static uint16_t s_burrowScrollPhase = 0;
 static uint16_t s_speed = 80;
 static uint32_t s_lastUpdate = 0;
+static int16_t s_worldOffset = 0;
 static constexpr uint16_t BURROW_PATTERN_W = Trees::WORLD_SPAN;
 struct BurnPatch {
     int16_t x;
@@ -146,6 +147,13 @@ void setSpeed(uint16_t ms) {
 
 uint16_t getSpeed() { return s_speed; }
 
+bool canScroll(bool directionRight) {
+    const int16_t maxOffset = (int16_t)(Trees::worldWidth() - 240);
+    return directionRight ? s_worldOffset > 0 : s_worldOffset < maxOffset;
+}
+
+int16_t worldOffset() { return s_worldOffset; }
+
 int16_t offset() { return s_offset; }
 uint16_t burrowScrollPhase() { return s_burrowScrollPhase; }
 
@@ -216,6 +224,8 @@ void updateScroll(bool moving, bool directionRight, int steps) {
     if (steps < 1) steps = 1;
 
     for (int n = 0; n < steps; n++) {
+        if (!canScroll(directionRight)) break;
+        s_worldOffset += directionRight ? -1 : 1;
         if (directionRight) {
             s_offset++;
             scrollBurnPatches(1);
