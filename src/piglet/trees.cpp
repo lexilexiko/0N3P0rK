@@ -153,6 +153,8 @@ struct Slot {
     uint8_t pendingFruits;
     uint8_t stompHits;
     bool stompArmed;
+    int8_t stompShake;
+    uint32_t stompShakeUntil;
     uint32_t meteorDamageStart;
     int8_t meteorDamageSide;
 };
@@ -163,8 +165,6 @@ static constexpr uint8_t SLOT_COUNT = 9;
 static Slot slots[SLOT_COUNT];
 static int pigHintX = 60;
 static bool pigHintRight = false;
-static int8_t stompShake = 0;
-static uint32_t stompShakeUntil = 0;
 static bool waveShake = false;
 static uint32_t waveShakeStart = 0;
 static int16_t drawWorldShift = 0;
@@ -665,10 +665,11 @@ void reset() {
         slots[i].pendingHide = slots[i].pendingShow = false;
         slots[i].stompHits = 0;
         slots[i].stompArmed = true;
+        slots[i].stompShake = 0;
+        slots[i].stompShakeUntil = 0;
         slots[i].scroll = 0;
     }
     dropsReset();
-    stompShake = 0;
     waveShake = false;
     globalStompArmed = true;
 }
@@ -1180,8 +1181,8 @@ bool tryStompFruitTree(int pigFeetX, bool airborne) {
     globalStompArmed = false;
     t.stompArmed = false;
     t.stompHits++;
-    stompShake = (t.stompHits & 1) ? 3 : -3;
-    stompShakeUntil = millis() + 180;
+    t.stompShake = (t.stompHits & 1) ? 3 : -3;
+    t.stompShakeUntil = millis() + 180;
 
     // Shake loose produce on each hit (fruit + berry)
     if (t.phase == Phase::ALIVE && t.fruitCount > 0) {
@@ -1227,13 +1228,28 @@ void shakeFromWave() {
 }
 
 void setStompShake(int8_t s) {
-    stompShake = s;
-    if (s != 0) stompShakeUntil = millis() + 180;
+    int best = -1;
+    int bestDist = 999;
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        if (slots[i].phase != Phase::ALIVE && slots[i].phase != Phase::GROWING) continue;
+        const int distance = abs((int)screenX(slots[i]) - pigHintX);
+        if (distance < bestDist) {
+            bestDist = distance;
+            best = i;
+        }
+    }
+    if (best < 0) return;
+    slots[best].stompShake = s;
+    if (s != 0) slots[best].stompShakeUntil = millis() + 180;
 }
 
 static void tickStompShake() {
-    if (stompShake != 0 && (int32_t)(millis() - stompShakeUntil) >= 0)
-        stompShake = 0;
+    const uint32_t now = millis();
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        Slot& t = slots[i];
+        if (t.stompShake != 0 && (int32_t)(now - t.stompShakeUntil) >= 0)
+            t.stompShake = 0;
+    }
 }
 
 // ---------- draw helpers ----------
@@ -1288,7 +1304,7 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
         int wave = (int)(now % 3200);
         sway = (wave < 1600) ? 1 : -1;
     }
-    sway += stompShake;
+    sway += t.stompShake;
     bool collapsing = (t.phase == Phase::COLLAPSING);
     float g = t.growth;
     if (collapsing) g = t.growth;
@@ -1505,7 +1521,7 @@ static void drawPalm(M5Canvas& canvas, Slot& t, int16_t yOffset, bool withFruit)
         h = (int16_t)(h * 88 / 100);
         if (h < PX * 10) h = PX * 10;
     }
-    int16_t x = bx + stompShake;
+    int16_t x = bx + t.stompShake;
 
     // Seed-driven variety (like seasonal trees)
     uint32_t s = t.seed ? t.seed : 1u;
@@ -1646,7 +1662,7 @@ static void drawCactus(M5Canvas& canvas, Slot& t, int16_t yOffset) {
         h -= (int16_t)(ct * ct * fullH);
         if (h < 0) h = 0;
     }
-    int16_t x = bx + stompShake;
+    int16_t x = bx + t.stompShake;
 
     uint16_t outC  = fl(0x1A40);
     uint16_t darkC = fl(0x2C80);
@@ -1757,7 +1773,7 @@ static void drawStall(M5Canvas& canvas, Slot& t, int16_t yOffset) {
         h -= (int16_t)(ct * ct * 40);
         if (h < 0) h = 0;
     }
-    int16_t x = bx + stompShake;
+    int16_t x = bx + t.stompShake;
     uint16_t wood = fl(0x9A40);
     uint16_t woodD = fl(0x5140);
     uint16_t awn = fl(0xE8C4);
@@ -1808,7 +1824,7 @@ static void drawTrash(M5Canvas& canvas, Slot& t, int16_t yOffset) {
         h -= (int16_t)(ct * ct * 22);
         if (h < 0) h = 0;
     }
-    int16_t x = bx + stompShake;
+    int16_t x = bx + t.stompShake;
     uint16_t body = fl(0x4A69);
     uint16_t bodyD = fl(0x3186);
     uint16_t lid = fl(0x6B6D);
@@ -1847,7 +1863,7 @@ static void drawLamp(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     }
     int8_t sway = 0;
     if (t.phase == Phase::ALIVE) sway = ((now / 800) & 1) ? 0 : 0;
-    sway += stompShake;
+    sway += t.stompShake;
     int16_t x = bx + sway;
     uint16_t pole = fl(0x3186);
     uint16_t poleHi = fl(0x5AEB);
@@ -2024,7 +2040,7 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
                              : (int8_t)(((2250 - wave) * PX) / 750);
         if (isBerry) sway = (sway > 0) ? 1 : (sway < 0 ? -1 : 0);
     }
-    sway += stompShake;
+    sway += t.stompShake;
     if (waveShake) {
         uint32_t e = now - waveShakeStart;
         if (e < 300) {

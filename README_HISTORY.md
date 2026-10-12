@@ -301,4 +301,39 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Updated the RADIO guide and capture controls, including the one-line Q-menu
   navigation hint.
 
+### 1.3.8 (Beta)
+
+#### Farm world and flora
+
+- Added a configurable, looping farm field width from **240 to 1230 px**.
+  Scrolling wraps around the field instead of stopping at its boundary.
+- Added **PIG → TREES → FLORA** controls for independently setting fruit trees,
+  decorative trees, and bushes from **1 to 3** each.
+- Spread new trees and bushes around the configured field with randomized
+  spacing across flora types, rather than growing in same-type rows.
+- Trees and bushes now collapse for regrowth after about **60 seconds** when
+  left alone; regrowth selects a new location, including after changing field
+  width.
+- Kept world-space trees, fallen produce, and seasonal effects aligned as the
+  camera loops around the field.
+
+#### Seasonal and jump effects
+
+- Replaced the autumn tumbleweed with interactive piles of fallen leaves that
+  build up, scatter when the pig moves or jumps through them, and remain
+  temporarily. Increased pile height for better visibility.
+- Added rare seasonal meteor-shower visuals with season-specific meteors,
+  impact debris, and screen shake. Meteor paths are anchored to the looping
+  field rather than the pig's screen position.
+- Added a short screen shake on jump landing that builds during consecutive
+  jumps in place, plus playful dialogue for repeated jump streaks.
+- Limited jump-impact shaking to the specific tree or bush being hit.
+
+#### PIG menu
+
+- Organized scene settings into **TREES**, **EFFECTS**, and **OTHER** pages,
+  with pig, season, and sky controls kept near the top.
+- Fixed Back navigation from FLORA so it returns to the TREES page and then to
+  the parent PIG menu.
+
 ---

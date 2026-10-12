@@ -163,6 +163,14 @@ static float wrapFieldX(float x) {
     return x;
 }
 
+static float worldToScreenX(float worldX) {
+    return wrapFieldX(worldX - (float)Ground::worldOffset());
+}
+
+static float screenToWorldX(float screenX) {
+    return wrapFieldX(screenX + (float)Ground::worldOffset());
+}
+
 // Noir: moths around the street lamp (center lane)
 struct Moth {
     float a;
@@ -471,9 +479,6 @@ void scroll(int dir) {
     }
     for (uint8_t i = 0; i < LEAF_PILE_COUNT; i++)
         if (leafPiles[i].active) leafPiles[i].x = (float)wrapX((int)leafPiles[i].x + d);
-    for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++)
-        if (meteorFragments[i].active)
-            meteorFragments[i].x = (float)wrapX((int)meteorFragments[i].x + d);
 }
 
 void trampleSnow(int pigFeetX) {
@@ -723,19 +728,21 @@ static void drawLeafPiles(M5Canvas& canvas, bool flash) {
     for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
         const LeafPile& pile = leafPiles[p];
         if (!pile.active || pile.count == 0) continue;
-        const int rows = 1 + (pile.count > 4) + (pile.count > 8);
+        int rows = (pile.count + 1) / 2;
+        if (rows < 2) rows = 2;
         const uint16_t dark = flash ? 0xFFFF : 0x8A20;
         const int baseX = (int)wrapFieldX(pile.x);
         for (int pass = -1; pass <= 1; pass++) {
             const int x = baseX + pass * width;
             if (x < -16 || x > DISPLAY_W + 16) continue;
-            canvas.fillRect(x - 9, 104 - rows, 18, rows, dark);
+            canvas.fillRect(x - 9, 104 - rows * 3, 18, rows * 3, dark);
             for (uint8_t i = 0; i < pile.count; i++) {
-                const int spread = (int)(i % 5) * 3 - 6;
-                const int row = (int)(i / 5);
+                const int spread = (int)(i % 2) * 6 - 3;
+                const int row = (int)(i / 2);
                 const uint16_t color = flash ? 0xFFFF : leafColors[(pile.col + i) % 5];
-                canvas.fillRect(x + spread, 101 - row, 4, 2, color);
-                canvas.drawPixel(x + spread + 2, 100 - row, color);
+                const int leafY = 102 - row * 3;
+                canvas.fillRect(x + spread, leafY, 4, 2, color);
+                canvas.drawPixel(x + spread + 2, leafY - 1, color);
             }
         }
     }
@@ -772,7 +779,7 @@ static void launchMeteor(uint32_t now) {
     for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) {
         Meteor& meteor = meteors[i];
         if (meteor.active) continue;
-        meteor.x = (float)random(24, DISPLAY_W - 24);
+        meteor.x = screenToWorldX((float)random(24, DISPLAY_W - 24));
         meteor.y = -8.0f;
         meteor.vx = (float)random(-8, 9) / 10.0f;
         meteor.vy = 3.0f + (float)random(0, 11) / 10.0f;
@@ -783,11 +790,11 @@ static void launchMeteor(uint32_t now) {
     }
 }
 
-static void spawnMeteorFragments(int16_t x, uint32_t now) {
+static void spawnMeteorFragments(float worldX, uint32_t now) {
     for (uint8_t i = 0; i < 12; i++) {
         MeteorFragment& bit =
             meteorFragments[meteorFragmentCursor++ % METEOR_FRAGMENT_COUNT];
-        bit.x = (float)x + (float)random(-2, 3);
+        bit.x = wrapFieldX(worldX + (float)random(-2, 3));
         bit.y = 98.0f;
         bit.vx = (float)random(-55, 56) / 10.0f;
         bit.vy = (float)random(-58, 8) / 10.0f;
@@ -812,14 +819,14 @@ static void updateMeteorShower(uint32_t now) {
     for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) {
         Meteor& meteor = meteors[i];
         if (!meteor.active) continue;
-        meteor.x += meteor.vx;
+        meteor.x = wrapFieldX(meteor.x + meteor.vx);
         meteor.y += meteor.vy;
         if (meteor.y < 98.0f) continue;
 
-        const int16_t impactX = (int16_t)meteor.x;
+        const int16_t impactX = (int16_t)worldToScreenX(meteor.x);
         meteor.active = false;
         if (impactX >= 0 && impactX < DISPLAY_W) {
-            spawnMeteorFragments(impactX, now);
+            spawnMeteorFragments(meteor.x, now);
             Ground::meteorImpact(impactX);
             Trees::meteorImpact(impactX);
             Display::triggerScreenShake(7, 420);
@@ -835,7 +842,7 @@ static void updateMeteorShower(uint32_t now) {
             continue;
         }
         if (bit.settled) continue;
-        bit.x += bit.vx;
+        bit.x = wrapFieldX(bit.x + bit.vx);
         bit.y += bit.vy;
         bit.vy += 0.16f;
         bit.vx *= 0.97f;
@@ -860,7 +867,7 @@ static void drawMeteorShower(M5Canvas& canvas, bool flash) {
     for (uint8_t i = 0; i < METEOR_FLIGHT_COUNT; i++) {
         const Meteor& meteor = meteors[i];
         if (!meteor.active) continue;
-        const int x = (int)meteor.x;
+        const int x = (int)worldToScreenX(meteor.x);
         const int y = (int)meteor.y;
         const uint16_t tail = flash ? 0xFFFF : colors.tail;
         const uint16_t hot = flash ? 0xFFFF : colors.hot;
@@ -872,7 +879,7 @@ static void drawMeteorShower(M5Canvas& canvas, bool flash) {
     for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++) {
         const MeteorFragment& bit = meteorFragments[i];
         if (!bit.active) continue;
-        const int x = (int)bit.x;
+        const int x = (int)worldToScreenX(bit.x);
         const int y = (int)bit.y;
         const uint16_t color = flash ? 0xFFFF
             : (bit.shade == 0 ? colors.hot : colors.fragments);

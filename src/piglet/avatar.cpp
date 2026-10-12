@@ -70,6 +70,58 @@ uint16_t Avatar::jumpDurationMs = 500;  // air time after crouch
 int Avatar::jumpHeightPx = 16;          // higher hop (was 8)
 // Brief crouch before springing up
 static constexpr uint16_t JUMP_CROUCH_MS = 100;
+static int jumpStartX = 0;
+static bool jumpStartedStationary = false;
+static uint8_t stationaryJumpChain = 0;
+static uint8_t stationaryJumpLandingCount = 0;
+static uint32_t lastStationaryLandingMs = 0;
+static int lastStationaryLandingX = 0;
+static constexpr uint32_t JUMP_LAND_CHAIN_MS = 1400;
+static constexpr int JUMP_STATIONARY_TOLERANCE_PX = 5;
+
+static void finishJump(uint32_t now, int currentX, bool remainedStationary) {
+    const bool landedInPlace =
+        jumpStartedStationary && remainedStationary &&
+        abs(currentX - jumpStartX) <= JUMP_STATIONARY_TOLERANCE_PX;
+    const bool continuesChain = landedInPlace && lastStationaryLandingMs != 0 &&
+        now - lastStationaryLandingMs <= JUMP_LAND_CHAIN_MS &&
+        abs(currentX - lastStationaryLandingX) <= JUMP_STATIONARY_TOLERANCE_PX;
+    if (continuesChain) {
+        if (stationaryJumpChain < 5) stationaryJumpChain++;
+        if (stationaryJumpLandingCount < 11) stationaryJumpLandingCount++;
+    } else if (landedInPlace) {
+        stationaryJumpChain = 1;
+        stationaryJumpLandingCount = 1;
+    } else {
+        stationaryJumpChain = 0;
+        stationaryJumpLandingCount = 0;
+    }
+
+    if (landedInPlace) {
+        lastStationaryLandingMs = now;
+        lastStationaryLandingX = currentX;
+    } else {
+        lastStationaryLandingMs = 0;
+    }
+
+    if (landedInPlace && stationaryJumpLandingCount == 6)
+        Mood::say("Not sure I can jump again");
+    else if (landedInPlace && stationaryJumpLandingCount == 7)
+        Mood::say("67!");
+    else if (landedInPlace && stationaryJumpLandingCount == 10)
+        Mood::say("One more jump: stuff falls!");
+
+    if (stationaryJumpLandingCount == 11) {
+        SeasonalFx::triggerMeteorShower();
+        stationaryJumpLandingCount++;
+    }
+
+    const uint8_t intensity = (uint8_t)(1 + stationaryJumpChain);
+    if (!Display::isShaking() ||
+        Display::getShakeIntensity() <= intensity) {
+        Display::triggerScreenShake(intensity, 140);
+    }
+}
 
 // Attack hop state (multi-hop pounce for captures)
 bool Avatar::attackHopActive = false;
@@ -1036,6 +1088,8 @@ void Avatar::cuteJump() {
     s_playDead = false;
     jumpActive = true;
     jumpStartTime = millis();
+    jumpStartX = currentX;
+    jumpStartedStationary = !grassMoving && !transitioning && !s_playerWalkScroll;
     // Quiet prep — main JUMP tone fires when leaving crouch (see drawFrame)
 }
 
@@ -1462,6 +1516,7 @@ void Avatar::draw(M5Canvas& canvas) {
     }
 
     if (jumpActive && (now - jumpStartTime > (uint32_t)JUMP_CROUCH_MS + jumpDurationMs)) {
+        finishJump(now, currentX, !grassMoving && !transitioning && !s_playerWalkScroll);
         jumpActive = false;
     }
 
@@ -1542,6 +1597,7 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
 
     // Handle cute jump timeout (crouch + air)
     if (jumpActive && (now - jumpStartTime > (uint32_t)JUMP_CROUCH_MS + jumpDurationMs)) {
+        finishJump(now, currentX, !grassMoving && !transitioning && !s_playerWalkScroll);
         jumpActive = false;
     }
 

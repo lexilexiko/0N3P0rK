@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.3.7 (Beta)**
+**Current version: 1.3.8 (Beta)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -61,7 +61,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.7_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.8_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -91,7 +91,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.7 (Beta)`.
+   `1.3.8 (Beta)`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -175,7 +175,15 @@ RETRO / NOIR / CITY. Ants appear outside winter and RETRO.
 
 ### Personality / SCENE menu (highlights)
 
-- Name, skin, season, sky mode, scroll speed  
+- Name, skin, season, sky mode, scroll speed, and a cyclic field width from
+  **240 to 1230 px**. The field keeps scrolling across its boundary; its width
+  sets the loop length.
+- **PIG → TREES → FLORA** — set fruit trees, decorative trees, and bushes
+  independently from **1 to 3** each.
+- Trees and bushes are distributed across the configured field, regrow after
+  being broken, and collapse for regrowth after about **60 seconds**.
+- **PIG → TREES**, **EFFECTS**, and **OTHER** group the scene settings; the
+  pig, season, and sky controls remain near the top of PIG.
 - **LIFE** — pig keeps living while tools run  
 - Layer toggles (grass, trees, weather, mood, wolf…)  
 - **TALK SEC** — monologue interval  
@@ -788,7 +796,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.3.7 (Beta), see
+For the chronological release notes from the early builds through 1.3.8 (Beta), see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---
