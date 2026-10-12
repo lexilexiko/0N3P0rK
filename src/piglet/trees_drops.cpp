@@ -81,6 +81,13 @@ static Drop drops[MAX_DROP];
 static Splash splashes[8];
 static uint8_t splashIdx = 0;
 
+static int16_t wrapFieldX(int x) {
+    const int16_t width = worldWidth();
+    x %= width;
+    if (x < 0) x += width;
+    return (int16_t)x;
+}
+
 static int16_t fallY(const Drop& d, uint32_t now) {
     if (d.groundSince != 0) return DROP_GROUND_Y;
     float tt = (float)(now - d.dropStart) / 1000.0f;
@@ -100,11 +107,11 @@ void dropsScroll(int dir) {
     const int16_t d = (dir > 0) ? 1 : -1;
     for (uint8_t i = 0; i < MAX_DROP; i++) {
         if (!drops[i].active) continue;
-        drops[i].x = (int16_t)(drops[i].x + d);
+        drops[i].x = wrapFieldX(drops[i].x + d);
     }
     for (uint8_t i = 0; i < 8; i++) {
         if (!splashes[i].active) continue;
-        splashes[i].x += (float)d;
+        splashes[i].x = (float)wrapFieldX((int)(splashes[i].x + (float)d));
     }
 }
 
@@ -116,7 +123,7 @@ bool dropsSpawn(int16_t x, int16_t y, uint8_t r, Produce p) {
 
     for (uint8_t i = 0; i < MAX_DROP; i++) {
         if (drops[i].active) continue;
-        drops[i].x = x;
+        drops[i].x = wrapFieldX(x);
         drops[i].y = y;
         drops[i].r = r;
         drops[i].dropStart = millis();
@@ -321,9 +328,10 @@ bool tryCollectNearbyFruit(int pigCenterX, int pigFeetY, int radius) {
     for (uint8_t i = 0; i < MAX_DROP; i++) {
         if (!drops[i].active) continue;
         int16_t fy = fallY(drops[i], now);
-        int dx = (int)drops[i].x - pigCenterX;
+        int dx = abs((int)wrapFieldX(drops[i].x) - wrapFieldX(pigCenterX));
+        const int width = worldWidth();
+        if (dx > width / 2) dx = width - dx;
         int dy = (int)fy - pigFeetY;
-        if (dx < 0) dx = -dx;
         if (dy < 0) dy = -dy;
         // Prefer ground pickups: slightly larger X once landed
         const int radX = (drops[i].groundSince != 0) ? (radius + 14) : (radius + 10);
@@ -367,18 +375,21 @@ void drawDropsForeground(M5Canvas& canvas) {
                 sp.produce = drops[i].produce;
             }
         }
-        // Skip drawing while off-screen; the fruit remains in the field.
-        if (drops[i].x < -20 || drops[i].x > DISPLAY_W + 20) continue;
-        drawProduce(canvas, drops[i].x, cy, drops[i].r, drops[i].produce);
+        const int16_t x = wrapFieldX(drops[i].x);
+        const int16_t width = worldWidth();
+        for (int pass = -1; pass <= 1; pass++) {
+            const int16_t drawX = (int16_t)(x + pass * width);
+            if (drawX < -20 || drawX > DISPLAY_W + 20) continue;
+            drawProduce(canvas, drawX, cy, drops[i].r, drops[i].produce);
+        }
     }
 
     for (uint8_t i = 0; i < 8; i++) {
         if (!splashes[i].active) continue;
         float pr = (float)(now - splashes[i].t) / 500.f;
         if (pr >= 1.f) { splashes[i].active = false; continue; }
-        int16_t sx = (int16_t)(splashes[i].x + splashes[i].vx * pr * 20);
+        int16_t sx = wrapFieldX((int)(splashes[i].x + splashes[i].vx * pr * 20));
         int16_t sy = (int16_t)(splashes[i].y + splashes[i].vy * pr * 20 + 40 * pr * pr);
-        if (sx < 0 || sx >= DISPLAY_W) continue;
         // Splash tint matches produce (not always red apple)
         uint16_t col = fl(isRetroSeason() ? 0xAD55 : C_APPLE_RED);
         if (!isRetroSeason()) {
@@ -400,7 +411,12 @@ void drawDropsForeground(M5Canvas& canvas) {
                 default: break;
             }
         }
-        canvas.fillRect(sx, sy, PX, PX, col);
+        const int16_t width = worldWidth();
+        for (int pass = -1; pass <= 1; pass++) {
+            const int16_t drawX = (int16_t)(sx + pass * width);
+            if (drawX < -PX || drawX >= DISPLAY_W) continue;
+            canvas.fillRect(drawX, sy, PX, PX, col);
+        }
     }
 }
 

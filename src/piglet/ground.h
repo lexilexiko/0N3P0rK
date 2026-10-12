@@ -1,5 +1,5 @@
 #pragma once
-// Ground layer: turf / pavement / pebbles + world treadmill scroll.
+// Ground layer: turf / pavement / pebbles + cyclic world treadmill scroll.
 // Trees/bushes → trees.cpp | season FX → seasonal_fx.cpp | pig → avatar.cpp
 #include <Arduino.h>
 #include <M5Unified.h>

@@ -1,4 +1,4 @@
-// OnePork-style settings: SCENE / RADIO / BLE
+// OnePork-style settings: PIG scene sections / SYSTEM / RADIO / BLE
 // ^/v move   ENT = toggle or enter value   then ^/v change   ESC back
 #pragma once
 
@@ -13,7 +13,10 @@ enum class SettingsPage : uint8_t {
     KEYS = 5,
     STATUS = 6,
     RADIO_EDIT = 7, // dynamic knobs for current method
-    FLORA = 8
+    FLORA = 8,
+    SCENE_TREES = 9,
+    SCENE_EFFECTS = 10,
+    SCENE_OTHER = 11
 };
 
 namespace SettingsMenu {

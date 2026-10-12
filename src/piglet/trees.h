@@ -24,7 +24,7 @@ enum class Kind : uint8_t {
 };
 
 // Maximum supported farm width (px). The active finite width is configurable.
-static constexpr int16_t WORLD_SPAN = 1200;
+static constexpr int16_t WORLD_SPAN = 1230;
 int16_t worldWidth();
 
 void init();

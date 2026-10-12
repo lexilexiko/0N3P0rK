@@ -41,12 +41,34 @@ struct Item {
 static const Item SCENE[] = {
     {"NAME",      Kind::TEXT,   0,  0, 0, 0},
     {"SKIN",      Kind::VALUE,  1,  0, PIG_SKIN_COUNT - 1, 1},
-    {"FIELD",     Kind::VALUE, 25, 240, 1200, 50},
-    {"FLORA",     Kind::ACTION,70, 0, 0, 0},
     {"TUSKS",     Kind::TOGGLE, 24, 0, 1, 1},
     {"SEASON",    Kind::VALUE,  2,  0, SEASON_MODE_COUNT - 1, 1},
     {"SKY",       Kind::VALUE,  3,  0, SKY_MODE_COUNT - 1, 1},
+    {"FIELD",     Kind::VALUE, 25, 240, 1230, 50},
     {"SCROLL",    Kind::VALUE,  4,  1, 10, 1},
+    {"TREES",     Kind::ACTION,71, 0, 0, 0},
+    {"EFFECTS",   Kind::ACTION,72, 0, 0, 0},
+    {"OTHER",     Kind::ACTION,73, 0, 0, 0},
+};
+static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
+
+static const Item SCENE_TREES[] = {
+    {"FLORA",     Kind::ACTION,70, 0, 0, 0},
+    {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
+};
+static const uint8_t SCENE_TREES_N = sizeof(SCENE_TREES) / sizeof(SCENE_TREES[0]);
+
+static const Item SCENE_EFFECTS[] = {
+    {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
+    {"GRASS BACK",Kind::TOGGLE,10, 0, 1, 1},
+    {"GRASS FRONT",Kind::TOGGLE,21,0, 1, 1},
+    {"SEASON FX", Kind::TOGGLE,12, 0, 1, 1},
+    {"MOOD",      Kind::TOGGLE,13, 0, 1, 1},
+    {"ANIM TEST", Kind::TOGGLE,14, 0, 1, 1},
+};
+static const uint8_t SCENE_EFFECTS_N = sizeof(SCENE_EFFECTS) / sizeof(SCENE_EFFECTS[0]);
+
+static const Item SCENE_OTHER[] = {
     {"LIFE",      Kind::TOGGLE, 5,  0, 1, 1},
     {"ALL LAYERS",Kind::TOGGLE, 6,  0, 1, 1},
     {"WOLF",      Kind::TOGGLE, 7,  0, 1, 1},
@@ -54,20 +76,13 @@ static const Item SCENE[] = {
     {"FRIEND",    Kind::TOGGLE, 19, 0, 1, 1},
     {"CARDS",     Kind::TOGGLE, 20, 0, 1, 1},
     {"WOLF EAT",  Kind::TOGGLE, 15, 0, 1, 1},
-    {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
-    {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
-    {"GRASS BACK",Kind::TOGGLE, 10, 0, 1, 1},
-    {"GRASS FRONT",Kind::TOGGLE,21, 0, 1, 1},
     {"SHOW PIG",  Kind::TOGGLE, 11, 0, 1, 1},
-    {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
-    {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
-    {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
     {"CPU HUD",   Kind::TOGGLE, 22, 0, 1, 1},
     {"UNDERGROUND",Kind::TOGGLE,23, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
-static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
+static const uint8_t SCENE_OTHER_N = sizeof(SCENE_OTHER) / sizeof(SCENE_OTHER[0]);
 
 static const Item FLORA[] = {
     {"FRUIT TREES", Kind::VALUE, 30, 1, 3, 1},
@@ -208,12 +223,31 @@ static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 static const char* const H_SCENE[] = {
     "TYPE NAME. ENT SAVE.",
     "SKIN OF THE HOG.",
-    "FIELD WIDTH IN PIXELS.",
-    "TREE AND BUSH COUNTS.",
     "SHOW BOAR TUSKS.",
     "AUTO OR LOCK A SEASON.",
     "AUTO DUSK / DAY / NIGHT.",
+    "CYCLIC WORLD WIDTH IN PIXELS.",
     "WALK SPEED AT THE EDGES.",
+    "TREES, BUSHES AND FLORA COUNTS.",
+    "WEATHER AND SEASONAL EFFECTS.",
+    "OTHER SCENE SETTINGS.",
+};
+
+static const char* const H_SCENE_TREES[] = {
+    "SET 1-3 TREES AND BUSHES.",
+    "SHOW TREE AND BUSH SCENERY.",
+};
+
+static const char* const H_SCENE_EFFECTS[] = {
+    "SHOW RAIN / SNOW / CLOUDS.",
+    "SHOW BACKGROUND GRASS.",
+    "SHOW FOREGROUND GRASS.",
+    "SEASONAL SCENE EFFECTS.",
+    "SHOW PIG MOOD EFFECTS.",
+    "QUICK TEST FOR FARM ANIMS.",
+};
+
+static const char* const H_SCENE_OTHER[] = {
     "SHE LIVES WHILE YOU WORK.",
     "QUICK TOGGLE: ALL FARM VISUALS.",
     "RANDOM WOLF VISITOR.",
@@ -221,15 +255,8 @@ static const char* const H_SCENE[] = {
     "COMPANION PIG ON FARM.",
     "DUEL CARD TABLE ON FARM.",
     "KILL EATS RANDOM HANDSHAKES.",
-    "FRUIT TREES AND DROPS.",
-    "RAIN SNOW CLOUDS BIRDS.",
-    "BACK GRASS AND DIRT FLOOR.",
-    "GRASS IN FRONT OF THE PIG.",
     "DRAW THE PIG BODY.",
-    "LEAVES BANKS BUTTERFLIES.",
-    "SPEECH BUBBLE ON/OFF.",
     "SEC BETWEEN MONOLOGUES.",
-    "-/= CYCLE ANIMS ON FARM.",
     "FRAME LOAD VS 33MS BUDGET.",
     "ROOTS, BURROWS AND CRAWLERS.",
     "TYPE CODE. ENT."
@@ -325,7 +352,8 @@ static bool s_text = false;
 static bool s_bind = false;
 static bool s_resetConfirm = false;
 static SettingsPage s_page = SettingsPage::SCENE;
-static uint8_t s_floraParentIdx = 0;
+static SettingsPage s_sceneParentPage = SettingsPage::SCENE;
+static uint8_t s_sceneParentIdx = 0;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
 static uint8_t s_statScroll = 0;
@@ -342,9 +370,19 @@ static char s_pickSsid[33] = "";
 static bool s_pickOpen = false;
 static bool s_scanning = false;
 
+static bool isSceneSettingsPage() {
+    return s_page == SettingsPage::SCENE ||
+           s_page == SettingsPage::SCENE_TREES ||
+           s_page == SettingsPage::SCENE_EFFECTS ||
+           s_page == SettingsPage::SCENE_OTHER;
+}
+
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::FLORA) { *n = FLORA_N; return FLORA; }
+    if (s_page == SettingsPage::SCENE_TREES) { *n = SCENE_TREES_N; return SCENE_TREES; }
+    if (s_page == SettingsPage::SCENE_EFFECTS) { *n = SCENE_EFFECTS_N; return SCENE_EFFECTS; }
+    if (s_page == SettingsPage::SCENE_OTHER) { *n = SCENE_OTHER_N; return SCENE_OTHER; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::RADIO_EDIT) { *n = s_editN; return s_editItems; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
@@ -471,7 +509,7 @@ static int getValue(const Item& it) {
             default: return 1;
         }
     }
-    if (s_page == SettingsPage::SCENE) {
+    if (isSceneSettingsPage()) {
         switch (it.id) {
             case 1: return p.pigSkin;
             case 25: return p.fieldWidth;
@@ -589,7 +627,7 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
     }
     char raw[20];
     raw[0] = '\0';
-    if (s_page == SettingsPage::SCENE) {
+    if (isSceneSettingsPage()) {
         if (it.id == 1) strncpy(raw, skinName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 2) strncpy(raw, seasonName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 3) strncpy(raw, skyName((uint8_t)getValue(it)), sizeof(raw) - 1);
@@ -660,19 +698,20 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
 
-    if (s_page == SettingsPage::SCENE && it.id == 25) {
+    if (isSceneSettingsPage() && it.id == 25) {
         static const uint16_t widths[] = {
             240, 290, 340, 390, 440, 490, 540, 590, 640, 690, 740,
-            790, 840, 890, 940, 990, 1040, 1090, 1140, 1190, 1200
+            790, 840, 890, 940, 990, 1040, 1090, 1140, 1190, 1230
         };
+        constexpr uint8_t WIDTH_COUNT = sizeof(widths) / sizeof(widths[0]);
         uint8_t slot = 0;
-        while (slot < 20 && widths[slot] != p.fieldWidth) slot++;
+        while (slot + 1 < WIDTH_COUNT && widths[slot] != p.fieldWidth) slot++;
         if (widths[slot] != p.fieldWidth) slot = 7;
         const bool stepUp = v > (int)p.fieldWidth;
-        if (stepUp && slot < 20) slot++;
-        else if (!stepUp && slot > 0) slot--;
+        slot = (uint8_t)((slot + (stepUp ? 1 : WIDTH_COUNT - 1)) % WIDTH_COUNT);
         p.fieldWidth = widths[slot];
         Config::save();
+        Trees::applyFloraCounts();
         return true;
     }
 
@@ -792,7 +831,7 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
 
-    if (s_page == SettingsPage::SCENE) {
+    if (isSceneSettingsPage()) {
         switch (it.id) {
             case 1: {
                 if (Mood::getHearts() < 1) {
@@ -1119,10 +1158,19 @@ const char* bottomHint() {
                 return H_SYSTEM[s_idx];
             if (s_page == SettingsPage::BLE && s_idx < sizeof(H_BLE) / sizeof(H_BLE[0]))
                 return H_BLE[s_idx];
-            if (s_page == SettingsPage::FLORA && s_idx < sizeof(H_FLORA) / sizeof(H_FLORA[0]))
-                return H_FLORA[s_idx];
             if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
                 return H_SCENE[s_idx];
+            if (s_page == SettingsPage::SCENE_TREES &&
+                s_idx < sizeof(H_SCENE_TREES) / sizeof(H_SCENE_TREES[0]))
+                return H_SCENE_TREES[s_idx];
+            if (s_page == SettingsPage::SCENE_EFFECTS &&
+                s_idx < sizeof(H_SCENE_EFFECTS) / sizeof(H_SCENE_EFFECTS[0]))
+                return H_SCENE_EFFECTS[s_idx];
+            if (s_page == SettingsPage::SCENE_OTHER &&
+                s_idx < sizeof(H_SCENE_OTHER) / sizeof(H_SCENE_OTHER[0]))
+                return H_SCENE_OTHER[s_idx];
+            if (s_page == SettingsPage::FLORA && s_idx < sizeof(H_FLORA) / sizeof(H_FLORA[0]))
+                return H_FLORA[s_idx];
         }
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
         if (it[s_idx].kind == Kind::TEXT)
@@ -1130,7 +1178,9 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::ACTION) {
             if (s_page == SettingsPage::RADIO && it[s_idx].id == 60)
                 return "ENT OPEN EDITOR  ESC BACK";
-            if (s_page == SettingsPage::SCENE && it[s_idx].id == 70)
+            if (s_page == SettingsPage::SCENE && it[s_idx].id >= 71)
+                return "ENT OPEN SECTION  ESC BACK";
+            if (s_page == SettingsPage::SCENE_TREES && it[s_idx].id == 70)
                 return "ENT OPEN FLORA  ESC BACK";
             return "ENT RESET RADIO  ESC BACK";
         }
@@ -1391,11 +1441,21 @@ void update() {
             SFX::play(SFX::BACK_NAV);
             return;
         }
-        if (s_page == SettingsPage::FLORA) {
-            s_page = SettingsPage::SCENE;
-            s_idx = s_floraParentIdx;
+        if (s_page == SettingsPage::FLORA ||
+            s_page == SettingsPage::SCENE_TREES ||
+            s_page == SettingsPage::SCENE_EFFECTS ||
+            s_page == SettingsPage::SCENE_OTHER) {
+            if (s_page == SettingsPage::FLORA) {
+                s_page = SettingsPage::SCENE_TREES;
+                s_idx = 0;
+            } else {
+                s_page = s_sceneParentPage;
+                s_idx = s_sceneParentIdx;
+            }
             s_scroll = 0;
-            keepVisible(SCENE_N);
+            uint8_t parentCount = 0;
+            items(&parentCount);
+            keepVisible(parentCount);
             s_openMs = millis();
             SFX::play(SFX::BACK_NAV);
             return;
@@ -1438,9 +1498,21 @@ void update() {
     }
 
     if (cur.kind == Kind::ACTION) {
-        if (s_page == SettingsPage::SCENE && cur.id == 70) {
-            s_floraParentIdx = s_idx;
-            s_page = SettingsPage::FLORA;
+        SettingsPage nextScenePage = s_page;
+        if (s_page == SettingsPage::SCENE && cur.id == 71)
+            nextScenePage = SettingsPage::SCENE_TREES;
+        else if (s_page == SettingsPage::SCENE && cur.id == 72)
+            nextScenePage = SettingsPage::SCENE_EFFECTS;
+        else if (s_page == SettingsPage::SCENE && cur.id == 73)
+            nextScenePage = SettingsPage::SCENE_OTHER;
+        else if (s_page == SettingsPage::SCENE_TREES && cur.id == 70)
+            nextScenePage = SettingsPage::FLORA;
+        if (nextScenePage != s_page) {
+            if (nextScenePage != SettingsPage::FLORA) {
+                s_sceneParentPage = s_page;
+                s_sceneParentIdx = s_idx;
+            }
+            s_page = nextScenePage;
             s_idx = 0;
             s_scroll = 0;
             s_openMs = millis();
@@ -1651,6 +1723,9 @@ void draw(M5Canvas& canvas) {
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
     else if (s_page == SettingsPage::FLORA) title = "FLORA";
+    else if (s_page == SettingsPage::SCENE_TREES) title = "TREES";
+    else if (s_page == SettingsPage::SCENE_EFFECTS) title = "EFFECTS";
+    else if (s_page == SettingsPage::SCENE_OTHER) title = "OTHER";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::RADIO_EDIT) {
         // Show "EDIT: METHODNAME" as title

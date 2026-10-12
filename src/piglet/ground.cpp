@@ -20,7 +20,6 @@ static uint16_t s_burrowScrollPhase = 0;
 static uint16_t s_speed = 80;
 static uint32_t s_lastUpdate = 0;
 static int16_t s_worldOffset = 0;
-static constexpr uint16_t BURROW_PATTERN_W = Trees::WORLD_SPAN;
 struct BurnPatch {
     int16_t x;
     uint32_t born;
@@ -129,6 +128,7 @@ static void drawGrassStem(M5Canvas& canvas, int16_t bx, int16_t by,
 
 void begin() {
     resetBlades();
+    s_worldOffset = 0;
     s_speed = 80;
     s_lastUpdate = millis();
 }
@@ -148,11 +148,15 @@ void setSpeed(uint16_t ms) {
 uint16_t getSpeed() { return s_speed; }
 
 bool canScroll(bool directionRight) {
-    const int16_t maxOffset = (int16_t)(Trees::worldWidth() - 240);
-    return directionRight ? s_worldOffset > 0 : s_worldOffset < maxOffset;
+    (void)directionRight;
+    return true;
 }
 
-int16_t worldOffset() { return s_worldOffset; }
+int16_t worldOffset() {
+    const int16_t width = Trees::worldWidth();
+    if (s_worldOffset >= width) s_worldOffset = (int16_t)(s_worldOffset % width);
+    return s_worldOffset;
+}
 
 int16_t offset() { return s_offset; }
 uint16_t burrowScrollPhase() { return s_burrowScrollPhase; }
@@ -224,13 +228,15 @@ void updateScroll(bool moving, bool directionRight, int steps) {
     if (steps < 1) steps = 1;
 
     for (int n = 0; n < steps; n++) {
-        if (!canScroll(directionRight)) break;
         s_worldOffset += directionRight ? -1 : 1;
+        const int16_t worldWidth = Trees::worldWidth();
+        s_worldOffset %= worldWidth;
+        if (s_worldOffset < 0) s_worldOffset = (int16_t)(s_worldOffset + worldWidth);
         if (directionRight) {
             s_offset++;
             scrollBurnPatches(1);
             s_burrowScrollPhase =
-                (uint16_t)((s_burrowScrollPhase + 1) % BURROW_PATTERN_W);
+                (uint16_t)((s_burrowScrollPhase + 1) % worldWidth);
             Trees::scroll(+1);
             SeasonalFx::scroll(+1);
             Props::scroll(+1);
@@ -248,7 +254,7 @@ void updateScroll(bool moving, bool directionRight, int steps) {
             s_offset--;
             scrollBurnPatches(-1);
             s_burrowScrollPhase = s_burrowScrollPhase == 0
-                ? (uint16_t)(BURROW_PATTERN_W - 1)
+                ? (uint16_t)(worldWidth - 1)
                 : (uint16_t)(s_burrowScrollPhase - 1);
             Trees::scroll(-1);
             SeasonalFx::scroll(-1);
@@ -472,7 +478,7 @@ void draw(M5Canvas& canvas, bool frontLayer, const DrawCtx& ctx) {
     int pigHalf  = (pigRight - pigLeft) / 2;
     if (pigHalf < 1) pigHalf = 1;
 
-    int16_t treeX = treeX;
+    int16_t treeX = ctx.treeScreenX;
     if (treeX < 0) treeX = Trees::getFruitTreeScreenX();
 
     // Winter: frosty blades a bit shorter; spring: tender young shoots (+flowers)

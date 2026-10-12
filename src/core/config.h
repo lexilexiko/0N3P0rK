@@ -61,7 +61,7 @@ struct PersonalityConfig {
     uint16_t dimTimeout = 30;
     uint8_t skyMode = 0;
     uint8_t pigSkin = 0;
-    uint16_t fieldWidth = 590;  // Scene width in pixels (240..1200).
+    uint16_t fieldWidth = 590;  // Cyclic scene width in pixels (240..1230).
     uint8_t fruitTreeCount = 1; // PIG → FLORA, 1..3.
     uint8_t decorTreeCount = 1;
     uint8_t bushCount = 1;

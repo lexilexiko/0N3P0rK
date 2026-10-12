@@ -144,8 +144,9 @@ bool Config::init() {
     if (p.talkIntervalSec < 2) p.talkIntervalSec = 2;
     if (p.talkIntervalSec > 10) p.talkIntervalSec = 10;
     if (p.pigSkin >= PIG_SKIN_COUNT) p.pigSkin = 0;
-    if (p.fieldWidth < 240 || p.fieldWidth > 1200 ||
-        (p.fieldWidth != 1200 && (p.fieldWidth - 240) % 50 != 0))
+    if (p.fieldWidth == 1200) p.fieldWidth = 1230;
+    if (p.fieldWidth < 240 || p.fieldWidth > 1230 ||
+        (p.fieldWidth != 1230 && (p.fieldWidth - 240) % 50 != 0))
         p.fieldWidth = 590;
     if (p.fruitTreeCount < 1 || p.fruitTreeCount > 3) p.fruitTreeCount = 1;
     if (p.decorTreeCount < 1 || p.decorTreeCount > 3) p.decorTreeCount = 1;

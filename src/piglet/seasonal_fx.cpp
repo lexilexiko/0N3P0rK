@@ -156,6 +156,13 @@ static bool isWinter() { return Weather::getActiveSeason() == Season::WINTER; }
 static bool isNoir()   { return Weather::getActiveSeason() == Season::NOIR; }
 static bool isDesert() { return Weather::getActiveSeason() == Season::DESERT; }
 
+static float wrapFieldX(float x) {
+    const float width = (float)Trees::worldWidth();
+    x = fmodf(x, width);
+    if (x < 0.0f) x += width;
+    return x;
+}
+
 // Noir: moths around the street lamp (center lane)
 struct Moth {
     float a;
@@ -446,20 +453,27 @@ static void drawSnowBanks(M5Canvas& canvas, bool flash) {
 
 void scroll(int dir) {
     const int16_t d = (dir > 0) ? 1 : -1;
+    const int16_t width = Trees::worldWidth();
+    auto wrapX = [width](int x) {
+        x %= width;
+        if (x < 0) x += width;
+        return (int16_t)x;
+    };
     if (snowBanksInited) {
         for (int i = 0; i < SNOW_BANK_COUNT; i++) {
             if (snowBanks[i].h < 1) continue;
-            snowBanks[i].x = (int16_t)(snowBanks[i].x + d);
+            snowBanks[i].x = wrapX(snowBanks[i].x + d);
         }
         for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
             if (!snowScars[i].active) continue;
-            snowScars[i].x = (int16_t)(snowScars[i].x + d);
+            snowScars[i].x = wrapX(snowScars[i].x + d);
         }
     }
     for (uint8_t i = 0; i < LEAF_PILE_COUNT; i++)
-        if (leafPiles[i].active) leafPiles[i].x += (float)d;
+        if (leafPiles[i].active) leafPiles[i].x = (float)wrapX((int)leafPiles[i].x + d);
     for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++)
-        if (meteorFragments[i].active) meteorFragments[i].x += (float)d;
+        if (meteorFragments[i].active)
+            meteorFragments[i].x = (float)wrapX((int)meteorFragments[i].x + d);
 }
 
 void trampleSnow(int pigFeetX) {
@@ -564,7 +578,10 @@ static void updateLeaves(uint32_t now) {
             float nearestDistance = 22.0f;
             for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
                 if (!leafPiles[p].active) continue;
-                float distance = fabsf(leafPiles[p].x - leaves[i].x);
+                const float width = (float)Trees::worldWidth();
+                leafPiles[p].x = wrapFieldX(leafPiles[p].x);
+                float distance = fabsf(leafPiles[p].x - wrapFieldX(leaves[i].x));
+                if (distance > width * 0.5f) distance = width - distance;
                 if (distance < nearestDistance) {
                     nearestDistance = distance;
                     nearest = p;
@@ -616,7 +633,10 @@ static void updateLeaves(uint32_t now) {
                 continue;
             }
         }
-        const float distance = fabsf(pile.x - (float)pigCenterX);
+        pile.x = wrapFieldX(pile.x);
+        float distance = fabsf(pile.x - wrapFieldX((float)pigCenterX));
+        const float width = (float)Trees::worldWidth();
+        if (distance > width * 0.5f) distance = width - distance;
         if (distance > 18.0f) continue;
         if (jumping) {
             for (int n = 0; n < LEAF_COUNT && pile.count > 0; n++) {
@@ -699,19 +719,24 @@ static void drawLeafPiles(M5Canvas& canvas, bool flash) {
     static const uint16_t leafColors[5] = {
         0xE2C0, 0xFD20, 0xFB40, 0xC300, 0x9A40
     };
+    const int width = Trees::worldWidth();
     for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
         const LeafPile& pile = leafPiles[p];
         if (!pile.active || pile.count == 0) continue;
-        const int x = (int)pile.x;
         const int rows = 1 + (pile.count > 4) + (pile.count > 8);
         const uint16_t dark = flash ? 0xFFFF : 0x8A20;
-        canvas.fillRect(x - 9, 104 - rows, 18, rows, dark);
-        for (uint8_t i = 0; i < pile.count; i++) {
-            const int spread = (int)(i % 5) * 3 - 6;
-            const int row = (int)(i / 5);
-            const uint16_t color = flash ? 0xFFFF : leafColors[(pile.col + i) % 5];
-            canvas.fillRect(x + spread, 101 - row, 4, 2, color);
-            canvas.drawPixel(x + spread + 2, 100 - row, color);
+        const int baseX = (int)wrapFieldX(pile.x);
+        for (int pass = -1; pass <= 1; pass++) {
+            const int x = baseX + pass * width;
+            if (x < -16 || x > DISPLAY_W + 16) continue;
+            canvas.fillRect(x - 9, 104 - rows, 18, rows, dark);
+            for (uint8_t i = 0; i < pile.count; i++) {
+                const int spread = (int)(i % 5) * 3 - 6;
+                const int row = (int)(i / 5);
+                const uint16_t color = flash ? 0xFFFF : leafColors[(pile.col + i) % 5];
+                canvas.fillRect(x + spread, 101 - row, 4, 2, color);
+                canvas.drawPixel(x + spread + 2, 100 - row, color);
+            }
         }
     }
 }
