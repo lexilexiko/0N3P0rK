@@ -40,7 +40,6 @@ struct Item {
 static const Item SCENE[] = {
     {"NAME",      Kind::TEXT,   0,  0, 0, 0},
     {"SKIN",      Kind::VALUE,  1,  0, PIG_SKIN_COUNT - 1, 1},
-    {"TUSKS",     Kind::TOGGLE, 24, 0, 1, 1},
     {"SEASON",    Kind::VALUE,  2,  0, SEASON_MODE_COUNT - 1, 1},
     {"SKY",       Kind::VALUE,  3,  0, SKY_MODE_COUNT - 1, 1},
     {"SCROLL",    Kind::VALUE,  4,  1, 10, 1},
@@ -355,7 +354,6 @@ static const char* skinName(uint8_t s) {
         case PigSkin::CANDY:   return "CANDY";
         case PigSkin::GOLD:    return "GOLD";
         case PigSkin::DIRTY:   return "DIRTY";
-        case PigSkin::BOAR:    return "BOAR";
         default: return "?";
     }
 }
@@ -445,7 +443,6 @@ static int getValue(const Item& it) {
     if (s_page == SettingsPage::SCENE) {
         switch (it.id) {
             case 1: return p.pigSkin;
-            case 24: return p.tusksEnabled ? 1 : 0;
             case 2: return p.seasonMode;
             case 3: return p.skyMode;
             case 4: return p.scrollSpeed;
@@ -807,9 +804,6 @@ static bool setValue(const Item& it, int v) {
                 p.wolfEnabled = v != 0;
                 SceneLayers::wolf = v != 0;
                 if (v == 0) Wolf::reset();
-                break;
-            case 24:
-                p.tusksEnabled = v != 0;
                 break;
             case 18:
                 p.propsEnabled = v != 0;

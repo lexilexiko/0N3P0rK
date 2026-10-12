@@ -244,28 +244,17 @@ static void farmPoll() {
 
     static bool idleJumpWas = false;
     static bool idleAttackWas = false;
-    static bool sitWasDown = false;
-    static bool digPressArmed = false;
     static uint32_t idleMoveMs = 0;
     bool jumpEdge = jumpKey && !idleJumpWas;
     bool attackEdge = attackKey && !idleAttackWas;
-    bool sitEdge = sitKey && !sitWasDown;
     idleJumpWas = jumpKey;
     idleAttackWas = attackKey;
-    sitWasDown = sitKey;
 
     const bool locked = Avatar::isControlLocked() || Avatar::isPlayDead();
-    const bool airborne = Avatar::isJumping() || Avatar::isAttackHopping();
 
-    if (sitEdge) {
-        digPressArmed = !locked && !airborne && Avatar::isSitPoseComplete();
-        if (!locked && !airborne && !Avatar::isSitting()) Avatar::setSitting(true);
+    if (!locked && sitKey) {
+        Avatar::setSitting(!left && !right && !jumpKey && !attackKey);
     }
-    if (!sitKey || locked || airborne || left || right || jumpKey || attackKey)
-        digPressArmed = false;
-
-    const bool digging = digPressArmed && sitKey;
-    Avatar::setDigging(digging);
 
     uint32_t nowMove = millis();
     if (nowMove - idleMoveMs >= 12) {

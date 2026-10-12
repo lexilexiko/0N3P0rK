@@ -20,7 +20,6 @@
 #include <time.h>
 #include <math.h>
 #include <stdio.h>
-#include <string.h>
 #include <esp_random.h>
 
 // Camera rails (~33% from each edge of roam range)
@@ -272,8 +271,6 @@ static uint32_t s_manualWalkUntil = 0;
 // Player free-roam world scroll (grass/trees) without parking pig at treadmill edges
 static bool s_playerWalkScroll = false;
 static bool s_sitting = false;
-static bool s_digging = false;
-static uint32_t s_digStartMs = 0;
 static bool s_playDead = false;
 // Smooth pose blends (0..256) — avoid hard snaps that read as teleports
 static uint16_t s_sitBlend = 0;
@@ -317,8 +314,6 @@ static const PigPalette kPigPalettes[PIG_SKIN_COUNT] = {
     { 0x9B20, 0xFE60, 0xFFF1, 0xC480, 0xFDC0, 0xD4A0, 0x8200, 0x4100, 0xFFFF, 0xAB40, 0x9360, 0xFCC0 },
     // DIRTY — alley / dumpster pig (mud, soot, sad iris)
     { 0x5140, 0x9A85, 0xC548, 0x6B23, 0x8B43, 0x7A22, 0x4208, 0x2104, 0xC618, 0x5180, 0x4208, 0x6B4D },
-    // BOAR — warm forest-brown coat, darker mane, and a muted rose snout
-    { 0x4208, 0x8B66, 0xBDAA, 0x6B4D, 0xC289, 0xA881, 0x6A46, 0x2010, 0xFFFF, 0x4830, 0x5A30, 0x9A65 },
 };
 static int8_t s_skinOverride = -1;  // -1 = player config; companion can force skin
 
@@ -347,48 +342,19 @@ static uint16_t pigMix(uint16_t a, uint16_t b, uint8_t t /*0..16*/) {
 static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
                          AvatarState state, bool faceRight, bool blink, bool sniff,
                          uint8_t sniffPhase, bool earPerk, bool tailAlt, bool jumping,
-                         uint16_t /*fg*/, uint16_t /*bg*/, bool digging) {
+                         uint16_t /*fg*/, uint16_t /*bg*/) {
     const int s = PX;
-    const uint32_t digPhase = digging ? (millis() - s_digStartMs) % 820u : 0;
-    float headTilt = 0.0f;
-    if (digging) {
-        if (digPhase < 260u) headTilt = 0.62f * (float)digPhase / 260.0f;
-        else if (digPhase < 370u) headTilt = 0.62f;
-        else if (digPhase < 650u) headTilt = 0.62f * (float)(650u - digPhase) / 280.0f;
-    }
-    float tiltSin = 0.0f;
-    float tiltCos = 1.0f;
-    if (headTilt > 0.001f) {
-        tiltSin = sinf(headTilt);
-        tiltCos = cosf(headTilt);
-    }
-    bool headLayer = false;
-    static uint16_t headColors[16][16];
-    static uint32_t headPixelMask[8];
     // Play-dead: blend normal → upside-down (same silhouette, no hard snap)
     // a=0 normal: y = oy + ly*s
     // a=256 flip:  y = oy - (ly+18)*s
     const uint16_t deadA = s_deadBlend;  // 0..256
-    auto drawCell = [&](int lx, int ly, uint16_t col) {
+    auto P = [&](int lx, int ly, uint16_t col) {
         int x = faceRight ? (ox + lx * s) : (ox - (lx + 1) * s);
         int yN = oy + ly * s;
         int yD = oy - (ly + 18) * s;
         int y = yN + ((yD - yN) * (int)deadA) / 256;
         if (x < -s || x > 240 || y < -s || y > 135) return;
         canvas.fillRect(x, y, s, s, maybeFlash(col));
-    };
-    auto P = [&](int lx, int ly, uint16_t col) {
-        if (headLayer && headTilt > 0.001f) {
-            const int px = lx + 1;
-            const int py = ly + 22;
-            if (px >= 0 && px < 16 && py >= 0 && py < 16) {
-                headColors[py][px] = col;
-                const unsigned bit = (unsigned)(py * 16 + px);
-                headPixelMask[bit >> 5] |= 1u << (bit & 31u);
-            }
-            return;
-        }
-        drawCell(lx, ly, col);
     };
     auto block = [&](int lx, int ly, int w, int h, uint16_t col) {
         for (int yy = 0; yy < h; yy++)
@@ -404,7 +370,7 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     const bool isHunt    = (state == AvatarState::HUNTING);
     // Happy squint only when calmly happy (not mid-jump / sniff / blink)
     const bool happySquint = isHappy && !jumping && !sniff && !blink;
-    const int leg = ((s_walkKick || digging) && tailAlt) ? 1 : 0;
+    const int leg = (s_walkKick && tailAlt) ? 1 : 0;
     const int earY = earPerk ? -1 : 0;
     // subtle snout bob only — never draw floating pixels past the nose tip
     const int sniffPush = sniff ? ((sniffPhase % 3 == 1) ? 1 : 0) : 0;
@@ -414,7 +380,6 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     const uint8_t skin = (s_skinOverride >= 0) ? (uint8_t)s_skinOverride
                        : Config::personality().pigSkin;
     const bool zombie = (skin == (uint8_t)PigSkin::ZOMBIE);
-    const bool boar = (skin == (uint8_t)PigSkin::BOAR);
 
     const uint16_t O  = pal.out;
     const uint16_t B  = pal.body;
@@ -469,8 +434,6 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     block(-4, -7, 8, 1, S);
 
     // ========== HEAD ==========
-    if (headTilt > 0.001f) memset(headPixelMask, 0, sizeof(headPixelMask));
-    headLayer = true;
     block(0, -17, 9, 1, O);
     block(-1, -16, 1, 7, O);
     block(9, -16, 1, 7, O);
@@ -595,11 +558,6 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
         P(sx + 3, sy + 1, N);
     }
     P(sx + 2, sy + 2, SNh);
-    if (Config::personality().tusksEnabled) {
-        const uint16_t tusk = 0xF6B4;
-        P(sx - 1, sy + 1, tusk); P(sx - 1, sy + 2, tusk);
-        P(sx + 5, sy + 1, tusk); P(sx + 5, sy + 2, tusk);
-    }
 
     // ========== MOUTH — unique per mood / FX ==========
     int my = sy + 4;
@@ -638,27 +596,7 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     }
 
     // ========== TAIL ==========
-    headLayer = false;
-    if (headTilt > 0.001f) {
-        for (int ly = -27; ly <= 4; ++ly) {
-            for (int lx = -8; lx <= 24; ++lx) {
-                const float dx = (float)(lx - 2);
-                const float dy = (float)(ly + 9);
-                const float sourceX = dx * tiltCos + dy * tiltSin;
-                const float sourceY = -dx * tiltSin + dy * tiltCos;
-                const int srcX = (int)(2.0f + sourceX + (sourceX >= 0.0f ? 0.5f : -0.5f));
-                const int srcY = (int)(-9.0f + sourceY + (sourceY >= 0.0f ? 0.5f : -0.5f));
-                const int mapX = srcX + 1;
-                const int mapY = srcY + 22;
-                if (mapX >= 0 && mapX < 16 && mapY >= 0 && mapY < 16) {
-                    const unsigned bit = (unsigned)(mapY * 16 + mapX);
-                    if (headPixelMask[bit >> 5] & (1u << (bit & 31u)))
-                        drawCell(lx, ly, headColors[mapY][mapX]);
-                }
-            }
-        }
-    }
-    int tw = ((s_walkKick || digging) && leg) ? 1 : 0;
+    int tw = (s_walkKick && leg) ? 1 : 0;
     block(-10, -11 + tw, 3, 3, B);
     P(-9, -12 + tw, B);
     P(-9, -9 + tw, B);
@@ -694,9 +632,9 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
 static void drawPixelPig(M5Canvas& canvas, int16_t ox, int16_t oy,
                          AvatarState state, bool faceRight, bool blink, bool sniff,
                          uint8_t sniffPhase, bool earPerk, bool tailAlt, bool jumping,
-                         uint16_t fg, uint16_t bg, bool digging = false) {
+                         uint16_t fg, uint16_t bg) {
     drawPixelPigDetailed(canvas, ox, oy, state, faceRight, blink, sniff,
-                         sniffPhase, earPerk, tailAlt, jumping, fg, bg, digging);
+                         sniffPhase, earPerk, tailAlt, jumping, fg, bg);
 }
 
 // Grass animation state
@@ -721,135 +659,6 @@ static TrailParticle trailParticles[TRAIL_COUNT] = {{0}};
 static uint32_t lastTrailSpawn = 0;
 static uint32_t lastTrailUpdate = 0;
 static int trailSpawnIdx = 0;
-
-enum class DigParticleKind : uint8_t { DIRT, GRASS, LEAF, SNOW, SAND, ANT };
-struct DigParticle {
-    float x, y, vx, vy;
-    uint16_t ageMs;
-    DigParticleKind kind;
-    bool active;
-};
-static constexpr uint8_t DIG_PARTICLE_COUNT = 20;
-static DigParticle digParticles[DIG_PARTICLE_COUNT] = {};
-static uint8_t digParticleSpawnIdx = 0;
-static uint32_t lastDigParticleUpdate = 0;
-static uint32_t lastDigBurstCycle = UINT32_MAX;
-
-static void updateAndDrawDigParticles(M5Canvas& canvas, bool digging,
-                                      int16_t snoutX, int16_t groundY) {
-    const uint32_t now = millis();
-    uint32_t dt = lastDigParticleUpdate ? now - lastDigParticleUpdate : 0;
-    if (dt > 50u) dt = 50u;
-    lastDigParticleUpdate = now;
-
-    if (!digging) {
-        lastDigBurstCycle = UINT32_MAX;
-    } else {
-        const uint32_t elapsed = now - s_digStartMs;
-        const uint32_t cycle = elapsed / 820u;
-        const uint32_t phase = elapsed % 820u;
-        if (phase >= 250u && lastDigBurstCycle != cycle) {
-            lastDigBurstCycle = cycle;
-            for (uint8_t i = 0; i < 10; ++i) {
-                DigParticle& p = digParticles[digParticleSpawnIdx];
-                digParticleSpawnIdx = (uint8_t)((digParticleSpawnIdx + 1u) % DIG_PARTICLE_COUNT);
-                p.x = (float)(snoutX + random(-4, 5));
-                p.y = (float)(groundY - random(1, 5));
-                p.ageMs = 0;
-                p.active = true;
-                const Season season = Weather::getActiveSeason();
-                if (i < 5) {
-                    p.kind = DigParticleKind::DIRT;
-                    p.vx = (float)random(-35, 36) / 10.0f;
-                    p.vy = -(2.3f + (float)random(0, 30) / 10.0f);
-                } else if (i < 8) {
-                    if (season == Season::AUTUMN) p.kind = DigParticleKind::LEAF;
-                    else if (season == Season::WINTER) p.kind = DigParticleKind::SNOW;
-                    else if (season == Season::DESERT) p.kind = DigParticleKind::SAND;
-                    else p.kind = DigParticleKind::GRASS;
-                    p.vx = (float)random(-30, 31) / 10.0f;
-                    p.vy = -(2.0f + (float)random(0, 25) / 10.0f);
-                } else {
-                    p.kind = (season == Season::WINTER || season == Season::RETRO)
-                           ? DigParticleKind::SNOW : DigParticleKind::ANT;
-                    p.vx = (float)random(-22, 23) / 10.0f;
-                    p.vy = -(2.5f + (float)random(0, 25) / 10.0f);
-                }
-            }
-            SFX::play(SFX::DIG);
-        }
-    }
-
-    for (DigParticle& p : digParticles) {
-        if (!p.active) continue;
-        p.ageMs = (uint16_t)(p.ageMs + dt);
-        const uint16_t life = (p.kind == DigParticleKind::ANT) ? 760u : 620u;
-        if (p.ageMs >= life) {
-            p.active = false;
-            continue;
-        }
-        const float frameScale = (float)dt / 16.0f;
-        p.x += p.vx * frameScale;
-        p.y += p.vy * frameScale;
-        p.vy += ((p.kind == DigParticleKind::GRASS || p.kind == DigParticleKind::LEAF)
-                 ? 0.11f : 0.17f) * frameScale;
-        const int16_t x = (int16_t)(p.x + 0.5f);
-        const int16_t y = (int16_t)(p.y + 0.5f);
-        if (x < 3 || x >= 237 || y < 3 || y >= 132) continue;
-
-        if (p.kind == DigParticleKind::DIRT) {
-            uint16_t dirt = 0x9A65;
-            uint16_t highlight = 0xC289;
-            switch (Weather::getActiveSeason()) {
-                case Season::AUTUMN: dirt = 0x9A44; highlight = 0xC2A6; break;
-                case Season::WINTER: dirt = 0x6B6D; highlight = 0xBDF7; break;
-                case Season::RETRO: dirt = 0x7BEF; highlight = 0xBDF7; break;
-                case Season::NOIR: dirt = 0x39E7; highlight = 0x7BEF; break;
-                case Season::CITY: dirt = 0x7A22; highlight = 0xBDAA; break;
-                case Season::DESERT: dirt = 0xD4A0; highlight = 0xF6E0; break;
-                default: break;
-            }
-            canvas.fillRect(x, y, 3, 3,
-                           maybeFlash((p.ageMs < 220u) ? dirt : (uint16_t)(dirt - 0x0821)));
-            if (p.ageMs < 180u)
-                canvas.drawPixel((int16_t)(x + 1), (int16_t)(y - 1), maybeFlash(highlight));
-        } else if (p.kind == DigParticleKind::GRASS) {
-            const uint16_t blade = maybeFlash((p.ageMs & 0x80u) ? 0x7D2A : 0x9E8D);
-            canvas.fillRect(x, y, 2, 4, blade);
-            canvas.drawPixel((int16_t)(x + ((p.vx >= 0) ? 2 : -1)),
-                             (int16_t)(y + 1), maybeFlash(0x5D08));
-        } else if (p.kind == DigParticleKind::LEAF) {
-            const uint16_t leaf = maybeFlash((p.ageMs & 0x80u) ? 0xFBA0 : 0xD2A0);
-            canvas.fillRect(x, y, 4, 2, leaf);
-            canvas.drawPixel((int16_t)(x + 2), (int16_t)(y - 1), maybeFlash(0x8A22));
-            canvas.drawPixel((int16_t)(x + 2), (int16_t)(y + 2), maybeFlash(0x8A22));
-        } else if (p.kind == DigParticleKind::SNOW) {
-            canvas.fillRect(x, y, 3, 3, maybeFlash(0xFFFF));
-            canvas.drawPixel((int16_t)(x + 1), (int16_t)(y - 1), maybeFlash(0xBDF7));
-        } else if (p.kind == DigParticleKind::SAND) {
-            const uint16_t sand = maybeFlash((p.ageMs & 0x80u) ? 0xD4A0 : 0xF6E0);
-            canvas.fillRect(x, y, 4, 2, sand);
-            canvas.drawPixel((int16_t)(x + 1), (int16_t)(y - 1), maybeFlash(0xFDC0));
-        } else {
-            const uint16_t antBody = maybeFlash(0x4208);
-            const int8_t dir = (p.vx >= 0) ? 1 : -1;
-            const int16_t headX = (int16_t)(x + (dir > 0 ? 5 : 0));
-            canvas.fillRect((int16_t)(x + (dir > 0 ? 0 : 5)),
-                            (int16_t)(y + 1), 3, 3, antBody);
-            canvas.fillRect((int16_t)(x + (dir > 0 ? 3 : 2)),
-                            y, 3, 3, antBody);
-            canvas.fillRect(headX, y, 2, 2, antBody);
-            canvas.drawPixel((int16_t)(headX + dir), (int16_t)(y - 1), antBody);
-            canvas.drawPixel((int16_t)(headX + dir * 2), (int16_t)(y - 2), antBody);
-            const int16_t legY = (int16_t)(y + 4);
-            const int16_t legSwing = ((p.ageMs / 80u) & 1u) ? 1 : -1;
-            canvas.drawPixel((int16_t)(x + 1), legY, antBody);
-            canvas.drawPixel((int16_t)(x + 2), (int16_t)(legY + legSwing), antBody);
-            canvas.drawPixel((int16_t)(x + 4), legY, antBody);
-            canvas.drawPixel((int16_t)(x + 5), (int16_t)(legY - legSwing), antBody);
-        }
-    }
-}
 
 // Internal state for looking direction
 static bool facingRight = true;  // Default: pig looks right
@@ -897,12 +706,6 @@ bool Avatar::isSceneSuspended() {
 void Avatar::init() {
     s_sceneSuspendDepth = 0;
     s_controlLockUntil = 0;
-    s_digging = false;
-    s_digStartMs = 0;
-    for (DigParticle& p : digParticles) p.active = false;
-    digParticleSpawnIdx = 0;
-    lastDigParticleUpdate = 0;
-    lastDigBurstCycle = UINT32_MAX;
     currentState = AvatarState::NEUTRAL;
     isBlinking = false;
     isSniffing = false;
@@ -1032,7 +835,6 @@ void Avatar::cuteJump() {
     if (isControlLocked()) return;
     // Crouch → spring (higher hop). SFX on takeoff after crouch is handled in draw.
     s_sitting = false;
-    s_digging = false;
     s_playDead = false;
     jumpActive = true;
     jumpStartTime = millis();
@@ -1069,7 +871,6 @@ void Avatar::attackHop() {
     if (s_controlLockUntil != 0 && (int32_t)(millis() - s_controlLockUntil) < 0) return;
     // Forward multi-hop pounce — lands ahead (no snap-back teleport)
     s_sitting = false;
-    s_digging = false;
     s_playDead = false;
     jumpActive = false;
     attackHopActive = true;
@@ -1783,8 +1584,6 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         } else {
             tailWiggleActive = false;
         }
-    } else if (s_digging) {
-        tailAlt = ((now / 125u) % 2u) != 0;
     } else if (s_walkKick) {
         tailAlt = ((now / 100) % 2) != 0;
     }
@@ -1863,15 +1662,13 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         drawPixelPig(canvas, (int16_t)feetX, drawFeetY,
                      drawState, faceRight, drawBlink, sniff,
                      sniffFrame, earPerk, tailAlt, jumpActive,
-                     getDrawColor(), getBGColor(), s_digging && s_sitting);
+                     getDrawColor(), getBGColor());
         updateAndDrawSparkles(canvas);
     }
     // Grass IN FRONT of feet/ankles only (not a wall covering the body)
     if (SceneLayers::grassFront) {
         drawGrass(canvas, true);
     }
-    updateAndDrawDigParticles(canvas, s_digging && s_sitting && SceneLayers::pig,
-                              (int16_t)(feetX + (faceRight ? 39 : -39)), 104);
 
     // Seasonal props in FRONT of grass — large pixel props
     Props::update();
@@ -2175,7 +1972,6 @@ void Avatar::notifyPlayerControl() {
 }
 
 void Avatar::setSitting(bool on) {
-    if (!on) s_digging = false;
     s_sitting = on;
     if (on) {
         s_playDead = false;
@@ -2186,20 +1982,7 @@ void Avatar::setSitting(bool on) {
     }
 }
 
-void Avatar::setDigging(bool on) {
-    if (s_digging == on) return;
-    s_digging = on;
-    if (on) {
-        s_digStartMs = millis();
-        lastDigBurstCycle = UINT32_MAX;
-    }
-}
-
 bool Avatar::isSitting() { return s_sitting; }
-
-bool Avatar::isSitPoseComplete() {
-    return s_sitting && s_sitBlend == 256 && !jumpActive && !s_playDead;
-}
 
 void Avatar::setPlayDead(bool on) {
     // Cannot stand up while wolf-bite stun is active
@@ -2207,7 +1990,6 @@ void Avatar::setPlayDead(bool on) {
     s_playDead = on;
     if (on) {
         s_sitting = false;
-        s_digging = false;
         jumpActive = false;
         attackHopActive = false;
         s_manualWalk = false;
