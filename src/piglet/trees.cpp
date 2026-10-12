@@ -157,8 +157,10 @@ struct Slot {
     int8_t meteorDamageSide;
 };
 
-// 0=FRUIT 1=DECOR 2=BERRY — one of each kind max for simplicity
-static Slot slots[3];
+// Three configurable instances of each flora kind.
+static constexpr uint8_t INSTANCES_PER_KIND = 3;
+static constexpr uint8_t SLOT_COUNT = 9;
+static Slot slots[SLOT_COUNT];
 static int pigHintX = 60;
 static bool pigHintRight = false;
 static int8_t stompShake = 0;
@@ -242,9 +244,20 @@ static int16_t screenX(const Slot& t) {
     return (int16_t)(t.baseX + t.scroll);
 }
 
-static Slot& fruitSlot() { return slots[(int)Kind::FRUIT]; }
-static Slot& decorSlot() { return slots[(int)Kind::DECOR]; }
-static Slot& berrySlot() { return slots[(int)Kind::BERRY]; }
+static Slot& floraSlot(Kind kind, uint8_t instance = 0) {
+    return slots[(uint8_t)kind * INSTANCES_PER_KIND + instance];
+}
+static Slot& fruitSlot(uint8_t instance = 0) { return floraSlot(Kind::FRUIT, instance); }
+static Slot& decorSlot(uint8_t instance = 0) { return floraSlot(Kind::DECOR, instance); }
+static Slot& berrySlot(uint8_t instance = 0) { return floraSlot(Kind::BERRY, instance); }
+
+static uint8_t configuredCount(Kind kind) {
+    const PersonalityConfig& p = Config::personality();
+    uint8_t count = kind == Kind::FRUIT ? p.fruitTreeCount
+        : kind == Kind::DECOR ? p.decorTreeCount : p.bushCount;
+    if (count < 1) return 1;
+    return count > INSTANCES_PER_KIND ? INSTANCES_PER_KIND : count;
+}
 
 // ---------- generate: full L/R canopy (never one-sided) + leaves + produce ----------
 // scalePct: 100 = fruit/decor, ~70 = berry bush (taller than before, still smaller)
@@ -635,14 +648,12 @@ void setPigHint(int pigX, bool pigOnRight) {
 
 void init() {
     reset();
-    showDecor();
-    showBerry();
-    showFruit(5);
+    applyFloraCounts();
 }
 
 void reset() {
-    for (int i = 0; i < 3; i++) {
-        slots[i].kind = (Kind)i;
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        slots[i].kind = (Kind)(i / INSTANCES_PER_KIND);
         slots[i].phase = Phase::HIDDEN;
         slots[i].growth = 0;
         slots[i].fruitCount = 0;
@@ -659,7 +670,17 @@ void reset() {
 }
 
 // Scatter across the configured field. Respawn prefers off-screen.
-static constexpr int16_t FLORA_MIN_GAP = 56;
+static int16_t floraMinGap() {
+    const uint8_t total = (uint8_t)(configuredCount(Kind::FRUIT) +
+                                    configuredCount(Kind::DECOR) +
+                                    configuredCount(Kind::BERRY));
+    if (total <= 1) return 56;
+    const int16_t available = (int16_t)(worldWidth() - 16);
+    int16_t gap = (int16_t)(available / (total - 1));
+    if (gap > 56) gap = 56;
+    if (gap < 24) gap = 24;
+    return gap;
+}
 
 static int16_t sharedScroll() {
     return (int16_t)-Ground::worldOffset();
@@ -670,7 +691,7 @@ static bool floraLive(const Slot& t) {
 }
 
 static bool anyFloraLive() {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < SLOT_COUNT; i++) {
         if (floraLive(slots[i])) return true;
     }
     return false;
@@ -688,11 +709,12 @@ static int16_t worldToScreen(int16_t wx) {
     return (int16_t)(wx + sharedScroll());
 }
 
-static bool worldFits(int16_t wx, Kind self) {
-    for (int i = 0; i < 3; i++) {
-        if (slots[i].kind == self) continue;
+static bool worldFits(int16_t wx, const Slot& self) {
+    const int16_t minGap = floraMinGap();
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        if (&slots[i] == &self) continue;
         if (!floraLive(slots[i])) continue;
-        if (wrapDistWorld(wx, floraWorldX(slots[i])) < FLORA_MIN_GAP) return false;
+        if (wrapDistWorld(wx, floraWorldX(slots[i])) < minGap) return false;
     }
     return true;
 }
@@ -702,7 +724,7 @@ static bool isOffscreenWorld(int16_t wx) {
     return (sx < -8 || sx > 248);
 }
 
-static int16_t pickWorldX(Kind self, bool preferOffscreen) {
+static int16_t pickWorldX(const Slot& self, bool preferOffscreen) {
     if (!anyFloraLive()) {
         const int16_t cameraX = Ground::worldOffset();
         const int16_t maxX = (int16_t)(worldWidth() - 1);
@@ -713,21 +735,35 @@ static int16_t pickWorldX(Kind self, bool preferOffscreen) {
         const uint32_t range = (uint32_t)(visibleMax - minX + 1);
         return (int16_t)(minX + (esp_random() % range));
     }
+    int16_t bestX = 0;
+    int16_t bestDistance = -1;
+    const int16_t width = worldWidth();
     for (int pass = 0; pass < 2; pass++) {
-        bool needOff = preferOffscreen && (pass == 0);
-        for (int tries = 0; tries < 28; tries++) {
-            int16_t wx = (int16_t)(esp_random() % (uint32_t)worldWidth());
-            if (!worldFits(wx, self)) continue;
+        const bool needOff = preferOffscreen && pass == 0;
+        if (pass == 1 && !preferOffscreen) break;
+        bestDistance = -1;
+        for (int16_t wx = 0; wx < width; wx++) {
             if (needOff && !isOffscreenWorld(wx)) continue;
-            return wx;
+            int16_t nearest = width;
+            for (uint8_t i = 0; i < SLOT_COUNT; i++) {
+                if (&slots[i] == &self || !floraLive(slots[i])) continue;
+                const int16_t distance = wrapDistWorld(wx, floraWorldX(slots[i]));
+                if (distance < nearest) nearest = distance;
+            }
+            if (nearest >= floraMinGap()) return wx;
+            if (nearest > bestDistance) {
+                bestDistance = nearest;
+                bestX = wx;
+            }
         }
+        if (!needOff && bestDistance >= 0) return bestX;
     }
-    return (int16_t)(esp_random() % (uint32_t)worldWidth());
+    return bestX;
 }
 
 static void placeInWorld(Slot& t, bool preferOffscreen) {
     t.scroll = sharedScroll();
-    int16_t wx = pickWorldX(t.kind, preferOffscreen);
+    int16_t wx = pickWorldX(t, preferOffscreen);
     t.baseX = wx;
 }
 
@@ -765,16 +801,36 @@ static void refillProduce(Slot& t) {
     while (t.fruitCount < want) addOneProduce(t);
 }
 
+static void hideSlot(Slot& t, bool force) {
+    if (t.phase == Phase::HIDDEN || t.phase == Phase::COLLAPSING) return;
+    if (!force && t.phase == Phase::GROWING) { t.pendingHide = true; return; }
+    if (!force && t.phase == Phase::ALIVE &&
+        (millis() - t.aliveStart < MIN_ALIVE_MS)) {
+        t.pendingHide = true;
+        return;
+    }
+    t.phase = Phase::COLLAPSING;
+    t.animStart = millis();
+    t.growth = 1.0f;
+}
+
+static void hideExcess(Kind kind, uint8_t count) {
+    for (uint8_t i = count; i < INSTANCES_PER_KIND; i++)
+        hideSlot(floraSlot(kind, i), true);
+}
+
 void showFruit(uint8_t fruitCount) {
     if (fruitCount == 0) return;
-    Slot& t = fruitSlot();
+    const uint8_t count = configuredCount(Kind::FRUIT);
+    for (uint8_t instance = 0; instance < count; instance++) {
+    Slot& t = fruitSlot(instance);
     t.kind = Kind::FRUIT;
     if (t.phase == Phase::COLLAPSING) {
         t.pendingShow = true;
         t.pendingFruits = fruitCount;
-        return;
+        continue;
     }
-    if (t.phase == Phase::GROWING) return;
+    if (t.phase == Phase::GROWING) continue;
     if (t.phase == Phase::ALIVE) {
         // Refresh produce on existing branches (classic scatter)
         uint32_t s = t.seed + fruitCount;
@@ -791,7 +847,7 @@ void showFruit(uint8_t fruitCount) {
         }
         rollFruitKinds(t);
         t.stompHits = 0;
-        return;
+        continue;
     }
     genClassicTree(t, fruitCount, 100);
     placeInWorld(t, anyFloraLive());
@@ -799,53 +855,64 @@ void showFruit(uint8_t fruitCount) {
     t.growth = 0;
     t.animStart = millis();
     t.pendingHide = false;
+    }
+    hideExcess(Kind::FRUIT, count);
 }
 
 void showDecor() {
-    Slot& t = decorSlot();
-    t.kind = Kind::DECOR;
-    if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
-    genClassicTree(t, 3, 100);  // full classic tree, no produce
-    placeInWorld(t, anyFloraLive());
-    t.phase = Phase::GROWING;
-    t.growth = 0;
-    t.animStart = millis();
+    const uint8_t count = configuredCount(Kind::DECOR);
+    for (uint8_t instance = 0; instance < count; instance++) {
+        Slot& t = decorSlot(instance);
+        t.kind = Kind::DECOR;
+        if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) continue;
+        genClassicTree(t, 3, 100);
+        placeInWorld(t, anyFloraLive());
+        t.phase = Phase::GROWING;
+        t.growth = 0;
+        t.animStart = millis();
+    }
+    hideExcess(Kind::DECOR, count);
 }
 
 void showBerry() {
-    Slot& t = berrySlot();
-    t.kind = Kind::BERRY;
-    if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
-    genClassicTree(t, 6, 70);  // taller bush, denser branches, purple berries
-    placeInWorld(t, anyFloraLive());
-    t.phase = Phase::GROWING;
-    t.growth = 0;
-    t.animStart = millis();
-}
-
-static void hideSlot(Slot& t, bool force) {
-    if (t.phase == Phase::HIDDEN || t.phase == Phase::COLLAPSING) return;
-    if (!force && t.phase == Phase::GROWING) { t.pendingHide = true; return; }
-    if (!force && t.phase == Phase::ALIVE &&
-        (millis() - t.aliveStart < MIN_ALIVE_MS)) {
-        t.pendingHide = true;
-        return;
+    const uint8_t count = configuredCount(Kind::BERRY);
+    for (uint8_t instance = 0; instance < count; instance++) {
+        Slot& t = berrySlot(instance);
+        t.kind = Kind::BERRY;
+        if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) continue;
+        genClassicTree(t, 6, 70);
+        placeInWorld(t, anyFloraLive());
+        t.phase = Phase::GROWING;
+        t.growth = 0;
+        t.animStart = millis();
     }
-    t.phase = Phase::COLLAPSING;
-    t.animStart = millis();
-    t.growth = 1.0f;
+    hideExcess(Kind::BERRY, count);
 }
 
-void hideFruit() { hideSlot(fruitSlot(), false); }
-void hideDecor() { hideSlot(decorSlot(), true); }
-void hideBerry() { hideSlot(berrySlot(), true); }
+void hideFruit() {
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++) hideSlot(fruitSlot(i), false);
+}
+void hideDecor() {
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++) hideSlot(decorSlot(i), true);
+}
+void hideBerry() {
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++) hideSlot(berrySlot(i), true);
+}
 void hideAll() {
-    hideSlot(fruitSlot(), true);
-    hideSlot(decorSlot(), true);
-    hideSlot(berrySlot(), true);
+    for (uint8_t i = 0; i < SLOT_COUNT; i++) hideSlot(slots[i], true);
 }
 
-bool isFruitVisible() { return fruitSlot().phase != Phase::HIDDEN; }
+bool isFruitVisible() {
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++)
+        if (fruitSlot(i).phase != Phase::HIDDEN) return true;
+    return false;
+}
+
+void applyFloraCounts() {
+    showFruit(5);
+    showDecor();
+    showBerry();
+}
 
 // ---------- update phases ----------
 static void updateSlot(Slot& t) {
@@ -929,7 +996,10 @@ static bool dropOneFrom(Slot& t) {
 }
 
 void dropFruit() {
-    (void)dropOneFrom(fruitSlot());
+    const uint8_t count = configuredCount(Kind::FRUIT);
+    const uint8_t start = (uint8_t)random(0, count);
+    for (uint8_t i = 0; i < count; i++)
+        if (dropOneFrom(fruitSlot((start + i) % count))) return;
 }
 
 static void dumpAllProduce(Slot& t) {
@@ -955,14 +1025,17 @@ uint8_t updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRig
     uint32_t now = millis();
     const bool fruitAmbient = Config::personality().fruitTreesAmbient;
 
-    // Keep all three planted. Bush never despawns on its own.
-    Slot& fruit = fruitSlot();
-    Slot& berry = berrySlot();
-    Slot& decor = decorSlot();
     if (fruitAmbient) {
-        if (fruit.phase == Phase::HIDDEN) showFruit(5);
-        if (decor.phase == Phase::HIDDEN) showDecor();
-        if (berry.phase == Phase::HIDDEN) showBerry();
+        bool needsFruit = false, needsDecor = false, needsBerry = false;
+        for (uint8_t i = 0; i < configuredCount(Kind::FRUIT); i++)
+            needsFruit |= fruitSlot(i).phase == Phase::HIDDEN;
+        for (uint8_t i = 0; i < configuredCount(Kind::DECOR); i++)
+            needsDecor |= decorSlot(i).phase == Phase::HIDDEN;
+        for (uint8_t i = 0; i < configuredCount(Kind::BERRY); i++)
+            needsBerry |= berrySlot(i).phase == Phase::HIDDEN;
+        if (needsFruit) showFruit(5);
+        if (needsDecor) showDecor();
+        if (needsBerry) showBerry();
     }
 
     static uint32_t nextAmbientDropMs = 0;
@@ -972,17 +1045,31 @@ uint8_t updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRig
     if (nextBerryDropMs == 0) nextBerryDropMs = now + 3500;
     if (nextRefillMs == 0) nextRefillMs = now + 2200;
 
-    if (fruit.phase == Phase::ALIVE && fruit.fruitCount > 0 && now >= nextAmbientDropMs) {
+    bool hasFruit = false, hasBerry = false;
+    for (uint8_t i = 0; i < configuredCount(Kind::FRUIT); i++) {
+        hasFruit |= fruitSlot(i).phase == Phase::ALIVE &&
+                    fruitSlot(i).fruitCount > 0;
+    }
+    for (uint8_t i = 0; i < configuredCount(Kind::BERRY); i++) {
+        hasBerry |= berrySlot(i).phase == Phase::ALIVE &&
+                    berrySlot(i).fruitCount > 0;
+    }
+    if (hasFruit && now >= nextAmbientDropMs) {
         dropFruit();
         nextAmbientDropMs = now + 1400 + (esp_random() % 2200);
     }
-    if (berry.phase == Phase::ALIVE && berry.fruitCount > 0 && now >= nextBerryDropMs) {
-        dropOneFrom(berry);
+    if (hasBerry && now >= nextBerryDropMs) {
+        const uint8_t count = configuredCount(Kind::BERRY);
+        const uint8_t start = (uint8_t)random(0, count);
+        for (uint8_t i = 0; i < count; i++)
+            if (dropOneFrom(berrySlot((start + i) % count))) break;
         nextBerryDropMs = now + 1600 + (esp_random() % 2400);
     }
     if (now >= nextRefillMs) {
-        refillProduce(fruit);
-        refillProduce(berry);
+        for (uint8_t i = 0; i < configuredCount(Kind::FRUIT); i++)
+            refillProduce(fruitSlot(i));
+        for (uint8_t i = 0; i < configuredCount(Kind::BERRY); i++)
+            refillProduce(berrySlot(i));
         nextRefillMs = now + 2000 + (esp_random() % 800);
     }
 
@@ -996,14 +1083,15 @@ uint8_t updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRig
 }
 
 int16_t getFruitTreeScreenX() {
-    if (fruitSlot().phase == Phase::HIDDEN) return -1;
-    return screenX(fruitSlot());
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++)
+        if (fruitSlot(i).phase != Phase::HIDDEN) return screenX(fruitSlot(i));
+    return -1;
 }
 
 int16_t nearestFloraScreenX(int fromX) {
     int best = -1;
     int bestD = 9999;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < SLOT_COUNT; i++) {
         if (slots[i].phase == Phase::HIDDEN || slots[i].phase == Phase::COLLAPSING)
             continue;
         int16_t x = screenX(slots[i]);
@@ -1020,7 +1108,7 @@ int16_t nearestFloraScreenX(int fromX) {
 void meteorImpact(int16_t impactX) {
     int bestSlot = -1;
     int bestDistance = 48;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < SLOT_COUNT; i++) {
         const Slot& t = slots[i];
         if (t.phase == Phase::HIDDEN || t.phase == Phase::COLLAPSING ||
             t.growth <= 0.25f || t.style == SeasonTree::LAMP ||
@@ -1044,7 +1132,7 @@ void meteorImpact(int16_t impactX) {
 bool tryStompFruitTree(int pigFeetX, bool airborne) {
     if (!airborne) {
         globalStompArmed = true;
-        for (int i = 0; i < 3; i++) slots[i].stompArmed = true;
+        for (int i = 0; i < SLOT_COUNT; i++) slots[i].stompArmed = true;
         return false;
     }
     if (!globalStompArmed) return false;
@@ -1052,7 +1140,7 @@ bool tryStompFruitTree(int pigFeetX, bool airborne) {
     // Nearest hittable trunk/bush
     int best = -1;
     int bestDist = 999;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < SLOT_COUNT; i++) {
         Slot& t = slots[i];
         if (t.phase != Phase::ALIVE && t.phase != Phase::GROWING) continue;
         int16_t bx = screenX(t);
@@ -1096,7 +1184,7 @@ bool checkFruitPush(int /*pigLeft*/, int /*pigRight*/, int16_t& treeScreenX) {
 }
 
 void scroll(int dir) {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < SLOT_COUNT; i++) {
         if (slots[i].phase == Phase::HIDDEN) continue;
         slots[i].scroll = (int16_t)(slots[i].scroll + (dir > 0 ? 1 : -1));
     }
@@ -2066,7 +2154,7 @@ void draw(M5Canvas& canvas, int16_t yOffset) {
         seasonInited = true;
     } else if (nowSeason != lastSeason && yOffset == 0) {
         lastSeason = nowSeason;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < SLOT_COUNT; i++) {
             Slot& t = slots[i];
             if (t.phase == Phase::HIDDEN) continue;
             int16_t keepX = t.baseX;
@@ -2088,16 +2176,22 @@ void draw(M5Canvas& canvas, int16_t yOffset) {
         }
     }
 
-    for (int i = 0; i < 3; i++) updateSlot(slots[i]);
+    for (int i = 0; i < SLOT_COUNT; i++) updateSlot(slots[i]);
     tickStompShake();
 
     // Decor first (behind), then berry bush, then fruit (gameplay in front)
-    if (yOffset == 0 || decorSlot().phase != Phase::HIDDEN)
-        drawTreeSlot(canvas, decorSlot(), yOffset);
-    if (yOffset == 0 || berrySlot().phase != Phase::HIDDEN)
-        drawTreeSlot(canvas, berrySlot(), yOffset);
-    if (yOffset == 0 || fruitSlot().phase != Phase::HIDDEN)
-        drawTreeSlot(canvas, fruitSlot(), yOffset);
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++) {
+        if (yOffset == 0 || decorSlot(i).phase != Phase::HIDDEN)
+            drawTreeSlot(canvas, decorSlot(i), yOffset);
+    }
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++) {
+        if (yOffset == 0 || berrySlot(i).phase != Phase::HIDDEN)
+            drawTreeSlot(canvas, berrySlot(i), yOffset);
+    }
+    for (uint8_t i = 0; i < INSTANCES_PER_KIND; i++) {
+        if (yOffset == 0 || fruitSlot(i).phase != Phase::HIDDEN)
+            drawTreeSlot(canvas, fruitSlot(i), yOffset);
+    }
 
     // Falling produce: Trees::drawDropsForeground (trees_drops.cpp) after front grass.
     if (yOffset != 0) return;
@@ -2114,7 +2208,7 @@ void drawUnderground(M5Canvas& canvas, uint16_t rootColor,
     const Season season = Weather::getActiveSeason();
     if (season == Season::CITY) return;
 
-    for (uint8_t i = 0; i < 3; i++) {
+    for (uint8_t i = 0; i < SLOT_COUNT; i++) {
         const Slot& t = slots[i];
         if (t.phase == Phase::HIDDEN || t.growth <= 0.01f) continue;
         if (t.style == SeasonTree::LAMP || t.style == SeasonTree::STALL ||

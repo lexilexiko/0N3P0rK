@@ -5,7 +5,7 @@
 #include "weather.h"
 #include "trees.h"
 #include "ground.h"
-#include "ground.h"
+#include "avatar.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include <esp_random.h>
@@ -64,24 +64,19 @@ static Leaf leaves[LEAF_COUNT] = {};
 static uint32_t lastLeafUpdate = 0;
 
 // ---------------------------------------------------------------------------
-// Autumn: tumbleweed (перекати-поле)
+// Autumn: piles of fallen leaves, pushed and scattered by the pig.
 // ---------------------------------------------------------------------------
-struct Tumbleweed {
-    float x, y;
-    float vx;
-    uint8_t phase;
-    uint8_t shedStage;
+struct LeafPile {
+    float x;
+    uint32_t lastPushAt;
+    uint32_t lastDecayAt;
+    uint8_t count;
+    uint8_t col;
     bool active;
 };
-static Tumbleweed tumble = {};
-static uint32_t lastTumbleSpawnMs = 0;
-struct TumbleDebris {
-    float x, y, vx, vy;
-    uint32_t settledAt;
-    uint8_t kind;
-    bool settled, active;
-};
-static TumbleDebris tumbleDebris[3] = {};
+static constexpr uint8_t LEAF_PILE_COUNT = 6;
+static LeafPile leafPiles[LEAF_PILE_COUNT] = {};
+static int16_t lastPigCenterX = -1;
 
 // Meteor shower: fixed-size state only; no heap allocation during the event.
 struct Meteor {
@@ -461,8 +456,8 @@ void scroll(int dir) {
             snowScars[i].x = (int16_t)(snowScars[i].x + d);
         }
     }
-    for (uint8_t i = 0; i < 3; i++)
-        if (tumbleDebris[i].active) tumbleDebris[i].x += (float)d;
+    for (uint8_t i = 0; i < LEAF_PILE_COUNT; i++)
+        if (leafPiles[i].active) leafPiles[i].x += (float)d;
     for (uint8_t i = 0; i < METEOR_FRAGMENT_COUNT; i++)
         if (meteorFragments[i].active) meteorFragments[i].x += (float)d;
 }
@@ -523,6 +518,8 @@ void trampleSnow(int pigFeetX) {
 static void updateLeaves(uint32_t now) {
     if (!isAutumn()) {
         for (int i = 0; i < LEAF_COUNT; i++) leaves[i].active = false;
+        for (int i = 0; i < LEAF_PILE_COUNT; i++) leafPiles[i].active = false;
+        lastPigCenterX = -1;
         return;
     }
     if (now - lastLeafUpdate < 35) return;
@@ -562,10 +559,103 @@ static void updateLeaves(uint32_t now) {
         leaves[i].x += sinf(leaves[i].y * 0.12f) * 0.35f;
         if (leaves[i].vx > 1.5f) leaves[i].vx = 1.5f;
         if (leaves[i].vx < -1.5f) leaves[i].vx = -1.5f;
-        if (leaves[i].y > 104.0f || leaves[i].x < -12.0f ||
-            leaves[i].x > (float)DISPLAY_W + 12.0f) {
+        if (leaves[i].y > 104.0f) {
+            int nearest = -1;
+            float nearestDistance = 22.0f;
+            for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
+                if (!leafPiles[p].active) continue;
+                float distance = fabsf(leafPiles[p].x - leaves[i].x);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearest = p;
+                }
+            }
+            if (nearest < 0) {
+                for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
+                    if (leafPiles[p].active) continue;
+                    nearest = p;
+                    leafPiles[p] = {
+                        leaves[i].x, 0, now, 0, leaves[i].col, true
+                    };
+                    break;
+                }
+            }
+            if (nearest >= 0 && leafPiles[nearest].count < 12) {
+                LeafPile& pile = leafPiles[nearest];
+                if (pile.count != 0) pile.x = (pile.x + leaves[i].x) * 0.5f;
+                pile.count++;
+                pile.lastDecayAt = now;
+            }
+            leaves[i].active = false;
+        } else if (leaves[i].x < -12.0f ||
+                   leaves[i].x > (float)DISPLAY_W + 12.0f) {
             leaves[i].active = false;
         }
+    }
+
+    const int16_t pigCenterX = (int16_t)(Avatar::getCurrentX() + 51);
+    const bool jumping = Avatar::isJumping() && Avatar::getJumpLiftPx() > 3;
+    int moveDirection = 0;
+    if (lastPigCenterX >= 0) {
+        const int16_t dx = (int16_t)(pigCenterX - lastPigCenterX);
+        if (dx > 0) moveDirection = 1;
+        else if (dx < 0) moveDirection = -1;
+    }
+    if (moveDirection == 0 && Avatar::isGrassMoving())
+        moveDirection = Avatar::isGrassDirectionRight() ? -1 : 1;
+    lastPigCenterX = pigCenterX;
+
+    for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
+        LeafPile& pile = leafPiles[p];
+        if (!pile.active) continue;
+        if (now - pile.lastDecayAt >= 2500u) {
+            pile.lastDecayAt = now;
+            if (pile.count > 0) pile.count--;
+            if (pile.count == 0) {
+                pile.active = false;
+                continue;
+            }
+        }
+        const float distance = fabsf(pile.x - (float)pigCenterX);
+        if (distance > 18.0f) continue;
+        if (jumping) {
+            for (int n = 0; n < LEAF_COUNT && pile.count > 0; n++) {
+                if (leaves[n].active) continue;
+                leaves[n] = {
+                    pile.x + (float)random(-7, 8),
+                    99.0f - (float)random(0, 5),
+                    (float)(moveDirection == 0 ? random(-25, 26) : moveDirection * random(12, 34)) / 10.0f,
+                    -(float)random(18, 42) / 10.0f,
+                    (uint8_t)((pile.col + n) % 5),
+                    (uint8_t)random(3, 6),
+                    true
+                };
+                pile.count--;
+            }
+            if (pile.count == 0) pile.active = false;
+            continue;
+        }
+        if (moveDirection == 0 || now - pile.lastPushAt < 120u) continue;
+        pile.lastPushAt = now;
+        pile.x += (float)moveDirection * 2.0f;
+        const uint8_t scatterCount = pile.count > 2 ? 2 : 1;
+        uint8_t scattered = 0;
+        for (int n = 0; n < LEAF_COUNT && pile.count > 0; n++) {
+            if (leaves[n].active) continue;
+            leaves[n] = {
+                pile.x,
+                99.0f,
+                (float)moveDirection * (0.8f + (float)random(0, 10) / 10.0f),
+                -(float)random(8, 20) / 10.0f,
+                (uint8_t)((pile.col + n) % 5),
+                (uint8_t)random(3, 6),
+                true
+            };
+            pile.count--;
+            scattered++;
+            if (scattered >= scatterCount) break;
+        }
+        if (pile.count == 0) pile.active = false;
     }
 }
 
@@ -589,83 +679,6 @@ static void drawLeaves(M5Canvas& canvas, bool flash) {
     }
 }
 
-static void shedTumbleDebris(uint8_t stage, uint32_t now) {
-    TumbleDebris& bit = tumbleDebris[stage % 3u];
-    bit.x = tumble.x + (tumble.vx > 0.0f ? -7.0f : 7.0f);
-    bit.y = tumble.y - 6.0f;
-    bit.vx = -tumble.vx * 0.18f + (float)random(-5, 6) / 10.0f;
-    bit.vy = (float)random(-16, -5) / 10.0f;
-    bit.settledAt = now;
-    bit.kind = (stage == 1) ? 1 : 0;
-    bit.settled = false;
-    bit.active = true;
-}
-
-static void updateTumbleDebris(uint32_t now) {
-    for (uint8_t i = 0; i < 3; i++) {
-        TumbleDebris& bit = tumbleDebris[i];
-        if (!bit.active) continue;
-        if (bit.settled) {
-            if (now - bit.settledAt >= 7000u) bit.active = false;
-            continue;
-        }
-        bit.x += bit.vx;
-        bit.y += bit.vy;
-        bit.vy += 0.12f;
-        if (bit.y >= 104.0f) {
-            bit.y = 104.0f;
-            bit.vx = 0.0f;
-            bit.vy = 0.0f;
-            bit.settledAt = now;
-            bit.settled = true;
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Autumn tumbleweed
-// ---------------------------------------------------------------------------
-static void updateTumbleweed(uint32_t now) {
-    if (!isAutumn()) {
-        tumble.active = false;
-        return;
-    }
-
-    if (!tumble.active) {
-        if (lastTumbleSpawnMs == 0) lastTumbleSpawnMs = now;
-        // More often — autumn signature critter
-        if (now - lastTumbleSpawnMs < 5500) return;
-        if (now - lastTumbleSpawnMs < 9000 && random(0, 100) > 18) return;
-
-        tumble.active = true;
-        tumble.y = 99.0f;
-        tumble.phase = 0;
-        tumble.shedStage = 0;
-        bool goRight = (random(0, 2) == 0);
-        tumble.vx = goRight ? (1.8f + (float)random(0, 12) / 10.0f)
-                            : -(1.8f + (float)random(0, 12) / 10.0f);
-        tumble.x = goRight ? -20.0f : (float)(DISPLAY_W + 20);
-        lastTumbleSpawnMs = now;
-        return;
-    }
-
-    tumble.x += tumble.vx;
-    tumble.phase++;
-    float bounce = (float)((tumble.phase / 2) % 5);
-    if (bounce > 2.5f) bounce = 5.0f - bounce;
-    tumble.y = 99.0f - bounce * 1.1f;
-    if (tumble.shedStage < 3 &&
-        tumble.phase >= 24u + (uint16_t)tumble.shedStage * 20u) {
-        shedTumbleDebris(tumble.shedStage, now);
-        tumble.shedStage++;
-    }
-
-    if (tumble.x < -32.0f || tumble.x > (float)DISPLAY_W + 32.0f) {
-        tumble.active = false;
-        lastTumbleSpawnMs = now;
-    }
-}
-
 static void drawPixelTwigLine(M5Canvas& canvas, int x1, int y1, int x2,
                               int y2, uint16_t color, uint8_t block = 2) {
     int dx = abs(x2 - x1), dy = abs(y2 - y1);
@@ -681,94 +694,24 @@ static void drawPixelTwigLine(M5Canvas& canvas, int x1, int y1, int x2,
     }
 }
 
-static void drawTumbleweed(M5Canvas& canvas, bool flash) {
+static void drawLeafPiles(M5Canvas& canvas, bool flash) {
     if (!isAutumn()) return;
-    static const uint16_t leafColors[] = {
+    static const uint16_t leafColors[5] = {
         0xE2C0, 0xFD20, 0xFB40, 0xC300, 0x9A40
     };
-    const uint16_t twDark = flash ? 0xFFFF : 0x6A20;
-    if (tumble.active) {
-    int16_t tx = (int16_t)tumble.x;
-    int16_t ty = (int16_t)tumble.y - 6;
-    int spin = (tumble.phase / 2) % 4;
-    const uint16_t twDry  = flash ? 0xFFFF : 0x9A40;
-    const uint16_t twHi   = flash ? 0xFFFF : 0xC300;
-    static const int8_t spiral[][2] = {
-        { 0, 0}, { 1, 0}, { 2, 0}, { 2, 1}, { 2, 2}, { 1, 2},
-        { 0, 2}, {-1, 2}, {-2, 2}, {-2, 1}, {-2, 0}, {-2,-1},
-        {-2,-2}, {-1,-2}, { 0,-2}, { 1,-2}, { 3,-2}, { 4,-1},
-        { 4, 1}, { 3, 3}, { 1, 4}, {-2, 4}, {-4, 2}, {-5,-1},
-        {-4,-4}, {-1,-5}, { 3,-5}, { 5,-3}, { 6, 0}, { 5, 4}
-    };
-    struct Twig { int8_t x1, y1, x2, y2; };
-    static const Twig twigs[] = {
-        {-4,-4, -7,-6}, {-5,-1, -8, 1}, {-3, 4, -5, 7},
-        { 1, 5,  2, 8}, { 4, 3,  7, 5}, { 5,-1, 8,-3},
-        { 2,-4,  4,-7}, {-1,-4, -3,-7}
-    };
-    static const int8_t leafPoints[][2] = {
-        {-4,-4}, { 3,-5}, { 6, 0}, { 4, 4}, {-3, 5}, {-6,-1}
-    };
-    const int pointCount = (int)(sizeof(spiral) / sizeof(spiral[0])) -
-                           (int)tumble.shedStage * 4;
-    for (int i = 0; i < pointCount - 1; i++) {
-        int x1 = spiral[i][0], y1 = spiral[i][1];
-        int x2 = spiral[i + 1][0], y2 = spiral[i + 1][1];
-        for (int turn = 0; turn < spin; turn++) {
-            const int oldX1 = x1, oldX2 = x2;
-            x1 = -y1; y1 = oldX1;
-            x2 = -y2; y2 = oldX2;
-        }
-        uint16_t color = twDry;
-        if (i % 7 == 0) color = twHi;
-        else if (i % 4 == 0) color = twDark;
-        drawPixelTwigLine(canvas, tx + x1 * 2, ty + y1 * 2,
-                          tx + x2 * 2, ty + y2 * 2,
-                          flash ? 0xFFFF : color);
-    }
-    const int twigCount = (int)(sizeof(twigs) / sizeof(twigs[0])) -
-                          (int)tumble.shedStage * 2;
-    for (int i = 0; i < twigCount; i++) {
-        int x1 = twigs[i].x1, y1 = twigs[i].y1;
-        int x2 = twigs[i].x2, y2 = twigs[i].y2;
-        for (int turn = 0; turn < spin; turn++) {
-            const int oldX1 = x1, oldX2 = x2;
-            x1 = -y1; y1 = oldX1;
-            x2 = -y2; y2 = oldX2;
-        }
-        drawPixelTwigLine(canvas, tx + x1 * 2, ty + y1 * 2,
-                          tx + x2 * 2, ty + y2 * 2,
-                          flash ? 0xFFFF : (i % 2 ? twHi : twDark));
-    }
-    const int leafCount = 6 - tumble.shedStage * 2;
-    for (int i = 0; i < leafCount; i++) {
-        int lx = leafPoints[i][0], ly = leafPoints[i][1];
-        for (int turn = 0; turn < spin; turn++) {
-            const int oldX = lx;
-            lx = -ly;
-            ly = oldX;
-        }
-        uint16_t color = flash ? 0xFFFF : leafColors[(i + spin) % 5];
-        canvas.fillRect(tx + lx * 2 - 1, ty + ly * 2 - 1, 4, 3, color);
-        canvas.drawPixel(tx + lx * 2 + 2, ty + ly * 2, flash ? 0xFFFF : twDark);
-    }
-    canvas.fillRect(tx - 12, 105, 24, 2, flash ? 0xFFFF : 0x4208);
-    }
-
-    for (uint8_t i = 0; i < 3; i++) {
-        const TumbleDebris& bit = tumbleDebris[i];
-        if (!bit.active) continue;
-        const int bx = (int)bit.x;
-        const int by = (int)bit.y;
-        const uint16_t color = flash ? 0xFFFF
-            : (bit.kind ? twDark : leafColors[i % 5]);
-        if (bit.kind) {
-            canvas.fillRect(bx - 3, by - 1, 6, 3, color);
-            canvas.fillRect(bx - 1, by - 2, 3, 5, twDark);
-        } else {
-            canvas.fillRect(bx, by, 3, 2, color);
-            canvas.fillRect(bx + 1, by - 1, 1, 1, color);
-            canvas.drawPixel(bx + 1, by + 2, color);
+    for (uint8_t p = 0; p < LEAF_PILE_COUNT; p++) {
+        const LeafPile& pile = leafPiles[p];
+        if (!pile.active || pile.count == 0) continue;
+        const int x = (int)pile.x;
+        const int rows = 1 + (pile.count > 4) + (pile.count > 8);
+        const uint16_t dark = flash ? 0xFFFF : 0x8A20;
+        canvas.fillRect(x - 9, 104 - rows, 18, rows, dark);
+        for (uint8_t i = 0; i < pile.count; i++) {
+            const int spread = (int)(i % 5) * 3 - 6;
+            const int row = (int)(i / 5);
+            const uint16_t color = flash ? 0xFFFF : leafColors[(pile.col + i) % 5];
+            canvas.fillRect(x + spread, 101 - row, 4, 2, color);
+            canvas.drawPixel(x + spread + 2, 100 - row, color);
         }
     }
 }
@@ -1162,9 +1105,8 @@ void reset() {
     for (int i = 0; i < SNOW_BANK_COUNT; i++) snowBanks[i].h = 0;
     for (int i = 0; i < SNOW_SCAR_COUNT; i++) snowScars[i].active = false;
     for (int i = 0; i < LEAF_COUNT; i++) leaves[i].active = false;
-    tumble = {};
-    for (uint8_t i = 0; i < 3; i++) tumbleDebris[i].active = false;
-    lastTumbleSpawnMs = 0;
+    for (uint8_t i = 0; i < LEAF_PILE_COUNT; i++) leafPiles[i].active = false;
+    lastPigCenterX = -1;
     lastLeafUpdate = 0;
     lastBankGrowMs = 0;
     lastRainSfxMs = 0;
@@ -1187,7 +1129,6 @@ void reset() {
 void update() {
     uint32_t now = millis();
     updateMeteorShower(now);
-    updateTumbleDebris(now);
     // RETRO film world: only pixel rain (weather module) — no color FX
     if (Weather::getActiveSeason() == Season::RETRO) return;
     if (isNoir()) {
@@ -1197,7 +1138,6 @@ void update() {
     updateSnowBanks(now);
     updateSandstorm(now);
     updateLeaves(now);
-    updateTumbleweed(now);
     updateButterflies(now);
     updatePollen(now);
     updateLightning(now);
@@ -1230,7 +1170,7 @@ void draw(M5Canvas& canvas) {
     drawSnowBanks(canvas, flash);
     drawSandstorm(canvas, flash);
     drawLeaves(canvas, flash);
-    drawTumbleweed(canvas, flash);
+    drawLeafPiles(canvas, flash);
     drawMeteorShower(canvas, flash);
     drawPollen(canvas, flash);
     drawButterflies(canvas, flash);

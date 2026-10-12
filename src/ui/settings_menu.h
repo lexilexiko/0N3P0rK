@@ -12,7 +12,8 @@ enum class SettingsPage : uint8_t {
     CONNECT = 4,
     KEYS = 5,
     STATUS = 6,
-    RADIO_EDIT = 7  // dynamic knobs for current method
+    RADIO_EDIT = 7, // dynamic knobs for current method
+    FLORA = 8
 };
 
 namespace SettingsMenu {

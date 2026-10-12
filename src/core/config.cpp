@@ -48,6 +48,9 @@ bool Config::init() {
     p.skyMode = s_prefs.getUChar("sky", p.skyMode);
     p.pigSkin = s_prefs.getUChar("skin", p.pigSkin);
     p.fieldWidth = s_prefs.getUShort("field", p.fieldWidth);
+    p.fruitTreeCount = s_prefs.getUChar("flfruit", p.fruitTreeCount);
+    p.decorTreeCount = s_prefs.getUChar("fldecor", p.decorTreeCount);
+    p.bushCount = s_prefs.getUChar("flbush", p.bushCount);
     p.tusksEnabled = s_prefs.getBool("tusks", p.tusksEnabled);
     p.pigSkinAlive = s_prefs.getUChar("skinal", p.pigSkinAlive);
     p.nightWolfBites = s_prefs.getUChar("nwolf", p.nightWolfBites);
@@ -144,6 +147,9 @@ bool Config::init() {
     if (p.fieldWidth < 240 || p.fieldWidth > 1200 ||
         (p.fieldWidth != 1200 && (p.fieldWidth - 240) % 50 != 0))
         p.fieldWidth = 590;
+    if (p.fruitTreeCount < 1 || p.fruitTreeCount > 3) p.fruitTreeCount = 1;
+    if (p.decorTreeCount < 1 || p.decorTreeCount > 3) p.decorTreeCount = 1;
+    if (p.bushCount < 1 || p.bushCount > 3) p.bushCount = 1;
     if (p.pigSkinAlive >= PIG_SKIN_COUNT ||
         p.pigSkinAlive == (uint8_t)PigSkin::ZOMBIE)
         p.pigSkinAlive = 0;
@@ -212,6 +218,9 @@ bool Config::save() {
     s_prefs.putUChar("sky", p.skyMode);
     s_prefs.putUChar("skin", p.pigSkin);
     s_prefs.putUShort("field", p.fieldWidth);
+    s_prefs.putUChar("flfruit", p.fruitTreeCount);
+    s_prefs.putUChar("fldecor", p.decorTreeCount);
+    s_prefs.putUChar("flbush", p.bushCount);
     s_prefs.putBool("tusks", p.tusksEnabled);
     s_prefs.putUChar("skinal", p.pigSkinAlive);
     s_prefs.putUChar("nwolf", p.nightWolfBites);

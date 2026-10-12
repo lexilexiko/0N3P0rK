@@ -7,6 +7,7 @@
 #include "../piglet/cards_table.h"
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
+#include "../piglet/trees.h"
 #include "../piglet/wolf.h"
 #include "../piglet/mood.h"
 #include "../storage/littlefs_ops.h"
@@ -41,6 +42,7 @@ static const Item SCENE[] = {
     {"NAME",      Kind::TEXT,   0,  0, 0, 0},
     {"SKIN",      Kind::VALUE,  1,  0, PIG_SKIN_COUNT - 1, 1},
     {"FIELD",     Kind::VALUE, 25, 240, 1200, 50},
+    {"FLORA",     Kind::ACTION,70, 0, 0, 0},
     {"TUSKS",     Kind::TOGGLE, 24, 0, 1, 1},
     {"SEASON",    Kind::VALUE,  2,  0, SEASON_MODE_COUNT - 1, 1},
     {"SKY",       Kind::VALUE,  3,  0, SKY_MODE_COUNT - 1, 1},
@@ -66,6 +68,13 @@ static const Item SCENE[] = {
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
+
+static const Item FLORA[] = {
+    {"FRUIT TREES", Kind::VALUE, 30, 1, 3, 1},
+    {"DECOR TREES", Kind::VALUE, 31, 1, 3, 1},
+    {"BUSHES",      Kind::VALUE, 32, 1, 3, 1},
+};
+static const uint8_t FLORA_N = sizeof(FLORA) / sizeof(FLORA[0]);
 
 static const Item SYSTEM[] = {
     {"BRIGHT",    Kind::VALUE, 0, 10, 100, 10},
@@ -200,6 +209,8 @@ static const char* const H_SCENE[] = {
     "TYPE NAME. ENT SAVE.",
     "SKIN OF THE HOG.",
     "FIELD WIDTH IN PIXELS.",
+    "TREE AND BUSH COUNTS.",
+    "SHOW BOAR TUSKS.",
     "AUTO OR LOCK A SEASON.",
     "AUTO DUSK / DAY / NIGHT.",
     "WALK SPEED AT THE EDGES.",
@@ -222,6 +233,12 @@ static const char* const H_SCENE[] = {
     "FRAME LOAD VS 33MS BUDGET.",
     "ROOTS, BURROWS AND CRAWLERS.",
     "TYPE CODE. ENT."
+};
+
+static const char* const H_FLORA[] = {
+    "SET 1-3 FRUIT TREES.",
+    "SET 1-3 DECOR TREES.",
+    "SET 1-3 BUSHES."
 };
 
 static const char* const H_SYSTEM[] = {
@@ -308,6 +325,7 @@ static bool s_text = false;
 static bool s_bind = false;
 static bool s_resetConfirm = false;
 static SettingsPage s_page = SettingsPage::SCENE;
+static uint8_t s_floraParentIdx = 0;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
 static uint8_t s_statScroll = 0;
@@ -326,6 +344,7 @@ static bool s_scanning = false;
 
 static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
+    if (s_page == SettingsPage::FLORA) { *n = FLORA_N; return FLORA; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::RADIO_EDIT) { *n = s_editN; return s_editItems; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
@@ -444,6 +463,14 @@ static int getValue(const Item& it) {
     PersonalityConfig& p = Config::personality();
     RadioConfig& r = Config::radio();
     BleConfig& b = Config::ble();
+    if (s_page == SettingsPage::FLORA) {
+        switch (it.id) {
+            case 30: return p.fruitTreeCount;
+            case 31: return p.decorTreeCount;
+            case 32: return p.bushCount;
+            default: return 1;
+        }
+    }
     if (s_page == SettingsPage::SCENE) {
         switch (it.id) {
             case 1: return p.pigSkin;
@@ -752,6 +779,18 @@ static bool setValue(const Item& it, int v) {
 
     if (v < it.minV) v = it.maxV;
     if (v > it.maxV) v = it.minV;
+
+    if (s_page == SettingsPage::FLORA) {
+        switch (it.id) {
+            case 30: p.fruitTreeCount = (uint8_t)v; break;
+            case 31: p.decorTreeCount = (uint8_t)v; break;
+            case 32: p.bushCount = (uint8_t)v; break;
+            default: return false;
+        }
+        Config::save();
+        Trees::applyFloraCounts();
+        return true;
+    }
 
     if (s_page == SettingsPage::SCENE) {
         switch (it.id) {
@@ -1080,6 +1119,8 @@ const char* bottomHint() {
                 return H_SYSTEM[s_idx];
             if (s_page == SettingsPage::BLE && s_idx < sizeof(H_BLE) / sizeof(H_BLE[0]))
                 return H_BLE[s_idx];
+            if (s_page == SettingsPage::FLORA && s_idx < sizeof(H_FLORA) / sizeof(H_FLORA[0]))
+                return H_FLORA[s_idx];
             if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
                 return H_SCENE[s_idx];
         }
@@ -1089,6 +1130,8 @@ const char* bottomHint() {
         if (it[s_idx].kind == Kind::ACTION) {
             if (s_page == SettingsPage::RADIO && it[s_idx].id == 60)
                 return "ENT OPEN EDITOR  ESC BACK";
+            if (s_page == SettingsPage::SCENE && it[s_idx].id == 70)
+                return "ENT OPEN FLORA  ESC BACK";
             return "ENT RESET RADIO  ESC BACK";
         }
         return "ENT EDIT  ^/v MOVE  ESC BACK";
@@ -1348,6 +1391,15 @@ void update() {
             SFX::play(SFX::BACK_NAV);
             return;
         }
+        if (s_page == SettingsPage::FLORA) {
+            s_page = SettingsPage::SCENE;
+            s_idx = s_floraParentIdx;
+            s_scroll = 0;
+            keepVisible(SCENE_N);
+            s_openMs = millis();
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
         hide();
         return;
     }
@@ -1386,7 +1438,14 @@ void update() {
     }
 
     if (cur.kind == Kind::ACTION) {
-        if (s_page == SettingsPage::RADIO && cur.id == 19) {
+        if (s_page == SettingsPage::SCENE && cur.id == 70) {
+            s_floraParentIdx = s_idx;
+            s_page = SettingsPage::FLORA;
+            s_idx = 0;
+            s_scroll = 0;
+            s_openMs = millis();
+            SFX::play(SFX::MENU_CLICK);
+        } else if (s_page == SettingsPage::RADIO && cur.id == 19) {
             s_resetConfirm = true;
             SFX::play(SFX::MENU_CLICK);
         } else if (s_page == SettingsPage::RADIO && cur.id == 60) {
@@ -1591,6 +1650,7 @@ void draw(M5Canvas& canvas) {
 
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
+    else if (s_page == SettingsPage::FLORA) title = "FLORA";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::RADIO_EDIT) {
         // Show "EDIT: METHODNAME" as title

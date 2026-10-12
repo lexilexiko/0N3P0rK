@@ -40,6 +40,7 @@ void showBerry();   // kind (3)
 void hideDecor();
 void hideBerry();
 void hideAll();
+void applyFloraCounts();
 
 // === Gameplay ===
 void dropFruit();   // fruit tree only (ambient rain)

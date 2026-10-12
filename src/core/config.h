@@ -62,6 +62,9 @@ struct PersonalityConfig {
     uint8_t skyMode = 0;
     uint8_t pigSkin = 0;
     uint16_t fieldWidth = 590;  // Scene width in pixels (240..1200).
+    uint8_t fruitTreeCount = 1; // PIG → FLORA, 1..3.
+    uint8_t decorTreeCount = 1;
+    uint8_t bushCount = 1;
     bool tusksEnabled = true;
     uint8_t pigSkinAlive = 0;  // last non-zombie skin (restore on 5 hearts)
     uint8_t nightWolfBites = 0;
