@@ -363,8 +363,8 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
         tiltCos = cosf(headTilt);
     }
     bool headLayer = false;
-    static uint16_t headColors[32][32];
-    static bool headPixels[32][32];
+    static uint16_t headColors[16][16];
+    static uint32_t headPixelMask[8];
     // Play-dead: blend normal → upside-down (same silhouette, no hard snap)
     // a=0 normal: y = oy + ly*s
     // a=256 flip:  y = oy - (ly+18)*s
@@ -379,11 +379,12 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     };
     auto P = [&](int lx, int ly, uint16_t col) {
         if (headLayer && headTilt > 0.001f) {
-            const int px = lx + 8;
-            const int py = ly + 24;
-            if (px >= 0 && px < 32 && py >= 0 && py < 32) {
+            const int px = lx + 1;
+            const int py = ly + 22;
+            if (px >= 0 && px < 16 && py >= 0 && py < 16) {
                 headColors[py][px] = col;
-                headPixels[py][px] = true;
+                const unsigned bit = (unsigned)(py * 16 + px);
+                headPixelMask[bit >> 5] |= 1u << (bit & 31u);
             }
             return;
         }
@@ -468,7 +469,7 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     block(-4, -7, 8, 1, S);
 
     // ========== HEAD ==========
-    if (headTilt > 0.001f) memset(headPixels, 0, sizeof(headPixels));
+    if (headTilt > 0.001f) memset(headPixelMask, 0, sizeof(headPixelMask));
     headLayer = true;
     block(0, -17, 9, 1, O);
     block(-1, -16, 1, 7, O);
@@ -647,11 +648,12 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
                 const float sourceY = -dx * tiltSin + dy * tiltCos;
                 const int srcX = (int)(2.0f + sourceX + (sourceX >= 0.0f ? 0.5f : -0.5f));
                 const int srcY = (int)(-9.0f + sourceY + (sourceY >= 0.0f ? 0.5f : -0.5f));
-                const int mapX = srcX + 8;
-                const int mapY = srcY + 24;
-                if (mapX >= 0 && mapX < 32 && mapY >= 0 && mapY < 32 &&
-                    headPixels[mapY][mapX]) {
-                    drawCell(lx, ly, headColors[mapY][mapX]);
+                const int mapX = srcX + 1;
+                const int mapY = srcY + 22;
+                if (mapX >= 0 && mapX < 16 && mapY >= 0 && mapY < 16) {
+                    const unsigned bit = (unsigned)(mapY * 16 + mapX);
+                    if (headPixelMask[bit >> 5] & (1u << (bit & 31u)))
+                        drawCell(lx, ly, headColors[mapY][mapX]);
                 }
             }
         }
