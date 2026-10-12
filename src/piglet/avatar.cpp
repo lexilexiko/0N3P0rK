@@ -270,17 +270,6 @@ static inline int16_t snapPx(int16_t v) {
     return (v >= 0) ? (v / PX) * PX : ((v - 2) / PX) * PX;
 }
 
-// Iterative edge reflection — folds off-screen coordinates back on-screen.
-// Returns reflected coordinate; increments `bounces` for each fold.
-static inline int16_t reflectAxis(int16_t v, int16_t hi, uint8_t& bounces) {
-    for (uint8_t i = 0; i < 4; i++) {
-        if (v >= 0 && v <= hi) return v;
-        if (v < 0) { v = -v;           bounces++; }
-        else       { v = hi + hi - v;   bounces++; }
-    }
-    return (v < 0) ? 0 : (v > hi) ? hi : v;  // safety clamp
-}
-
 // Bresenham line on PX grid — stamps PX*PX blocks
 static void fatLine(M5Canvas& canvas, int16_t x1, int16_t y1,
                     int16_t x2, int16_t y2, uint16_t color) {
@@ -1861,9 +1850,6 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         }
     }
 
-    // Waves: startX/Y interpreted as feet center (see drawWaveRipples)
-    drawWaveRipples(canvas, faceRight, feetX, feetY);
-
     // Contact shadow under feet (on turf; trees already drawn behind pig)
     // Pig between tree layer and front grass ankles
     // Contact shadow under feet — pig grounded
@@ -2398,67 +2384,26 @@ void Avatar::waveRipple(WaveMode mode, uint8_t intensity) {
         if (now < waveBurstEnd) return;  // OUTGOING still active
     }
     bool alreadyActive = (waveMode != WaveMode::NONE && now < waveBurstEnd);
+    bool modeChanged = (waveMode != mode);
     waveMode = mode;
     waveBurstEnd = now + 4000;  // extend deadline (longer for 1.5x slower cycle)
-    if (!alreadyActive) {
-        waveBurstStart = now;   // phase origin only on fresh start
-    }
-    waveIntensity = intensity;
+    if (!alreadyActive || modeChanged)
+        waveBurstStart = now;
+    waveIntensity = intensity < 1 ? 1 : (intensity > 5 ? 5 : intensity);
 }
 
-// Invert RGB565 (for wave rings that must contrast with sky)
-static inline uint16_t invert565(uint16_t c) {
-    int r = 31 - ((c >> 11) & 0x1F);
-    int g = 63 - ((c >> 5) & 0x3F);
-    int b = 31 - (c & 0x1F);
-    // keep a little punch so pure invert of mid-blue isn't muddy
-    if (r < 4) r = 4; if (g < 8) g = 8; if (b < 4) b = 4;
+static uint16_t mixWaveColor(uint16_t base, uint16_t tint, uint8_t tintWeight) {
+    const uint16_t baseWeight = (uint16_t)(255u - tintWeight);
+    const uint16_t r = ((((base >> 11) & 0x1Fu) * baseWeight) +
+                        (((tint >> 11) & 0x1Fu) * tintWeight)) / 255u;
+    const uint16_t g = ((((base >> 5) & 0x3Fu) * baseWeight) +
+                        (((tint >> 5) & 0x3Fu) * tintWeight)) / 255u;
+    const uint16_t b = (((base & 0x1Fu) * baseWeight) +
+                        ((tint & 0x1Fu) * tintWeight)) / 255u;
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
-// Midpoint circle on PX grid. thickness = number of concentric fat rings (1..3).
-// reflect=true folds off-screen points back via reflectAxis; reflect=false clips.
-static void drawCircleRing(M5Canvas& canvas, int16_t cx, int16_t cy,
-                            int16_t r, uint16_t color, bool reflect,
-                            int16_t maxPxX, int16_t maxPxY, uint8_t thickness = 1) {
-    if (thickness < 1) thickness = 1;
-    if (thickness > 3) thickness = 3;
-    cx = snapPx(cx);
-    cy = snapPx(cy);
-
-    for (uint8_t t = 0; t < thickness; t++) {
-        int16_t rr = r + (int16_t)t * PX;
-        int16_t gr = rr / PX;
-        if (gr < 1) continue;
-        int16_t gx = gr, gy = 0, d = 1 - gr;
-
-        while (gx >= gy) {
-            const int16_t ox[8] = { gx, (int16_t)-gx,  gx, (int16_t)-gx,  gy, (int16_t)-gy,  gy, (int16_t)-gy };
-            const int16_t oy[8] = { gy,  gy, (int16_t)-gy, (int16_t)-gy,  gx,  gx, (int16_t)-gx, (int16_t)-gx };
-            for (uint8_t p = 0; p < 8; p++) {
-                int16_t px = cx + ox[p] * PX;
-                int16_t py = cy + oy[p] * PX;
-                if (reflect) {
-                    uint8_t bounces = 0;
-                    px = reflectAxis(px, maxPxX, bounces);
-                    py = reflectAxis(py, maxPxY, bounces);
-                    if (bounces >= 4) continue;
-                    if (bounces == 3 && ((px / PX + py / PX) & 1)) continue;
-                    if (bounces == 2 && ((px / PX + py / PX) % 3 == 0)) continue;
-                } else {
-                    if (px < 0 || px > maxPxX || py < 0 || py > maxPxY) continue;
-                }
-                // Fat stamp: PX x PX plus 1px grow for "жирнее" look
-                canvas.fillRect(px, py, PX + 1, PX + 1, color);
-            }
-            gy++;
-            if (d < 0) { d += 2 * gy + 1; }
-            else       { gx--; d += 2 * (gy - gx) + 1; }
-        }
-    }
-}
-
-void Avatar::drawWaveRipples(M5Canvas& canvas, bool faceRight, int startX, int startY) {
+void Avatar::drawWaveRipples(M5Canvas& canvas) {
     if (waveMode == WaveMode::NONE) return;
 
     uint32_t now = millis();
@@ -2471,76 +2416,76 @@ void Avatar::drawWaveRipples(M5Canvas& canvas, bool faceRight, int startX, int s
         nextGeigerClick = now + random(80, 300);
     }
 
-    // Gradual fade: after burst ends, suppress young rings over one cycle
+    // Keep the grain visible briefly after activity stops, then fade it out.
     const uint16_t FADE_MS = 3600;
-    float minProgress = 0.0f;
+    uint8_t fade = 255;
     if (now >= waveBurstEnd) {
         uint32_t fadeElapsed = now - waveBurstEnd;
         if (fadeElapsed >= FADE_MS) { waveMode = WaveMode::NONE; return; }
-        minProgress = (float)fadeElapsed / (float)FADE_MS * 0.80f;
+        fade = (uint8_t)(255u - (fadeElapsed * 255u) / FADE_MS);
     }
-
-    // Ring color = invert of current sky (always readable over day/night/rain)
-    uint16_t color = maybeFlash(invert565(Sky::topColor()));
-    // Soft second tone (slightly dimmer invert) for outer edge depth
-    uint16_t colorOuter = maybeFlash(invert565(
-        (uint16_t)(((Sky::topColor() >> 1) & 0x7BEF) | 0x1082)));  // slightly lifted sky
 
     const bool outgoing = (waveMode == WaveMode::OUTGOING);
 
-    // startX/Y = feet center (procedural pig). Snout at local (+9,-12)
-    int waveCX = faceRight ? (startX + 9 * PX) : (startX - 9 * PX);
-    int waveCY = startY - 12 * PX;
+    uint16_t seasonColor;
+    switch (Weather::getActiveSeason()) {
+        case Season::SPRING: seasonColor = 0xFB56; break;
+        case Season::SUMMER: seasonColor = 0x45A0; break;
+        case Season::AUTUMN: seasonColor = 0xE4E0; break;
+        case Season::WINTER: seasonColor = 0xDEFB; break;
+        case Season::RETRO:  seasonColor = 0x9CF3; break;
+        case Season::NOIR:   seasonColor = 0xFE60; break;
+        case Season::CITY:   seasonColor = 0x8410; break;
+        case Season::DESERT: seasonColor = 0xE5C0; break;
+        default:             seasonColor = 0x45A0; break;
+    }
+    const uint16_t modeTint = outgoing ? 0xF800 : 0x001F;
+    const uint16_t tint = mixWaveColor(seasonColor, modeTint, outgoing ? 72 : 56);
+    const uint16_t brightGrain = maybeFlash(mixWaveColor(tint, 0xFFFF, 220));
+    const uint16_t darkGrain = maybeFlash(mixWaveColor(tint, 0x0000, 220));
+    uint8_t* pixels = Display::mainCanvasBuffer();
+    if (pixels && Display::mainCanvasBufferSize() >= (size_t)DISPLAY_W * MAIN_H) {
+        uint8_t row[DISPLAY_W];
+        uint32_t seed = (now / 45u) ^ (outgoing ? 0xA341316Cu : 0xC8013EA4u);
 
-    // Both modes: thick propagating circles that clip at screen edges
-    const uint8_t  COUNT    = outgoing ? 5 : waveIntensity;
-    const uint16_t CYCLE_MS = 3600;
-    const int16_t  R_MIN    = 0;
-    const int16_t  R_MAX    = 130;
-    const int16_t  MAX_PX_X = DISPLAY_W - PX;
-    const int16_t  MAX_PX_Y = MAIN_H - PX;
-    const int16_t GRID_STEPS = (R_MAX - R_MIN) / PX;
+        // Brief horizontal film tears: shift finished scanlines, never scene objects.
+        const uint8_t tearCount = (uint8_t)(1u + (uint16_t)fade * (outgoing ? 5u : 3u) / 255u);
+        for (uint8_t tear = 0; tear < tearCount; tear++) {
+            seed = seed * 1664525u + 1013904223u;
+            const int16_t y0 = (int16_t)((seed >> 8) % MAIN_H);
+            const int8_t height = (int8_t)(1u + ((seed >> 20) % 5u));
+            const int8_t amount = (int8_t)(3u + ((seed >> 13) % (outgoing ? 25u : 17u)));
+            const int8_t shift = (seed & 1u) ? amount : -amount;
+            const int16_t yEnd = (y0 + height < MAIN_H) ? y0 + height : MAIN_H;
 
-    uint32_t elapsed = now - waveBurstStart;
-
-    for (uint8_t i = 0; i < COUNT; i++) {
-        uint32_t phaseOffset = i * (CYCLE_MS / COUNT);
-        uint32_t phase = (elapsed + phaseOffset) % CYCLE_MS;
-        float progress = (float)phase / (float)CYCLE_MS;
-
-        if (progress < minProgress) continue;
-        if (progress > 0.80f) continue;
-        float t = progress / 0.80f;
-
-        int16_t gridStep = (int16_t)(t * GRID_STEPS);
-        int16_t rRaw = R_MIN + gridStep * PX;
-        int16_t r = outgoing
-            ? snapPx(rRaw)
-            : snapPx(R_MIN + R_MAX - rRaw);
-
-        // Thickness: fat rings always (2), extra fat when young (3)
-        uint8_t thick = (t < 0.45f) ? 3 : 2;
-
-        // Outer dim invert + inner bright invert = readable on any sky
-        drawCircleRing(canvas, waveCX, waveCY, r + PX, colorOuter, false, MAX_PX_X, MAX_PX_Y, 1);
-        drawCircleRing(canvas, waveCX, waveCY, r, color, false, MAX_PX_X, MAX_PX_Y, thick);
-
-        if (outgoing) {
-            // Fruit tree shake when OUTGOING ring hits crown
-            int16_t tbx = Trees::getFruitTreeScreenX();
-            if (tbx >= 0) {
-                int32_t dx = tbx - waveCX;
-                int32_t dy = 106 - waveCY;
-                int32_t dist2 = dx * dx + dy * dy;
-                const int32_t crownR = 22;
-                int32_t rOuter = r + crownR;
-                int32_t rInner = r - crownR;
-                if (rInner < 0) rInner = 0;
-                if (dist2 <= rOuter * rOuter && dist2 >= rInner * rInner) {
-                    Trees::shakeFromWave();
+            for (int16_t y = y0; y < yEnd; y++) {
+                uint8_t* line = pixels + (size_t)y * DISPLAY_W;
+                memcpy(row, line, DISPLAY_W);
+                for (int16_t x = 0; x < DISPLAY_W; x++) {
+                    int16_t sourceX = x - shift;
+                    if (sourceX < 0) sourceX = 0;
+                    if (sourceX >= DISPLAY_W) sourceX = DISPLAY_W - 1;
+                    line[x] = row[sourceX];
                 }
             }
         }
+    }
+
+    const uint16_t frame = (uint16_t)(now / 35u);
+    const uint16_t baseGrainCount = outgoing
+        ? (uint16_t)(320u + waveIntensity * 32u)
+        : (uint16_t)(240u + waveIntensity * 28u);
+    const uint16_t grainCount = (uint16_t)(baseGrainCount * fade / 255u);
+    uint16_t noise = (uint16_t)(frame * 73u + (outgoing ? 0xA5C3u : 0x5A3Cu));
+
+    for (uint16_t k = 0; k < grainCount; k++) {
+        noise ^= (uint16_t)(noise << 7);
+        noise ^= (uint16_t)(noise >> 9);
+        noise ^= (uint16_t)(noise << 8);
+        const int16_t x = noise % DISPLAY_W;
+        const int16_t y = (noise >> 5) % MAIN_H;
+        const uint16_t grainColor = (noise & 0x100u) ? brightGrain : darkGrain;
+        canvas.drawPixel(x, y, grainColor);
     }
 }
 
@@ -2551,23 +2496,10 @@ bool Avatar::checkBirdWaveCollision(int16_t bx, int16_t by) {
     uint32_t now = millis();
     if (now >= waveBurstEnd) return false;  // burst already fading
 
-    // Compute wave origin (mirrors drawWaveRipples logic)
-    bool faceR = facingRight;
-    // feet ≈ currentX + 14*PX, snout local (+9,-12)
-    int feetX = currentX + 14 * PX;
-    int waveCX = faceR ? (feetX + 9 * PX) : (feetX - 9 * PX);
-    int waveCY = 106 - 12 * PX;
-
     // Burst-relative elapsed time
     uint32_t elapsed = now - waveBurstStart;
     const uint16_t CYCLE_MS = 3600;
-    const int16_t  R_MIN = 0;
-    const int16_t  R_MAX = 130;
     const uint8_t  COUNT = 5;
-
-    int32_t dx = (int32_t)bx - waveCX;
-    int32_t dy = (int32_t)by - waveCY;
-    int32_t dist2 = dx * dx + dy * dy;
 
     for (uint8_t i = 0; i < COUNT; i++) {
         uint32_t phaseOffset = i * (CYCLE_MS / COUNT);
@@ -2576,11 +2508,8 @@ bool Avatar::checkBirdWaveCollision(int16_t bx, int16_t by) {
         if (progress > 0.80f) continue;
         float t = progress / 0.80f;
 
-        int16_t r = (int16_t)(R_MIN + t * (R_MAX - R_MIN));
-        int32_t rOuter = r + 4;
-        int32_t rInner = r - 4;
-        if (rInner < 0) rInner = 0;
-        if (dist2 <= rOuter * rOuter && dist2 >= rInner * rInner) {
+        int16_t frontY = (int16_t)(t * (MAIN_H - 1));
+        if (abs(by - frontY) <= 8) {
             return true;
         }
     }

@@ -534,6 +534,9 @@ void Display::drawFarm() {
 
     Credits::update();
     if (Credits::isPlaying()) Credits::draw(mainCanvas);
+    if (sceneLive && App::mode() == AppMode::FARM &&
+        !Cap::skipMenuOpen())
+        Avatar::drawWaveRipples(mainCanvas);
 
     if (Cap::skipMenuOpen()) {
         const uint16_t panel = 0x2104;

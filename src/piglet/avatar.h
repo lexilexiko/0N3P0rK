@@ -94,10 +94,11 @@ public:
     static void setThunderFlash(bool active);
     static bool isThunderFlashing();
 
-    // Wave ripple animation (radio activity feedback)
-    // Burst-based: each call extends a 2700ms burst without resetting phase.
+    // Hunt-like radio noise overlay on the farm scene.
+    // Burst-based: refreshes extend the 4000ms burst without resetting phase.
     // OUTGOING priority: active OUTGOING burst can't be overridden by INCOMING
-    static void waveRipple(WaveMode mode, uint8_t intensity = 3);  // intensity: 1-5 rings
+    static void waveRipple(WaveMode mode, uint8_t intensity = 3);
+    static void drawWaveRipples(M5Canvas& canvas);
     static WaveMode getWaveMode() { return waveMode; }
 
     // MicPork dance: pig body becomes the spectrum (0=off, 1=max energy)
@@ -300,8 +301,6 @@ private:
     static float micDanceLevel;  // 0..1 MicPork energy
     static uint32_t waveBurstStart;
     static uint32_t waveBurstEnd;
-    static void drawWaveRipples(M5Canvas& canvas, bool faceRight, int startX, int startY);
-
     // Pure pixel-art mouse (no ASCII glyphs). All anim flags applied at draw time.
     static void drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff);
     // frontLayer=false: turf + blades behind pig; true: tall blades in front of pig feet

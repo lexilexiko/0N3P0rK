@@ -2,7 +2,9 @@
 #include "display.h"
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
+#include "../build_info.h"
 #include <M5Cardputer.h>
+#include <stdio.h>
 #include <string.h>
 
 static bool wantSkip() {
@@ -55,6 +57,8 @@ void runBootSplash() {
     const int pigTo = 88;
     const int frames = 56;
     bool skipped = false;
+    char greeting[40];
+    snprintf(greeting, sizeof(greeting), "%s v%s", ON3PORK_NAME, ON3PORK_VERSION);
 
     for (int f = 0; f <= frames; f++) {
         if (wantSkip()) {
@@ -67,7 +71,7 @@ void runBootSplash() {
         Avatar::setX(px);
         Avatar::setManualWalk(true);
         Avatar::draw(farm);
-        if (px > 8) drawTalk(farm, px, "0N3P0rK");
+        if (px > 8) drawTalk(farm, px, greeting);
         Display::blitFrame();
         delay(28);
         yield();
@@ -80,7 +84,7 @@ void runBootSplash() {
         while ((millis() - hold) < 700) {
             if (wantSkip()) break;
             Avatar::draw(farm);
-            drawTalk(farm, pigTo, "0N3P0rK");
+            drawTalk(farm, pigTo, greeting);
             Display::blitFrame();
             delay(28);
             yield();

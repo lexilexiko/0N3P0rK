@@ -301,7 +301,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Updated the RADIO guide and capture controls, including the one-line Q-menu
   navigation hint.
 
-### 1.3.8 (Beta)
+### 1.3.8
 
 #### Farm world and flora
 
@@ -335,5 +335,13 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   with pig, season, and sky controls kept near the top.
 - Fixed Back navigation from FLORA so it returns to the TREES page and then to
   the parent PIG menu.
+
+#### Memory and roadmap
+
+- The current firmware has approximately **122 KB of free heap** in the
+  observed runtime state; actual free heap varies with active features.
+- Remaining memory headroom for new features is getting tighter. Version
+  **1.4.0** is not planned soon; development will focus on memory optimization
+  or ports to other devices.
 
 ---

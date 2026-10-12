@@ -323,6 +323,7 @@ static void updateBirds(uint32_t now) {
 static void generateCloudPuffs(CloudShape& cloud);
 static void activateCloud();
 static void deactivateCloud();
+static void updateSeasonCycle(uint32_t now);
 
 // === INITIALIZATION ===
 void init() {
@@ -360,6 +361,7 @@ void init() {
     seasonStartedMs = millis();
     lastSeasonModeCfg = 255;
     activeSeason = Season::SUMMER;
+    updateSeasonCycle(millis());
 }
 
 static void generateCloudPuffs(CloudShape& cloud) {
