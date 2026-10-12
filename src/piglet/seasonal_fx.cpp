@@ -610,28 +610,51 @@ static void updateTumbleweed(uint32_t now) {
 static void drawTumbleweed(M5Canvas& canvas, bool flash) {
     if (!tumble.active || !isAutumn()) return;
     int16_t tx = (int16_t)tumble.x;
-    int16_t ty = (int16_t)tumble.y;
+    int16_t ty = (int16_t)tumble.y - 6;
     int spin = (tumble.phase / 2) % 4;
-    // Avoid BR name — ESP32 specreg.h #define BR 4
     const uint16_t twDry  = flash ? 0xFFFF : 0x9A40;
     const uint16_t twHi   = flash ? 0xFFFF : 0xC300;
     const uint16_t twDark = flash ? 0xFFFF : 0x6A20;
-    // Larger rolling bush (4×4 blocks)
-    static const int8_t bush[12][2] = {
-        {-1,-2},{0,-2},{1,-2},
-        {-2,-1},{-1,-1},{0,-1},{1,-1},{2,-1},
-        {-1, 0},{0, 0},{1, 0},
-        {0, 1}
+    struct Twig { int8_t x1, y1, x2, y2; };
+    static const Twig twigs[] = {
+        {-1,-6,  2,-5}, { 2,-5,  5,-3}, { 5,-3,  6, 0},
+        { 6, 0,  4, 3}, { 4, 3,  1, 5}, { 1, 5, -2, 6},
+        {-2, 6, -5, 3}, {-5, 3, -6, 0}, {-6, 0, -4,-3},
+        {-4,-3, -1,-6},
+        {-1,-6,  1, 1}, { 5,-3, -1, 1}, { 6, 0, -1, 1},
+        { 4, 3, -1, 1}, { 1, 5, -1, 1}, {-5, 3, -1, 1},
+        {-4,-3,  1, 1}, {-1, 1,  2,-5},
+        {-3,-4, -1,-2}, { 3,-4,  1,-2}, { 4, 2,  1, 1},
+        {-4, 2, -1, 1}, {-2, 5, -1, 2}, { 2, 5,  1, 2}
     };
-    for (int b = 0; b < 12; b++) {
-        int idx = (b + spin) % 12;
-        int16_t px = tx + bush[idx][0] * 3;
-        int16_t py = ty + bush[idx][1] * 3 - 4;
-        if (px < -4 || px >= 240 || py < 86 || py >= 108) continue;
-        uint16_t c = (b == 5) ? twHi : ((b & 1) ? twDry : twDark);
-        canvas.fillRect(px, py, 3, 3, c);
+    for (uint8_t i = 0; i < sizeof(twigs) / sizeof(twigs[0]); i++) {
+        int x1 = twigs[i].x1;
+        int y1 = twigs[i].y1;
+        int x2 = twigs[i].x2;
+        int y2 = twigs[i].y2;
+        for (int turn = 0; turn < spin; turn++) {
+            const int oldX1 = x1, oldX2 = x2;
+            x1 = -y1; y1 = oldX1;
+            x2 = -y2; y2 = oldX2;
+        }
+        const uint16_t color = flash ? 0xFFFF
+            : (i % 5 == 0 ? twHi : (i % 3 == 0 ? twDark : twDry));
+        x1 *= 2; y1 *= 2;
+        x2 *= 2; y2 *= 2;
+        int dx = abs(x2 - x1), dy = abs(y2 - y1);
+        int sx = (x1 < x2) ? 1 : -1;
+        int sy = (y1 < y2) ? 1 : -1;
+        int error = dx - dy;
+        for (;;) {
+            canvas.fillRect(tx + x1, ty + y1, 2, 2, color);
+            if (x1 == x2 && y1 == y2) break;
+            const int twiceError = error * 2;
+            if (twiceError > -dy) { error -= dy; x1 += sx; }
+            if (twiceError < dx) { error += dx; y1 += sy; }
+        }
     }
-    canvas.fillRect(tx - 5, 105, 12, 1, 0x4208);
+    canvas.fillRect(tx - 1, ty - 1, 2, 2, flash ? 0xFFFF : twDark);
+    canvas.fillRect(tx - 8, 105, 16, 2, flash ? 0xFFFF : 0x4208);
 }
 
 // ---------------------------------------------------------------------------

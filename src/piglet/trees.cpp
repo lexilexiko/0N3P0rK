@@ -2107,7 +2107,7 @@ void drawUnderground(M5Canvas& canvas, uint16_t rootColor,
         const float growth = t.growth > 1.0f ? 1.0f : t.growth;
         const int maxDepth = t.kind == Kind::BERRY ? 10 : 14;
         const int depth = (int)(maxDepth * growth);
-        if (depth < 2) continue;
+        if (depth < 4) continue;
 
         auto rootStroke = [&canvas](int x1, int y1, int x2, int y2,
                                     uint16_t color, uint8_t thickness) {
@@ -2118,43 +2118,99 @@ void drawUnderground(M5Canvas& canvas, uint16_t rootColor,
             }
         };
 
+        auto root = [&rootStroke, barkDark, bark](int x1, int y1, int x2, int y2,
+                                                  uint8_t thickness) {
+            rootStroke(x1, y1, x2, y2, barkDark, thickness + 1);
+            rootStroke(x1, y1, x2, y2, bark, thickness);
+        };
+
         uint32_t seed = t.seed ^ ((uint32_t)i * 0x9E3779B9u);
-        seed = seed * 1664525u + 1013904223u;
-        const int spread = (t.kind == Kind::BERRY ? 5 : 8) +
-                           (int)((seed >> 24) % 4u);
-        const int splitY = depth > 7 ? 4 : depth / 2;
-        const int leftEndY = depth > 9 ? 9 + (int)((seed >> 8) % 3u) : depth;
-        const int rightEndY = depth > 9 ? 9 + (int)((seed >> 16) % 3u) : depth;
-        const int leftX = x - spread;
-        const int rightX = x + spread;
-        const int trunkEndY = depth > 4 ? 4 : depth;
+        if (seed == 0) seed = (uint32_t)i + 1u;
+        const bool shrub = t.kind == Kind::BERRY;
+        const int rootCount = shrub ? 6 + (int)(lcg(seed) % 3u)
+                                    : 7 + (int)(lcg(seed) % 4u);
+        const int maxSpread = shrub ? 12 : 21;
+        const int trunkEdge = ((int)t.trunkW + 1) * PX;
 
-        // A short taproot feeds two broad lateral roots which fork near their tips.
-        canvas.fillRect(x - 2, 1, 5, trunkEndY - 1, barkDark);
-        canvas.fillRect(x - 1, 1, 3, trunkEndY - 1, bark);
-        canvas.drawFastVLine(x - 1, 1, trunkEndY - 2, barkLight);
+        // The underground collar follows the visible flare at the trunk base.
+        canvas.fillRect(x - trunkEdge, 0, trunkEdge * 2 + 1, 2, barkDark);
+        canvas.fillRect(x - trunkEdge + 2, 0, trunkEdge * 2 - 3, 1, bark);
+        canvas.drawFastVLine(x - trunkEdge + 2, 0, 2, barkLight);
 
-        rootStroke(x, trunkEndY, x - 3, splitY + 1, barkDark, 5);
-        rootStroke(x, trunkEndY, x + 3, splitY + 1, barkDark, 5);
-        rootStroke(x, trunkEndY, x - 3, splitY + 1, bark, 3);
-        rootStroke(x, trunkEndY, x + 3, splitY + 1, bark, 3);
-        rootStroke(x - 3, splitY + 1, leftX, leftEndY, barkDark, 4);
-        rootStroke(x + 3, splitY + 1, rightX, rightEndY, barkDark, 4);
-        rootStroke(x - 3, splitY + 1, leftX, leftEndY, bark, 2);
-        rootStroke(x + 3, splitY + 1, rightX, rightEndY, bark, 2);
-        rootStroke(x - 1, trunkEndY, x - 4, splitY, barkLight, 1);
-        rootStroke(x + 1, trunkEndY, x + 2, splitY, barkLight, 1);
+        struct RootTip { int x, y; };
+        RootTip tips[10];
+        int tipCount = 0;
 
-        if (depth > 7) {
-            const int fork = depth > 10 ? 2 : 1;
-            rootStroke(x - spread / 2, splitY + 3,
-                       x - spread - fork, splitY + 5, barkDark, 3);
-            rootStroke(x - spread / 2, splitY + 3,
-                       x - spread - fork, splitY + 5, bark, 1);
-            rootStroke(x + spread / 2, splitY + 3,
-                       x + spread + fork, splitY + 5, barkDark, 3);
-            rootStroke(x + spread / 2, splitY + 3,
-                       x + spread + fork, splitY + 5, bark, 1);
+        // Alternate edge roots with inner roots so the whole trunk base is connected.
+        for (int r = 0; r < rootCount; r++) {
+            const int side = (r & 1) ? 1 : -1;
+            const int order = r / 2;
+            const bool fromInnerBase = (r % 4 == 1 || r % 4 == 2);
+            const int maxInset = trunkEdge < 4 ? trunkEdge - 1 : 3;
+            const int inset = (int)(lcg(seed) % (uint32_t)(maxInset + 1));
+            const int startOffset = fromInnerBase
+                ? 1 + (int)(lcg(seed) % (uint32_t)(trunkEdge / 2 + 1))
+                : trunkEdge - inset;
+            const int startX = x + side * startOffset;
+            const int startY = (int)(lcg(seed) % 3u);
+            int reach = 5 + (int)(lcg(seed) % (uint32_t)(maxSpread - 4));
+            reach -= order * (shrub ? 2 : 3);
+            const int minReach = trunkEdge - 3 + (shrub ? 3 : 5);
+            if (reach < minReach) reach = minReach;
+            const int endY = 3 + (int)(lcg(seed) % (uint32_t)(depth - 2));
+            const int endX = x + side * reach;
+            int bendX = startX + (endX - startX) / 2;
+            bendX += (int)(lcg(seed) % 5u) - 2;
+            int bendY = startY + (int)(lcg(seed) % 4u);
+            if (bendY >= endY) bendY = endY - 1;
+
+            const uint8_t thickness = shrub ? (r < 2 ? 2 : 1)
+                                            : (r < 3 ? 2 : 1);
+            root(startX, startY, bendX, bendY, thickness);
+            root(bendX, bendY, endX, endY, 1);
+
+            if (tipCount < (int)(sizeof(tips) / sizeof(tips[0]))) {
+                tips[tipCount].x = endX;
+                tips[tipCount].y = endY;
+                tipCount++;
+            }
+
+            // Smaller lateral roots branch off at varied points along each root.
+            const int branches = shrub ? 1 + (int)(lcg(seed) % 2u)
+                                       : 1 + (int)(lcg(seed) % 3u);
+            for (int b = 0; b < branches; b++) {
+                const int branchSide = (lcg(seed) & 1u) ? side : -side;
+                const int branchX = startX + (endX - startX) *
+                    (25 + (int)(lcg(seed) % 50u)) / 100;
+                const int branchY = startY + (endY - startY) *
+                    (25 + (int)(lcg(seed) % 50u)) / 100;
+                const int branchLen = shrub ? 2 + (int)(lcg(seed) % 5u)
+                                            : 3 + (int)(lcg(seed) % 8u);
+                const int branchEndX = branchX + branchSide * branchLen;
+                int branchEndY = branchY + 1 + (int)(lcg(seed) % 4u);
+                if (branchEndY > depth) branchEndY = depth;
+                root(branchX, branchY, branchEndX, branchEndY, 1);
+
+                if (depth > 6 && (lcg(seed) & 1u)) {
+                    const int hairX = branchX + (branchEndX - branchX) * 2 / 3;
+                    const int hairY = branchY + (branchEndY - branchY) * 2 / 3;
+                    const int hairSide = (lcg(seed) & 1u) ? 1 : -1;
+                    root(hairX, hairY,
+                         hairX + hairSide * (1 + (int)(lcg(seed) % 4u)),
+                         hairY + 1, 1);
+                }
+            }
+        }
+
+        // Fine feeder roots make the bush root mass denser and the tree roots spread.
+        const int rootlets = shrub ? 7 : 5;
+        for (int r = 0; r < rootlets && tipCount > 0; r++) {
+            const RootTip& tip = tips[lcg(seed) % (uint32_t)tipCount];
+            const int side = (lcg(seed) & 1u) ? 1 : -1;
+            const int len = 2 + (int)(lcg(seed) % (shrub ? 4u : 7u));
+            int endY = tip.y + (int)(lcg(seed) % 3u);
+            if (endY > depth) endY = depth;
+            root(tip.x, tip.y, tip.x + side * len, endY, 1);
         }
     }
 }
