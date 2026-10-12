@@ -444,6 +444,14 @@ static const Note SND_RAIN_TICK[] = {
     {0, 0, 0}
 };
 
+// DIG: short soft scrape, timed once per snout-down stroke.
+static const Note SND_DIG[] = {
+    {260, 24, 0},
+    {190, 28, 3},
+    {120, 22, 0},
+    {0, 0, 0}
+};
+
 // IR_FIRE: short sci-fi charge + zap (play BEFORE mute / IR bitbang)
 static const Note SND_IR_FIRE[] = {
     {400, 30, 0},     // charge hum
@@ -482,6 +490,8 @@ static uint8_t eventVolumeScale(Event e) {
         case DEAUTH:
         case JUMP:
             return 50;
+        case DIG:
+            return 38;
         case ATTACK_HOP:
             return 75;
         case IR_FIRE:
@@ -543,7 +553,7 @@ static bool isLowPriorityEvent(Event event) {
            event == JUMP || event == ATTACK_HOP || event == WOLF || event == WOLF_HIT ||
            event == MODE_ENTER || event == MODE_EXIT || event == BACK_NAV ||
            event == OINK_HAPPY || event == OINK_GRUNT || event == OINK_CURIOUS ||
-           event == THUNDER;
+           event == THUNDER || event == DIG;
 }
 
 void init() {
@@ -833,6 +843,9 @@ bool update() {
                 break;
             case RAIN_TICK:
                 startSequence(SND_RAIN_TICK);
+                break;
+            case DIG:
+                startSequence(SND_DIG);
                 break;
             default:
                 break;

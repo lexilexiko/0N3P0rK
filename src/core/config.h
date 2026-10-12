@@ -23,9 +23,10 @@ enum class PigSkin : uint8_t {
     SHADOW  = 5,
     CANDY   = 6,
     GOLD    = 7,
-    DIRTY   = 8   // alley / dumpster pig — unlock with CITY (lv 25)
+    DIRTY   = 8,  // alley / dumpster pig — unlock with CITY (lv 25)
+    BOAR    = 9   // forest boar — available from the start
 };
-static const uint8_t PIG_SKIN_COUNT = 9;
+static const uint8_t PIG_SKIN_COUNT = 10;
 
 enum class SeasonMode : uint8_t {
     AUTO   = 0,
@@ -60,6 +61,7 @@ struct PersonalityConfig {
     uint16_t dimTimeout = 30;
     uint8_t skyMode = 0;
     uint8_t pigSkin = 0;
+    bool tusksEnabled = true;
     uint8_t pigSkinAlive = 0;  // last non-zombie skin (restore on 5 hearts)
     uint8_t nightWolfBites = 0;
     bool zombieSkinUnlocked = false;

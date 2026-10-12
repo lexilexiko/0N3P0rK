@@ -47,6 +47,7 @@ bool Config::init() {
     p.dimTimeout = s_prefs.getUShort("dimt", p.dimTimeout);
     p.skyMode = s_prefs.getUChar("sky", p.skyMode);
     p.pigSkin = s_prefs.getUChar("skin", p.pigSkin);
+    p.tusksEnabled = s_prefs.getBool("tusks", p.tusksEnabled);
     p.pigSkinAlive = s_prefs.getUChar("skinal", p.pigSkinAlive);
     p.nightWolfBites = s_prefs.getUChar("nwolf", p.nightWolfBites);
     p.zombieSkinUnlocked = s_prefs.getBool("zombie", p.zombieSkinUnlocked);
@@ -206,6 +207,7 @@ bool Config::save() {
     s_prefs.putUShort("dimt", p.dimTimeout);
     s_prefs.putUChar("sky", p.skyMode);
     s_prefs.putUChar("skin", p.pigSkin);
+    s_prefs.putBool("tusks", p.tusksEnabled);
     s_prefs.putUChar("skinal", p.pigSkinAlive);
     s_prefs.putUChar("nwolf", p.nightWolfBites);
     s_prefs.putBool("zombie", p.zombieSkinUnlocked);
