@@ -758,17 +758,22 @@ static bool setValue(const Item& it, int v) {
     }
 
     if (isRadioPage() && it.id == 29) {
-        static const uint8_t slots[] = {4, 8, 12, 16, 24, 28};
+        // MEMFIX: the sniffer clamp was extended to the full 4..32 range in
+        // cap/sniffer.cpp (EAPOL_FRAME_MAX slots make 32 affordable), so the
+        // RING widget must offer the same range instead of the old {4,8,12,16,24,28}
+        // list that silently reset every other value to 12.
+        static const uint8_t slots[] = {4, 8, 12, 16, 24, 28, 32};
+        enum { RING_SLOTS_N = 7 }; // == slots count
         int current = (int)r.ringSlots;
         uint8_t slot = 2;
-        for (uint8_t i = 0; i < 6; i++) {
+        for (uint8_t i = 0; i < RING_SLOTS_N; i++) {
             if (slots[i] == current) {
                 slot = i;
                 break;
             }
         }
-        slot = (v > current) ? (uint8_t)((slot + 1) % 6)
-                             : (uint8_t)((slot + 5) % 6);
+        slot = (v > current) ? (uint8_t)((slot + 1) % RING_SLOTS_N)
+                             : (uint8_t)((slot + RING_SLOTS_N - 1) % RING_SLOTS_N);
         r.ringSlots = slots[slot];
         Config::markRadioCustom();
         Config::save();
@@ -1014,6 +1019,11 @@ static bool setValue(const Item& it, int v) {
             case 17: r.fatPcap = v != 0; break;
             case 28: r.hsFileBytes = (uint16_t)v; break;
             case 29: r.ringSlots = (uint8_t)v; break;
+            // MEMFIX: id 32 (PENDING) had a getter but no setter here, so the
+            // PENDING knob in the RADIO menu changed the drawn value and then
+            // silently threw it away on save. Without this the user could not
+            // raise the concurrent-handshake capacity at all.
+            case 32: r.pendingSlots = (uint8_t)v; break;
             case 33: r.autoSkipCompleted = v != 0; break;
             // Porkchop-style knobs (IDs 20..23) + handshake depth (24).
             case 20: r.jitterMs = (uint8_t)v; break;

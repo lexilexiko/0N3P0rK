@@ -663,6 +663,22 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
             i++;
             if (cb) cb("Uploading", i, pend.count);
             ioXferPhase("UPLOAD", i, pend.count);
+
+            // ПРОВЕРКА HEAP ПЕРЕД КАЖДЫМ ФАЙЛОМ — не хватает памяти → подыск рекуперации,
+            // иначе залипаем в пуле TLS-соединений и перезагружаемся.
+            if (!canSync()) {
+                Storage::brewHeap();
+                delay(300);
+                yield();
+                if (!canSync()) {
+                    Serial.println("[PWNCRACK] LOW HEAP - skip this file");
+                    result.failed++;
+                    ioXfer().fail++;
+                    ioXferPaint(true);
+                    continue;
+                }
+            }
+
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
             if (uploadFile(path, apiKey)) {

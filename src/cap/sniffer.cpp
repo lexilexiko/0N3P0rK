@@ -31,6 +31,24 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 1100;
+
+// Only EAPOL-Key frames ever reach the capture ring: promiscuousRxCb() runs
+// the `if (!eapol) return;` gate BEFORE the ring write, and beacons go to
+// the separate BeaconSlot table (BEACON_MAX = 400). So the 1100 B slot
+// buffer was never needed for anything but an EAPOL-Key frame.
+//
+// A WPA handshake EAPOL-Key frame is tiny:
+//   24 B 802.11 header (+6 addr4, +2 seq, +4 QoS -> 36 B worst case)
+//    8 B LLC/SNAP
+//    4 B EAPOL header
+//  95 B key descriptor (WPA) .. ~250 B with a full RSN IE
+// -> ~143..300 B on the wire.
+//
+// EAPOL_FRAME_MAX = 512 holds an EAPOL body up to 464 B, i.e. far above
+// anything a real handshake produces, while making a ring slot 536 B
+// instead of 1124 B and a pending slot ~2.2 KB instead of ~4.5 KB.
+// That is what buys back the RAM needed to raise RING / PENDING.
+static const uint16_t EAPOL_FRAME_MAX = 512;
 // Keep the capture queue bounded so WPA-sec sync still has a large
 // contiguous heap block available after radio capture. The selected size is
 // loaded from RadioConfig before each capture session starts.
@@ -50,7 +68,7 @@ struct Slot {
     uint32_t ts;
     int8_t   rssi;
     uint8_t  channel;
-    uint8_t  frame[FRAME_MAX];
+    uint8_t  frame[EAPOL_FRAME_MAX];
 };
 
 static Slot* s_ring = nullptr;
@@ -953,8 +971,8 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     memcpy(s.bssid, bssid, 6);
     memcpy(s.station, station, 6);
     s.originalLen = len;                              // preserve on-air size
-    s.len = (len > FRAME_MAX) ? FRAME_MAX : len;     // clamp for our buffer
-    if (len > FRAME_MAX) s_cnt.framesTruncated++;
+    s.len = (len > EAPOL_FRAME_MAX) ? EAPOL_FRAME_MAX : len;  // clamp for our buffer
+    if (len > EAPOL_FRAME_MAX) s_cnt.framesTruncated++;
     s.ts  = millis();
     s.rssi = (int8_t)pkt->rx_ctrl.rssi;
     s.channel = s_cnt.currentChannel;
@@ -1187,7 +1205,11 @@ static bool hasHandshakeAtDepth(File& file, size_t fileSize,
         const uint16_t rtLen = (uint16_t)(packet[2] | (packet[3] << 8));
         if (rtLen < 8 || rtLen > incl) continue;
         const uint16_t frameLen = (uint16_t)(incl - rtLen);
-        if (frameLen < 24 || frameLen > FRAME_MAX) continue;
+        // Slot::frame is EAPOL_FRAME_MAX bytes now. Frames larger than that
+        // cannot be an EAPOL-Key frame (a real one is ~143..300 B) and the
+        // only thing this scanner looks for is EAPOL, so skipping them is
+        // safe — and it keeps the copy inside the slot buffer.
+        if (frameLen < 24 || frameLen > EAPOL_FRAME_MAX) continue;
 
         Slot frameSlot{};
         frameSlot.len = frameLen;
@@ -2071,10 +2093,12 @@ static void startCommon(RunMode mode) {
 
     if (s_running) stop();
     s_ringSlots = Config::radio().ringSlots;
-    if (s_ringSlots != 4 && s_ringSlots != 8 && s_ringSlots != 12 &&
-        s_ringSlots != 16 && s_ringSlots != 24 && s_ringSlots != 28) {
-        s_ringSlots = 12;
-    }
+    // MEMFIX: the RADIO menu offers RING 4..32 in steps of 1, but this clamp
+    // used to accept only {4,8,12,16,24,28} and silently reset every other
+    // value to 12 — the knob appeared to work and did nothing. Now that a
+    // ring slot is 536 B (EAPOL_FRAME_MAX) instead of 1124 B, the whole
+    // 4..32 range is affordable, so take the menu value as-is.
+    if (s_ringSlots < 4 || s_ringSlots > 32) s_ringSlots = 12;
     s_pendingSlots = Config::radio().pendingSlots;
     if (s_pendingSlots < 4 || s_pendingSlots > 16 || (s_pendingSlots & 1u))
         s_pendingSlots = 4;

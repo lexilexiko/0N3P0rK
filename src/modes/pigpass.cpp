@@ -916,7 +916,11 @@ static const char* resolvePassworldDir() {
 
 void PigpassMode::clearFileList() {
     files.clear();
-    files.shrink_to_fit();
+    // MEMFIX: swap-with-empty releases the capacity without shrink_to_fit /
+    // realloc — a failed realloc aborts the firmware on ESP32. This matches
+    // what WPASec::freeCacheMemory(), Pwncrack::freeCacheMemory() and
+    // OHC::freeCacheMemory() already do.
+    std::vector<PigpassFileEntry>().swap(files);
     selectedIndex = 0;
     scrollOffset = 0;
 }

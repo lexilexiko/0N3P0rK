@@ -344,4 +344,23 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   **1.4.0** is not planned soon; development will focus on memory optimization
   or ports to other devices.
 
+#### Capture buffers: smaller slots, real RING / PENDING control
+
+- The capture ring and the pending-handshake table stored every frame in a
+  1100-byte buffer, but **only EAPOL-Key frames ever reach them** — beacons
+  live in the separate beacon table. A real handshake EAPOL-Key frame is
+  ~143–300 bytes, so the ring slot is now `EAPOL_FRAME_MAX` (512 B) instead
+  of 1100 B. A ring slot shrank from 1124 B to 536 B and a pending slot from
+  ~4.5 KB to ~2.2 KB, with no change to what is captured or written.
+- Fixed the **PENDING** knob: it had a getter but no setter, so changing it in
+  the RADIO menu updated the drawn number and then discarded it on save. The
+  concurrent-handshake capacity could not be raised at all.
+- Fixed the **RING** knob: the menu offers `4–32` in steps of one, but the
+  sniffer accepted only `{4, 8, 12, 16, 24, 28}` and silently reset every
+  other value to 12. The whole range is now honoured, which the smaller slot
+  size makes affordable.
+- The PCAP file scanner now skips frames above the EAPOL slot size instead of
+  copying them into a buffer that no longer fits. Such frames cannot be
+  EAPOL-Key frames, and EAPOL is all the scanner looks for.
+
 ---

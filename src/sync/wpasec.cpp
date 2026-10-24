@@ -536,6 +536,23 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
             i++;
             if (cb) cb("Uploading", i, pend.count);
             ioXferPhase("UPLOAD", i, pend.count);
+
+            // ПРОВЕРКА HEAP ПЕРЕД КАЖДЫМ ФАЙЛОМ — если памяти не хватает, делаем
+            // brewHeap() + задержку, иначе падение в пуле TLS-соединений может привести к
+            // крашу / перезагрузке во время батча выгрузки.
+            if (!canSync()) {
+                Storage::brewHeap();
+                delay(300);
+                yield();
+                if (!canSync()) {
+                    Serial.println("[WPASEC] LOW HEAP - skip this file");
+                    result.failed++;
+                    ioXfer().fail++;
+                    ioXferPaint(true);
+                    continue;
+                }
+            }
+
             if (!canSync()) break;
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HANDSHAKES, name);

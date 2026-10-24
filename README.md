@@ -428,7 +428,7 @@ The **SET → RADIO** page contains the stable radio controls:
 - **RING** queue capacity and **PENDING** concurrent handshake capacity.
   **PENDING** can be set from `4` to `16` in steps of `2`; larger values let
   the sniffer track more unfinished BSSID/client handshakes at once, at the
-  cost of roughly 4.5 KB of RAM per slot;
+  cost of roughly 2.2 KB of RAM per slot;
 - **AUTO SKIP** controls whether a network is added to the persistent skip
   list after its selected handshake depth is successfully written to PCAP
   and confirmed in `.22000`. The persistent list holds up to 64 networks;
