@@ -53,6 +53,11 @@ struct Row {
 static Row* s_rows = nullptr;
 static char s_syncText[48] = "";
 static char s_syncHost[12] = "";
+
+// TLS arena pointer — allocated just before sync, freed right after.
+// 48KB needed by mbedTLS per handshake; screen canvas (25KB) is too small.
+static uint8_t* s_tlsArenaBuf = nullptr;
+static constexpr size_t kTlsArenaSize = 48 * 1024;
 static char s_diag[16][42];
 static uint8_t s_diagN = 0;
 static uint8_t s_diagScroll = 0;
@@ -990,7 +995,9 @@ void LootMenu::update() {
         };
         ioXferClear();
         ioXfer().paint = paintSyncLive;
-        Tls::arenaBegin(Display::mainCanvasBuffer(), Display::mainCanvasBufferSize());
+        // Allocate TLS arena now — only during sync, freed right after.
+        s_tlsArenaBuf = (uint8_t*)malloc(kTlsArenaSize);
+        Tls::arenaBegin(s_tlsArenaBuf, s_tlsArenaBuf ? kTlsArenaSize : 0);
         Storage::brewHeap();
         if (s_oneIdx == 0xFE) {
             onProg("Potfile", 1, 1);
@@ -1092,6 +1099,8 @@ void LootMenu::update() {
             }
         }
         Tls::arenaEnd();
+        free(s_tlsArenaBuf);
+        s_tlsArenaBuf = nullptr;
         ioXfer().paint = nullptr;
         dropWifi();
         Avatar::resumeScene();
