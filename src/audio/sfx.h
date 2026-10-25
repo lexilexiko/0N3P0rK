@@ -109,6 +109,7 @@ void stop();
 static constexpr uint8_t MUTE_IR         = 1u << 0;
 static constexpr uint8_t MUTE_SCREEN_OFF = 1u << 1;
 static constexpr uint8_t MUTE_MP3        = 1u << 2;
+static constexpr uint8_t MUTE_UPLOAD     = 1u << 3;
 
 // setMuted(true/false) toggles MUTE_IR (legacy IR paths)
 void setMuted(bool muted);
@@ -116,6 +117,12 @@ void setMuted(bool muted);
 void setScreenOffMuted(bool muted);
 // MP3 player is streaming music: no beeps over the song
 void setMp3Muted(bool muted);
+// wpa-sec/pwncrack/OHC batch upload: unlike the other mute reasons this
+// also forces M5.Speaker's volume to 0 (not just stop()+block play()) —
+// that's specifically what frees the speaker driver's own RAM, and a
+// TLS-arena batch upload is exactly when every KB back matters. Restores
+// the normal personality volume curve when turned off.
+void setUploadMuted(bool muted);
 // Any reason active?
 bool isMuted();
 // Current mute bit mask (debug / diagnostics)

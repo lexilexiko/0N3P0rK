@@ -596,6 +596,22 @@ void setMp3Muted(bool muted) {
     applyMuteMask(m);
 }
 
+void setUploadMuted(bool muted) {
+    uint8_t m = s_muteMask;
+    if (muted) m |= MUTE_UPLOAD;
+    else       m = (uint8_t)(m & ~MUTE_UPLOAD);
+    applyMuteMask(m);
+    if (muted) {
+        // The other mute reasons only stop()+block play(); this one also
+        // drops the actual speaker volume to 0, which is what releases
+        // the driver's own RAM — every KB matters during a TLS batch.
+        M5.Speaker.setVolume(0);
+    } else if (m == 0) {
+        // Only restore the curve if nothing else is still muting us.
+        applyVolume();
+    }
+}
+
 bool isMuted() {
     return s_muteMask != 0;
 }

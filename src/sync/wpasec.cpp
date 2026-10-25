@@ -83,9 +83,23 @@ bool WPASec::hasApiKey() {
 }
 
 bool WPASec::canSync() {
+    // The 14000/22000 thresholds were sized for mbedTLS pulling its big
+    // handshake buffers straight from the general heap. Once the TLS
+    // arena is active (see loot_menu.cpp's batch upload), those buffers
+    // come from the arena instead — the general heap only needs to cover
+    // WiFiClientSecure's own small overhead, SD/File buffers and string
+    // temporaries. Keeping the old thresholds here just means the general
+    // heap looking smaller (because the arena intentionally carved a
+    // chunk out of it) fails this check mid-batch for memory the arena
+    // was never going to need from here anyway.
     uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     uint32_t freeH = ESP.getFreeHeap();
-    if (largest < 14000 || freeH < 22000) {
+    // Same numbers Pwncrack::canSync() already proved out for this exact
+    // situation (see its comment): 4096/14000 once the arena is serving
+    // mbedTLS, the original 14000/22000 when it isn't.
+    uint32_t minLargest = Tls::arenaActive() ? 4096 : 14000;
+    uint32_t minFree = Tls::arenaActive() ? 14000 : 22000;
+    if (largest < minLargest || freeH < minFree) {
         snprintf(lastError, sizeof(lastError), "low heap %u/%uK",
                  (unsigned)(largest / 1024), (unsigned)(freeH / 1024));
         return false;

@@ -176,9 +176,18 @@ bool hasAccount(const char* email) { return isValidEmail(email); }
 bool hasAccount() { return hasAccount(Net::cfg().ohcEmail); }
 
 bool canSync() {
+    // See WPASec::canSync() for why these thresholds drop once the TLS
+    // arena is active: mbedTLS's big buffers come from there instead of
+    // the general heap, so the general heap only needs to cover small
+    // per-connection overhead, not a full handshake's worth.
     uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     uint32_t freeH = ESP.getFreeHeap();
-    if (largest < 14000 || freeH < 22000) {
+    // Same numbers Pwncrack::canSync() already proved out for this exact
+    // situation (see its comment): 4096/14000 once the arena is serving
+    // mbedTLS, the original 14000/22000 when it isn't.
+    uint32_t minLargest = Tls::arenaActive() ? 4096 : 14000;
+    uint32_t minFree = Tls::arenaActive() ? 14000 : 22000;
+    if (largest < minLargest || freeH < minFree) {
         snprintf(s_lastError, sizeof(s_lastError), "low heap %u/%uK",
                  (unsigned)(largest / 1024), (unsigned)(freeH / 1024));
         return false;

@@ -1002,6 +1002,9 @@ void LootMenu::update() {
             s_rows = nullptr;
         }
         Storage::brewHeap();
+        // Every KB counts for the TLS arena — drop the speaker's own RAM
+        // too, restored right alongside arenaEnd() below.
+        SFX::setUploadMuted(true);
         // Arena is for mbedTLS only. Leave a hole for sockets: if the biggest
         // free block cannot hold 48KB plus margin, take a smaller arena
         // instead of stealing the last block and then reporting "low heap".
@@ -1123,6 +1126,7 @@ void LootMenu::update() {
         Tls::arenaEnd();
         free(s_tlsArenaBuf);
         s_tlsArenaBuf = nullptr;
+        SFX::setUploadMuted(false);
         ioXfer().paint = nullptr;
         dropWifi();
         Avatar::resumeScene();

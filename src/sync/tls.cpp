@@ -58,6 +58,8 @@ void arenaEnd() {
     s_lo = s_hi = nullptr;
 }
 
+bool arenaActive() { return s_heap != nullptr; }
+
 bool streamFile(WiFiClientSecure& client, File& file, size_t fileSize,
                 char* outError, size_t outErrorLen) {
     uint8_t chunk[1460];
