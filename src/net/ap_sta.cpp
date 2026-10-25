@@ -379,8 +379,10 @@ bool joinHome(uint32_t timeoutMs) {
 
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(false);
     WiFi.softAPdisconnect(true);
-    WiFi.disconnect(false, false);
+    WiFi.disconnect(true, false);
     delay(80);
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
@@ -407,8 +409,14 @@ bool joinHome(uint32_t timeoutMs) {
 }
 
 void leaveHome() {
-    // Keep the WiFi driver up — WIFI_OFF breaks DNS/TLS on the next sync.
-    WiFi.disconnect(false, false);
+    // Full stop. disconnect(false) left WIFI_STA up and the driver
+    // reassociated, so the radio stayed on after leaving Loot.
+    WiFi.setAutoReconnect(false);
+    WiFi.persistent(false);
+    WiFi.disconnect(true, false);
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(40);
 }
 
 } // namespace Net

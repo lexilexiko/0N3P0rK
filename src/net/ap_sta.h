@@ -59,7 +59,9 @@ void clearSta();
 bool hasStaCreds();
 bool staLinked();   // STA associated (STA or APSTA)
 
-// Home STA for WPA-SEC / Pwncrack. Does not WIFI_OFF (kills DNS/TLS).
+// Home STA for WPA-SEC / Pwncrack / OHC.
+// leaveHome() turns the radio off. Loot calls it when a sync ends and again
+// when the menu closes, so STA does not stay up after the user leaves.
 bool joinHome(uint32_t timeoutMs = 22000);
 void leaveHome();
 bool resolveHost(const char* host, IPAddress& ip, uint8_t tries = 3);

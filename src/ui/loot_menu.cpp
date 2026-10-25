@@ -439,8 +439,10 @@ void LootMenu::hide() {
     detailView = false;
     syncModal = false;
     diagModal = false;
+    // Always. A finished sync already set s_syncGo to Off, and that used to
+    // skip the drop, so STA stayed associated after the menu closed.
+    dropWifi();
     if (s_syncGo != SyncGo::Off) {
-        dropWifi();
         Avatar::resumeScene();
         s_syncGo = SyncGo::Off;
     }

@@ -95,7 +95,7 @@ bool Pwncrack::canSync() {
     // malloc, that bar fails while free heap is still 50KB+.
     // First number in the message is the biggest HOLE, not free RAM.
     if (largest < 4096 || freeH < 14000) {
-        snprintf(lastError, sizeof(lastError), "blk %u free %uK",
+        snprintf(lastError, sizeof(lastError), "low heap %u/%uK",
                  (unsigned)(largest / 1024), (unsigned)(freeH / 1024));
         return false;
     }
