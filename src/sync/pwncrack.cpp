@@ -332,19 +332,16 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     size_t contentLength = strlen(keyPart) + strlen(fileHead) + fileSize + strlen(fileTail);
 
     static bool s_forceHttps = false;
-
-    // Use heap allocation to avoid large TLS context on stack (~5-6KB)
-    WiFiClientSecure* tls = new WiFiClientSecure();
+    WiFiClientSecure tls;
     WiFiClient plain;
     bool useTls = false;
-    if (!tls || !ioPwnOpen(*tls, plain, useTls, PWN_HOST, s_forceHttps)) {
-        delete tls;
+    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST, s_forceHttps)) {
         capFile.close();
         snprintf(lastError, sizeof(lastError), "connect fail");
         return false;
     }
     Serial.printf("[PWNCRACK] via %s\n", useTls ? "HTTPS" : "HTTP");
-    WiFiClient& sock = useTls ? (WiFiClient&)*tls : (WiFiClient&)plain;
+    WiFiClient& sock = useTls ? (WiFiClient&)tls : (WiFiClient&)plain;
     sock.setTimeout(60000);
     ioXfer().sent = 0;
     ioXfer().size = (uint32_t)fileSize;
@@ -364,21 +361,14 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
              "Content-Type: multipart/form-data; boundary=%s\r\n"
              "Content-Length: %u\r\nConnection: close\r\n\r\n",
              PWN_UPLOAD_PATH, PWN_HOST, boundary, (unsigned)contentLength);
-    // Helper to cleanly close connection and free TLS heap
-    auto closeSock = [&]() {
-        sock.stop();
-        delete tls;
-        tls = nullptr;
-    };
-
     if (!sendStr(hdr) || !sendStr(keyPart) || !sendStr(fileHead)) {
         capFile.close();
-        closeSock();
+        if (useTls) tls.stop(); else plain.stop();
         snprintf(lastError, sizeof(lastError), "send hdr");
         return false;
     }
 
-    uint8_t buf[1024];
+    uint8_t buf[1460];
     size_t left = fileSize;
     size_t sent = 0;
     while (left > 0) {
@@ -386,13 +376,13 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         size_t rd = capFile.read(buf, chunk);
         if (rd == 0) {
             capFile.close();
-            closeSock();
+            sock.stop();
             snprintf(lastError, sizeof(lastError), "read file");
             return false;
         }
         if (!sendAll(buf, rd)) {
             capFile.close();
-            closeSock();
+            sock.stop();
             snprintf(lastError, sizeof(lastError), "send body");
             return false;
         }
@@ -404,13 +394,13 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     }
     if (left != 0) {
         capFile.close();
-        closeSock();
+        sock.stop();
         snprintf(lastError, sizeof(lastError), "short file");
         return false;
     }
     capFile.close();
     if (!sendStr(fileTail)) {
-        closeSock();
+        sock.stop();
         snprintf(lastError, sizeof(lastError), "send tail");
         return false;
     }
@@ -420,16 +410,12 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     char status[80] = {0};
     ioReadStatusLine(sock, status, sizeof(status), 45000);
     ioDrain(sock, 20000);
-    closeSock();  // TLS freed here, before any retry
+    sock.stop();
     Serial.printf("[PWNCRACK] %s\n", status);
 
-    // Handle HTTP->HTTPS redirect without recursion
     if (ioHttpRedirect(status) && !useTls && !s_forceHttps) {
         Serial.println("[PWNCRACK] HTTP redirected, retry HTTPS");
         s_forceHttps = true;
-        Storage::brewHeap();
-        delay(100);
-        yield();
         bool again = uploadFile(filepath, apiKey);
         s_forceHttps = false;
         return again;
@@ -456,23 +442,16 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     newCracks = 0;
     if (!apiKey) return false;
 
-    WiFiClientSecure* tls = new WiFiClientSecure();
+    WiFiClientSecure tls;
     WiFiClient plain;
     bool useTls = false;
     // The potfile endpoint is HTTPS-only on current pwncrack.org. Opening
     // HTTP first returns a redirect page, which was being saved as an error
     // instead of following the redirect like the upload path does.
-    if (!tls || !ioPwnOpen(*tls, plain, useTls, PWN_HOST, true)) {
-        delete tls;
+    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST, true)) {
         snprintf(lastError, sizeof(lastError), "pot connect");
         return false;
     }
-
-    auto closePot = [&]() {
-        if (useTls) tls->stop(); else plain.stop();
-        delete tls;
-        tls = nullptr;
-    };
 
     char req[280];
     snprintf(req, sizeof(req),
@@ -482,10 +461,10 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     size_t reqN = strlen(req);
     size_t off = 0;
     while (off < reqN) {
-        size_t w = useTls ? tls->write((const uint8_t*)req + off, reqN - off)
+        size_t w = useTls ? tls.write((const uint8_t*)req + off, reqN - off)
                           : plain.write((const uint8_t*)req + off, reqN - off);
         if (w == 0) {
-            closePot();
+            if (useTls) tls.stop(); else plain.stop();
             snprintf(lastError, sizeof(lastError), "pot send");
             return false;
         }
@@ -503,7 +482,7 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     const char* potTmp = "/0N3P0rK/pwncrack/results.tmp";
     File out = SD.open(potTmp, "w");
     if (!out) {
-        closePot();
+        if (useTls) tls.stop(); else plain.stop();
         snprintf(lastError, sizeof(lastError), "pot save");
         return false;
     }
@@ -512,16 +491,16 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     bool looksHtml = false;
     bool firstNonWs = false;
     while (millis() - t0 < 25000) {
-        int avail = useTls ? tls->available() : plain.available();
+        int avail = useTls ? tls.available() : plain.available();
         if (avail <= 0) {
             if (headersDone &&
-                ((useTls && !tls->connected()) || (!useTls && !plain.connected())))
+                ((useTls && !tls.connected()) || (!useTls && !plain.connected())))
                 break;
             delay(5);
             yield();
             continue;
         }
-        int ch = useTls ? tls->read() : plain.read();
+        int ch = useTls ? tls.read() : plain.read();
         if (ch < 0) continue;
         if (!headersDone) {
             if (ch == '\n') {
@@ -551,7 +530,7 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     }
     out.flush();
     out.close();
-    closePot();
+    if (useTls) tls.stop(); else plain.stop();
 
     if (!headersDone || !statusOk) {
         SD.remove(potTmp);
@@ -675,7 +654,6 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
     if (pend.count > 0) {
         File pendIn = SD.open(PWN_PENDING, "r");
         uint16_t i = 0;
-        uint8_t heapStrikes = 0;
         char name[64];
         while (pendIn && pendIn.available()) {
             size_t n = pendIn.readBytesUntil('\n', name, sizeof(name) - 1);
@@ -686,23 +664,19 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
             if (cb) cb("Uploading", i, pend.count);
             ioXferPhase("UPLOAD", i, pend.count);
 
-            // Heap recovery between TLS sessions — each uploadFile() uses ~14KB
+            // ПРОВЕРКА HEAP ПЕРЕД КАЖДЫМ ФАЙЛОМ — не хватает памяти → подыск рекуперации,
+            // иначе залипаем в пуле TLS-соединений и перезагружаемся.
             if (!canSync()) {
                 Storage::brewHeap();
                 delay(300);
                 yield();
                 if (!canSync()) {
-                    heapStrikes++;
-                    Serial.printf("[PWNCRACK] heap low strike %u, skipping %s\n", heapStrikes, name);
+                    Serial.println("[PWNCRACK] LOW HEAP - skip this file");
                     result.failed++;
                     ioXfer().fail++;
-                    if (heapStrikes >= 3) {
-                        Serial.printf("[PWNCRACK] too many heap strikes, aborting\n");
-                        break;
-                    }
+                    ioXferPaint(true);
                     continue;
                 }
-                heapStrikes = 0;
             }
 
             char path[80];
@@ -716,8 +690,7 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
                 ioXfer().fail++;
             }
             ioXferPaint(true);
-            Storage::brewHeap();
-            delay(150);
+            delay(80);
             yield();
         }
         if (pendIn) pendIn.close();
