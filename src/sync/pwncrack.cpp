@@ -90,8 +90,12 @@ bool Pwncrack::hasApiKey() {
 bool Pwncrack::canSync() {
     uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     uint32_t freeH = ESP.getFreeHeap();
-    if (largest < 16000 || freeH < 28000) {
-        snprintf(lastError, sizeof(lastError), "low heap %u/%uK",
+    // mbedTLS is served from the loot TLS arena, not from this heap.
+    // The old 16KB-largest bar was the TLS block itself. After the arena
+    // malloc, that bar fails while free heap is still 50KB+.
+    // First number in the message is the biggest HOLE, not free RAM.
+    if (largest < 4096 || freeH < 14000) {
+        snprintf(lastError, sizeof(lastError), "blk %u free %uK",
                  (unsigned)(largest / 1024), (unsigned)(freeH / 1024));
         return false;
     }
@@ -623,15 +627,20 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
 
     busy = true;
     freeCacheMemory();
-    if (!canSync()) {
-        strncpy(result.error, lastError[0] ? lastError : "low heap", sizeof(result.error) - 1);
-        busy = false;
-        return result;
-    }
+    Storage::brewHeap();
 
-    ioXferPhase("CONVERT", 0, 0);
-    if (cb) cb("Converting", 0, 1);
-    uint16_t conv = Hc22000::convertAllPcaps();
+    // Convert needs a ~17KB handshake table. Do not take it when the TLS
+    // arena already punched the only big hole — existing .22000 still upload.
+    uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    uint16_t conv = 0;
+    if (largest >= 28000) {
+        ioXferPhase("CONVERT", 0, 0);
+        if (cb) cb("Converting", 0, 1);
+        conv = Hc22000::convertAllPcaps();
+    } else {
+        Serial.printf("[PWNCRACK] skip convert, blk %uK\n",
+                      (unsigned)(largest / 1024));
+    }
     Serial.printf("[PWNCRACK] converted %u pcap->22000\n", (unsigned)conv);
     Storage::brewHeap();
 
@@ -663,21 +672,7 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
             i++;
             if (cb) cb("Uploading", i, pend.count);
             ioXferPhase("UPLOAD", i, pend.count);
-
-            // ПРОВЕРКА HEAP ПЕРЕД КАЖДЫМ ФАЙЛОМ — не хватает памяти → подыск рекуперации,
-            // иначе залипаем в пуле TLS-соединений и перезагружаемся.
-            if (!canSync()) {
-                Storage::brewHeap();
-                delay(300);
-                yield();
-                if (!canSync()) {
-                    Serial.println("[PWNCRACK] LOW HEAP - skip this file");
-                    result.failed++;
-                    ioXfer().fail++;
-                    ioXferPaint(true);
-                    continue;
-                }
-            }
+            Storage::brewHeap();
 
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);

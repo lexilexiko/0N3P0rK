@@ -19,6 +19,7 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <SD.h>
+#include <esp_heap_caps.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -53,11 +54,8 @@ struct Row {
 static Row* s_rows = nullptr;
 static char s_syncText[48] = "";
 static char s_syncHost[12] = "";
-
-// TLS arena pointer — allocated just before sync, freed right after.
-// 48KB needed by mbedTLS per handshake; screen canvas (25KB) is too small.
 static uint8_t* s_tlsArenaBuf = nullptr;
-static constexpr size_t kTlsArenaSize = 48 * 1024;
+
 static char s_diag[16][42];
 static uint8_t s_diagN = 0;
 static uint8_t s_diagScroll = 0;
@@ -995,9 +993,31 @@ void LootMenu::update() {
         };
         ioXferClear();
         ioXfer().paint = paintSyncLive;
-        // Allocate TLS arena now — only during sync, freed right after.
-        s_tlsArenaBuf = (uint8_t*)malloc(kTlsArenaSize);
-        Tls::arenaBegin(s_tlsArenaBuf, s_tlsArenaBuf ? kTlsArenaSize : 0);
+        // Page table is ~9KB and the all-files path re-reads names from SD.
+        // Give it back before the TLS arena so the 48KB block can be one piece.
+        if (s_oneIdx == 0xFF && s_rows) {
+            delete[] s_rows;
+            s_rows = nullptr;
+        }
+        Storage::brewHeap();
+        // Arena is for mbedTLS only. Leave a hole for sockets: if the biggest
+        // free block cannot hold 48KB plus margin, take a smaller arena
+        // instead of stealing the last block and then reporting "low heap".
+        uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        size_t arena = 0;
+        if (largest > 56u * 1024u) arena = 48u * 1024u;
+        else if (largest > 32u * 1024u) arena = 20u * 1024u;
+        else if (largest > 18u * 1024u) arena = 12u * 1024u;
+        s_tlsArenaBuf = nullptr;
+        if (arena) {
+            s_tlsArenaBuf = (uint8_t*)heap_caps_malloc(arena, MALLOC_CAP_8BIT);
+            if (!s_tlsArenaBuf) s_tlsArenaBuf = (uint8_t*)malloc(arena);
+        }
+        Tls::arenaBegin(s_tlsArenaBuf, s_tlsArenaBuf ? arena : 0);
+        Serial.printf("[LOOT] tls arena %u blk %u free %u\n",
+                      (unsigned)(s_tlsArenaBuf ? arena : 0),
+                      (unsigned)(largest / 1024),
+                      (unsigned)(ESP.getFreeHeap() / 1024));
         Storage::brewHeap();
         if (s_oneIdx == 0xFE) {
             onProg("Potfile", 1, 1);
@@ -1104,6 +1124,7 @@ void LootMenu::update() {
         ioXfer().paint = nullptr;
         dropWifi();
         Avatar::resumeScene();
+        if (!s_rows) s_rows = new (std::nothrow) Row[PAGE_SIZE];
         scan();
         s_syncGo = SyncGo::Off;
         return;
