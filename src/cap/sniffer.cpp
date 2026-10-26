@@ -223,10 +223,12 @@ struct StoredSkip {
     char ssid[33];
     bool enabled;
 };
-static StoredSkip s_storedSkips[STORED_SKIP_MAX];
+// Skip tables exist only while a sniffer attack is running. They are not
+// loaded at boot and are released in stop(), so idle heap is not parked on them.
+static StoredSkip s_storedSkips[STORED_SKIP_MAX] = {};
 static uint8_t s_storedSkipCount = 0;
 static bool s_storedSkipsLoaded = false;
-static SkipEntry s_menuEntries[MENU_ENTRY_MAX];
+static SkipEntry* s_menuEntries = nullptr;
 static uint16_t s_menuEntryCount = 0;
 static uint16_t s_menuSelected = 0;
 static uint16_t s_menuScroll = 0;
@@ -237,6 +239,28 @@ static bool s_skipMenuDownWas = false;
 static bool s_skipMenuEnterWas = false;
 
 static bool isZeroMac(const uint8_t* m);
+
+static void releaseSkipMemory() {
+    // The persistent skip table is static storage: it never consumes heap.
+    // Only the menu's temporary display entries are dynamically allocated.
+    delete[] s_menuEntries;
+    s_menuEntries = nullptr;
+    memset(s_storedSkips, 0, sizeof(s_storedSkips));
+    s_storedSkipCount = 0;
+    s_storedSkipsLoaded = false;
+    s_menuEntryCount = 0;
+    s_menuSelected = 0;
+    s_menuScroll = 0;
+    s_skipMenuOpen = false;
+    s_skipN = 0;
+    memset(s_skipList, 0, sizeof(s_skipList));
+}
+
+static bool ensureSkipMemory() {
+    // No heap is needed for persistent skip checks. The menu buffer is
+    // allocated lazily by openSkipMenu() and released by closeSkipMenu().
+    return true;
+}
 
 static int findStoredSkip(const uint8_t* bssid) {
     for (uint8_t i = 0; i < s_storedSkipCount; i++) {
@@ -418,7 +442,7 @@ static bool isPersistentlySkipped(const uint8_t* bssid) {
 }
 
 static void appendMenuEntry(const uint8_t* bssid, const char* ssid) {
-    if (isZeroMac(bssid)) return;
+    if (!s_menuEntries || isZeroMac(bssid)) return;
     for (uint16_t i = 0; i < s_menuEntryCount; i++) {
         if (memcmp(s_menuEntries[i].bssid, bssid, 6) == 0) {
             if (ssid && ssid[0])
@@ -441,6 +465,7 @@ static void appendMenuEntry(const uint8_t* bssid, const char* ssid) {
 
 static void buildSkipMenu() {
     s_menuEntryCount = 0;
+    if (!s_menuEntries) return;
     // Keep saved history out of the picker; only active ignores and APs
     // tracked by the current capture session belong in this view.
     for (uint8_t i = 0; i < s_storedSkipCount; i++)
@@ -2079,19 +2104,21 @@ void begin() {
     s_write = 0;
     s_read  = 0;
     s_running = false;
-    s_skipMenuOpen = false;
     s_mode = RunMode::Off;
     s_beaconCount = 0;
-    loadStoredSkips();
     Hc22000::reset();
 }
 
 static void startCommon(RunMode mode) {
     bool sdOk = Storage::begin();
-    if (!s_storedSkipsLoaded || sdOk) loadStoredSkips();
     if (!sdOk) Serial.println("[CAP] SD missing - EAPOL counted, files may fail");
 
     if (s_running) stop();
+    if (!ensureSkipMemory()) {
+        s_mode = RunMode::Off;
+        return;
+    }
+    if (!s_storedSkipsLoaded || sdOk) loadStoredSkips();
     s_ringSlots = Config::radio().ringSlots;
     // MEMFIX: the RADIO menu offers RING 4..32 in steps of 1, but this clamp
     // used to accept only {4,8,12,16,24,28} and silently reset every other
@@ -2104,6 +2131,7 @@ static void startCommon(RunMode mode) {
         s_pendingSlots = 4;
     if (!allocateCaptureMemory()) {
         Serial.println("[CAP] capture buffers allocation failed");
+        releaseSkipMemory();
         s_mode = RunMode::Off;
         return;
     }
@@ -2115,6 +2143,7 @@ static void startCommon(RunMode mode) {
         s_ring = nullptr;
         s_pending = nullptr;
         s_beacons = nullptr;
+        releaseSkipMemory();
         s_mode = RunMode::Off;
         return;
     }
@@ -2317,6 +2346,7 @@ void stop() {
     delete[] beacons;
     s_write = 0;
     s_read = 0;
+    releaseSkipMemory();
     Serial.printf("[CAP] capture memory released heap=%u\n",
                   (unsigned)ESP.getFreeHeap());
 }
@@ -2369,7 +2399,7 @@ uint16_t skipMenuScroll() {
 }
 
 bool skipMenuEntry(uint16_t index, SkipEntry& out) {
-    if (index >= s_menuEntryCount) return false;
+    if (!s_menuEntries || index >= s_menuEntryCount) return false;
     out = s_menuEntries[index];
     return true;
 }
@@ -2480,14 +2510,32 @@ bool skipCurrent() {
 }
 
 static bool openSkipMenu() {
+    if (s_skipMenuOpen) return true;
+
+    // Allocate only while the user is viewing the Skip picker.
+    if (!s_menuEntries) {
+        s_menuEntries = new (std::nothrow) SkipEntry[MENU_ENTRY_MAX];
+        if (!s_menuEntries) {
+            Serial.println("[CAP] skip menu allocation failed");
+            Display::showToast("SKIP MEMORY FAIL", 1200);
+            return false;
+        }
+    }
+
     loadStoredSkips();
     if (!s_storedSkipsLoaded)
         Display::showToast("SKIP LIST READ FAIL", 1200);
     buildSkipMenu();
+
     esp_err_t err = esp_wifi_set_promiscuous(false);
     if (err != ESP_OK) {
         Serial.printf("[CAP] cannot pause promiscuous RX for skip menu: %d\n", (int)err);
         Display::showToast("RADIO PAUSE FAIL", 1200);
+        delete[] s_menuEntries;
+        s_menuEntries = nullptr;
+        s_menuEntryCount = 0;
+        s_menuSelected = 0;
+        s_menuScroll = 0;
         return false;
     }
     s_skipMenuOpen = true;
@@ -2497,21 +2545,29 @@ static bool openSkipMenu() {
     s_skipMenuDownWas = false;
     s_skipMenuEnterWas = false;
     SFX::play(SFX::MENU_CLICK);
+    Serial.printf("[CAP] skip menu opened heap=%u\n", (unsigned)ESP.getFreeHeap());
     return true;
 }
 
 static void closeSkipMenu() {
+    // Always release the menu allocation, even if restoring promiscuous RX
+    // fails. The radio error must not strand the menu buffer on the heap.
     esp_err_t err = esp_wifi_set_promiscuous(true);
     if (err != ESP_OK) {
         Serial.printf("[CAP] cannot resume promiscuous RX after skip menu: %d\n", (int)err);
         Display::showToast("RADIO RESUME FAIL", 1500);
-        return;
     }
     s_skipMenuOpen = false;
     s_skipMenuKeyWas = false;
     s_skipMenuDownWas = false;
     s_skipMenuEnterWas = false;
+    s_menuEntryCount = 0;
+    s_menuSelected = 0;
+    s_menuScroll = 0;
+    delete[] s_menuEntries;
+    s_menuEntries = nullptr;
     s_lastHopMs = millis();
+    Serial.printf("[CAP] skip menu closed heap=%u\n", (unsigned)ESP.getFreeHeap());
     SFX::play(SFX::BACK_NAV);
 }
 
