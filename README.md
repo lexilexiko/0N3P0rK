@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.3.8**
+**Current version: 1.4.0**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -12,11 +12,9 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Memory note:** the current firmware has roughly **122 KB of free heap** in
-> the observed runtime state. The exact amount varies by active features, and
-> the available headroom for new features is getting tighter. Version **1.4.0**
-> is not planned soon; upcoming work will focus on memory optimization or
-> ports to other devices.
+> **Release note:** version **1.4.0** focuses on improved stability. The
+> observed free heap is approximately **126 KB**; the actual amount varies
+> depending on active features and runtime state.
 
 ---
 
@@ -67,7 +65,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.8_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.0_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -97,7 +95,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.3.8`.
+   `1.4.0`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -802,7 +800,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.3.8, see
+For the chronological release notes from the early builds through 1.4.0, see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---

@@ -336,13 +336,14 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Fixed Back navigation from FLORA so it returns to the TREES page and then to
   the parent PIG menu.
 
-#### Memory and roadmap
+### 1.4.0
 
-- The current firmware has approximately **122 KB of free heap** in the
-  observed runtime state; actual free heap varies with active features.
-- Remaining memory headroom for new features is getting tighter. Version
-  **1.4.0** is not planned soon; development will focus on memory optimization
-  or ports to other devices.
+#### Stability and memory
+
+- Promoted the firmware to the stable **1.4.0** release.
+- Focused this release on improved stability.
+- Updated the observed free-heap estimate to approximately **126 KB**. Actual
+  free heap varies with active features and runtime state.
 
 #### Capture buffers: smaller slots, real RING / PENDING control
 
