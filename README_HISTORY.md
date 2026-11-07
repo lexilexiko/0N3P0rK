@@ -191,19 +191,8 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   character while editing or entering a name.
 - File Manager working memory is allocated only while the mode is open.
   The text buffer is allocated only for text preview/editing and released
-  when returning to the browser; browsing images and folders does not reserve
-  that 6 KB editor buffer.
-- Directory entries grow in heap-backed batches instead of using a fixed
-  small file limit. The list is sorted and scrollable; if memory runs out,
-  the UI reports that the displayed list is partial.
+  when the manager is closed.
 
-#### Task Manager and memory
-
-- Reworked **TASKS** to show active services and current heap statistics:
-  free heap, largest free block, minimum free heap, internal free memory, and
-  available SD space.
-- Added scrollable service controls and status details for active tools.
-  WPA-Sec/Pwncrack synchronization is left to its normal shutdown path.
 - Reduced File Manager's static RAM footprint by moving its working buffers
   and directory entries out of `.bss` and onto the heap for the duration of use.
   The PlatformIO static RAM report is about 11 KB lower than the preceding
@@ -390,6 +379,20 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - **TASKS** lists DESK. The row shows `HEAP nK` while the picture buffer, the
   served script, or the UDP socket is allocated. **STOP** and **STOP ALL**
   release that heap.
+
+#### GPS tracking mode
+
+- Added a dedicated **GPS** task that reads NMEA sentences from a Grove GPS on
+  the original Cardputer or the GPS UART on the ADV LoRa cap.
+- The screen shows live latitude/longitude, altitude, speed, heading, a world
+  projection, and a local trail view with page switching between fix, world, and
+  trail.
+- Trail points are kept in a small rolling buffer and can be saved to
+  `/0N3P0rK/gps/track.csv` on the SD card when storage is available.
+- The GPS UART buffer and trail memory are allocated only while the mode is
+  active and are freed when the task stops, keeping heap impact low.
+- The ADV keeps the LoRa radio inactive while GPS runs so the position mode stays
+  quiet and independent from the radio stack.
 
 #### Shared waits
 

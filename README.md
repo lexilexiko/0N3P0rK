@@ -29,16 +29,17 @@ Secret menu codes are **not** listed here (keep them private).
 7. [Radio & tools](#radio--tools)
 8. [BadUSB and BadBLE](#badusb-and-badble)
 9. [DESK](#desk)
-10. [LED indicator](#led-indicator)
-11. [XFER file transfer](#xfer-file-transfer)
-12. [FILES — SD File Manager](#files--sd-file-manager)
-13. [Music (MP3 player)](#music-mp3-player)
-14. [InspectorPig](#inspectorpig-inspect)
-15. [PigPass](#pigpass)
-16. [SD layout](#sd-layout)
-17. [Web site](#web-site)
-18. [Version history](#version-history)
-19. [Legal & credits](#legal--credits)
+10. [GPS / location tracker](#gps--location-tracker)
+11. [LED indicator](#led-indicator)
+12. [XFER file transfer](#xfer-file-transfer)
+13. [FILES — SD File Manager](#files--sd-file-manager)
+14. [Music (MP3 player)](#music-mp3-player)
+15. [InspectorPig](#inspectorpig-inspect)
+16. [PigPass](#pigpass)
+17. [SD layout](#sd-layout)
+18. [Web site](#web-site)
+19. [Version history](#version-history)
+20. [Legal & credits](#legal--credits)
 
 ---
 
@@ -52,6 +53,7 @@ Secret menu codes are **not** listed here (keep them private).
 | Display | 240 × 135 ST7789 — top bar + farm field + bottom bar |
 | Keyboard | Original: 74HC138 matrix · ADV: TCA8418 |
 | USB | CDC serial — pick COM yourself (VID `303A`) |
+| GPS | Grove NMEA receiver on the original Cardputer; GPS UART on the ADV LoRa cap; LoRa stays off while GPS is active |
 | SD | SPI: CS **12**, MOSI **14**, MISO **39**, SCK **40** |
 
 Same firmware `.bin` for original and ADV.  
@@ -578,6 +580,47 @@ DESK takes heap for the picture buffer, the served script, and the UDP socket
 only while a session needs them. Leaving the session, **STOP** on the DESK row
 in **TASKS**, or **STOP ALL** returns that memory. The row shows `HEAP nK`
 while those buffers are held.
+
+## GPS / location tracker
+
+**GPS** is a small live position screen that reads NMEA sentences from a GPS
+module and plots the current fix, local trail, and world position on the
+farm-sized display. The mode is available from the main task list as **GPS**.
+
+### Hardware and connection
+
+- Original **M5Cardputer**: Grove GPS on the dedicated GPS port
+- **Cardputer ADV**: GPS UART on the LoRa cap; the LoRa radio is held inactive
+  while the GPS mode is running
+- Protocol: standard NMEA `GGA` / `RMC` sentences over UART
+- Default baud is board-dependent and is selected from the runtime GPS config
+  (`GPS_BAUD_TAB`); the screen shows the active port and speed
+
+### What the mode shows
+
+The GPS screen has three views:
+
+- **FIX**: current status, baud, satellite count, latitude, longitude, altitude,
+  speed, and heading
+- **WORLD**: projected map of the globe with a marker for the current fix
+- **TRAIL**: local path around the last known position, with zoom width control
+
+Use `;` or `.` to switch pages. On the trail page, `-` / `=` zoom in and out
+for a tighter or wider area. `ESC` leaves GPS and resumes the farm scene.
+
+### Fix and trail behavior
+
+- A valid fix requires a good `GGA`/`RMC` sentence and a usable latitude/
+  longitude pair.
+- The mode keeps a small rolling trail and writes tracked points to
+  `/0N3P0rK/gps/track.csv` on the SD card when storage is available.
+- A new point is only recorded when it moves far enough from the previous one,
+  so the track stays clean instead of filling with jitter.
+- When there is no fix yet, the screen reports `NO DATA`, `SEARCH`, or `STALE`
+  depending on whether the receiver is only cold-starting or dragging old data.
+
+This is a “quiet” utility tool: it captures position data without turning on the
+radio stack, and it frees its UART buffer and memory when stopped.
 
 ## LED indicator
 
