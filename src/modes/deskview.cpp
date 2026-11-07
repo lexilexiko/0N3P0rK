@@ -3,6 +3,7 @@
 #include "../net/ap_sta.h"
 #include "../storage/littlefs_ops.h"
 #include <SD.h>
+#include "../audio/sfx.h"
 #include "../piglet/avatar.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"
@@ -146,6 +147,7 @@ static char s_cmd[320];
 static bool s_quick = true;
 static Act s_act = Act::Connect;
 static uint8_t s_pick = 0;
+static uint8_t s_page = 0;
 static uint32_t s_waitSince = 0;
 static const char* s_cur = nullptr;
 static size_t s_pos = 0;
@@ -574,8 +576,7 @@ void start() {
     Serial.println("[DESK] open");
 }
 
-void stop() {
-    if (!s_run && !s_buf && !s_udpOn && !s_usb && !s_joined && !s_web && !s_py) return;
+static void releaseSession() {
     if (s_havePeer && s_udpOn) {
         for (int i = 0; i < 4; i++) {
             sendCmd("STOP");
@@ -588,6 +589,7 @@ void stop() {
     }
     endHttp();
     s_havePeer = false;
+    s_haveFrame = false;
     if (s_usb) {
         BadUsbHid::usbReleaseAll();
         BadUsbHid::usbEnd();
@@ -598,6 +600,20 @@ void stop() {
         Net::leaveHome();
         s_joined = false;
     }
+    s_cmdWin = false;
+    s_confirmed = false;
+}
+
+static void backMenu() {
+    releaseSession();
+    s_ph = Ph::Menu;
+    setMsg("");
+    SFX::play(SFX::BACK_NAV);
+}
+
+void stop() {
+    if (!s_run && !s_buf && !s_udpOn && !s_usb && !s_joined && !s_web && !s_py) return;
+    releaseSession();
     s_run = false;
     s_ph = Ph::Intro;
     Avatar::resumeScene();
@@ -623,10 +639,6 @@ static bool keyZoomOut(char c) { return c == '-' || c == '_'; }
 
 static void liveKeys(bool edge) {
     if (!edge) return;
-    if (keyEsc()) {
-        stop();
-        return;
-    }
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     char c = 0;
     for (char k : st.word) {
@@ -671,14 +683,33 @@ void update() {
     const bool esc = edge && keyEsc();
     const bool fnEsc = esc && st.fn;
     const bool enter = edge && st.enter;
+    char c = 0;
+    if (edge) {
+        for (char k : st.word) {
+            c = k;
+            break;
+        }
+    }
+    const bool up = c == ';' || c == ':';
+    const bool down = c == '.' || c == '>';
+
+    // Picture stays up on plain ESC. FN+ESC leaves from every screen.
+    if (fnEsc) {
+        if (s_ph == Ph::Menu) SFX::play(SFX::BACK_NAV);
+        stop();
+        return;
+    }
 
     if (s_ph == Ph::Menu) {
         if (esc) {
+            SFX::play(SFX::BACK_NAV);
             stop();
             return;
         }
         if (enter) {
+            SFX::play(SFX::CONFIRM);
             if (s_pick == 4) {
+                s_page = 0;
                 s_ph = Ph::Info;
                 return;
             }
@@ -687,23 +718,28 @@ void update() {
             s_ph = (s_act == Act::Remove) ? Ph::UsbDraw : Ph::JoinDraw;
             return;
         }
-        if (edge) {
-            char c = 0;
-            for (char k : st.word) {
-                c = k;
-                break;
-            }
-            if ((c == ';' || c == ',') && s_pick > 0) s_pick--;
-            if ((c == '.' || c == '/') && s_pick < 4) s_pick++;
+        if (up && s_pick > 0) {
+            s_pick--;
+            SFX::play(SFX::MENU_CLICK);
+        } else if (down && s_pick < 4) {
+            s_pick++;
+            SFX::play(SFX::MENU_CLICK);
         }
         return;
     }
     if (s_ph == Ph::Info) {
-        if (fnEsc) {
-            stop();
+        if (esc) {
+            SFX::play(SFX::BACK_NAV);
+            s_ph = Ph::Menu;
             return;
         }
-        if (esc) s_ph = Ph::Menu;
+        if (up && s_page > 0) {
+            s_page--;
+            SFX::play(SFX::MENU_CLICK);
+        } else if (down && s_page < 4) {
+            s_page++;
+            SFX::play(SFX::MENU_CLICK);
+        }
         return;
     }
     if (s_ph == Ph::Note) {
@@ -712,12 +748,12 @@ void update() {
             BadUsbHid::usbEnd();
             s_usb = false;
         }
-        if (esc) stop();
+        if (esc) backMenu();
         else if (enter) s_ph = Ph::Menu;
         return;
     }
     if (s_ph == Ph::Intro) {
-        if (esc) stop();
+        if (esc) backMenu();
         else if (enter) s_ph = Ph::JoinDraw;
         return;
     }
@@ -762,7 +798,7 @@ void update() {
     }
     if (s_ph == Ph::Serve) {
         if (esc) {
-            stop();
+            backMenu();
             return;
         }
         if (s_web) s_web->handleClient();
@@ -818,10 +854,8 @@ void update() {
         return;
     }
     if (s_ph == Ph::Type) {
-        if (esc || keyEsc()) {
-            BadUsbHid::usbReleaseAll();
-            setMsg("Stopped. Close PowerShell on the PC if it is open.");
-            s_ph = Ph::Fail;
+        if (esc) {
+            backMenu();
             return;
         }
         if (typingDone() && s_stage == Stage::Done) {
@@ -845,7 +879,7 @@ void update() {
     }
     if (s_ph == Ph::WaitYes) {
         if (esc) {
-            stop();
+            backMenu();
             return;
         }
         if (s_web) s_web->handleClient();
@@ -869,7 +903,7 @@ void update() {
     }
     if (s_ph == Ph::WaitPc) {
         if (esc) {
-            stop();
+            backMenu();
             return;
         }
         if (s_web) s_web->handleClient();
@@ -881,58 +915,66 @@ void update() {
         return;
     }
     if (s_ph == Ph::Live) {
-        if (esc) {
-            stop();
-            return;
-        }
         liveKeys(edge);
         if (!s_run) return;
         pollNet();
         return;
     }
-    if (esc || enter) stop();
+    if (esc) backMenu();
 }
 
 void draw(M5Canvas& canvas) {
     if (s_ph == Ph::Menu) {
         static const char* items[] = { "CONNECT", "INSTALL", "DELETE", "WIFI", "INFO" };
-        canvas.fillSprite(0x2145);
-        canvas.setTextDatum(top_center);
+        uiListBackground(canvas);
+        canvas.setTextDatum(top_left);
         canvas.setTextSize(2);
-        canvas.setTextColor(0xFFE0);
-        canvas.drawString("DESK", DISPLAY_W / 2, 0);
+        canvas.setTextColor(UiStyle::TITLE);
+        canvas.drawString("DESK", 8, 0);
+        canvas.drawLine(8, 18, DISPLAY_W - 8, 18, UiStyle::TITLE);
         canvas.setTextSize(1);
-        canvas.setTextColor(0xEF5D);
-        canvas.drawString("SD /0N3P0rK/on3desk.py", DISPLAY_W / 2, 17);
+        const int y0 = 24;
+        const int lh = 16;
         for (int i = 0; i < 5; i++) {
-            canvas.setTextColor(i == (int)s_pick ? 0x07E0 : 0xEF5D);
-            char row[24];
-            snprintf(row, sizeof(row), "%s %s", i == (int)s_pick ? ">" : " ", items[i]);
-            canvas.drawString(row, DISPLAY_W / 2, 28 + i * 12);
+            int y = y0 + i * lh;
+            bool sel = i == (int)s_pick;
+            uiListRow(canvas, y, lh - 1, sel);
+            canvas.setTextColor(sel ? UiStyle::BG : UiStyle::TEXT);
+            canvas.drawString(items[i], 12, y + 3);
         }
-        canvas.setTextColor(0xEF5D);
-        canvas.drawString("; . pick   ENT   ` back", DISPLAY_W / 2, 90);
         return;
     }
     if (s_ph == Ph::Info) {
-        static const char* rows[] = {
-            "FN+ESC leaves the picture",
-            "FN+= zoom in    FN+- zoom out",
-            "FN+SPACE full    FN+P pause",
-            "FN+; up   FN+. down",
-            "FN+, left   FN+/ right",
-            "Same key works with FN held",
-            "SD /0N3P0rK/on3desk.py",
-            "WIFI: Win+Space, then press 1.",
-            "` menu     FN+ESC leave"
-        };
-        canvas.fillSprite(0x2145);
-        canvas.setTextDatum(top_center);
+        static const char* titles[] = { "MENU", "PICTURE", "PAN", "START", "FILE" };
+        static const char* p0[] = { "^/v    move", "ENT    open", "ESC    back one step", "FN+ESC leave DESK" };
+        static const char* p1[] = { "FN+ESC leave the picture", "= +    zoom in", "-      zoom out", "SPACE  full screen", "P      pause" };
+        static const char* p2[] = { "^/v    up / down", "< >    left / right", "Keys are ; . , /", "FN held works too" };
+        static const char* p3[] = { "Win+Space sets English", "CONNECT runs the script", "INSTALL writes it", "WIFI opens CMD, press 1" };
+        static const char* p4[] = { "SD /0N3P0rK/on3desk.py", "Same Wi-Fi as the pig", "pip install mss", "opencv-python numpy" };
+        static const char* const* pages[] = { p0, p1, p2, p3, p4 };
+        static const uint8_t counts[] = { 4, 5, 4, 4, 4 };
+        uint8_t page = s_page;
+        if (page > 4) page = 4;
+        uiListBackground(canvas);
+        canvas.setTextDatum(top_left);
+        canvas.setTextSize(2);
+        canvas.setTextColor(UiStyle::TITLE);
+        canvas.drawString("INFO", 8, 0);
         canvas.setTextSize(1);
-        for (int i = 0; i < 9; i++) {
-            canvas.setTextColor(i == 0 ? 0xFFE0 : 0xEF5D);
-            canvas.drawString(rows[i], DISPLAY_W / 2, 2 + i * 11);
-        }
+        canvas.setTextDatum(top_right);
+        char pg[8];
+        snprintf(pg, sizeof(pg), "%u/5", (unsigned)(page + 1));
+        canvas.drawString(pg, DISPLAY_W - 8, 4);
+        canvas.setTextDatum(top_left);
+        canvas.drawLine(8, 18, DISPLAY_W - 8, 18, UiStyle::TITLE);
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.drawString(titles[page], 8, 22);
+        canvas.setTextColor(UiStyle::TEXT);
+        uint8_t n = counts[page];
+        for (uint8_t i = 0; i < n; i++) canvas.drawString(pages[page][i], 8, 38 + i * 12);
+        canvas.setTextColor(UiStyle::DIM);
+        if (page > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
+        if (page < 4) canvas.drawString("v", DISPLAY_W - 12, 38 + (n - 1) * 12);
         return;
     }
     if (s_ph == Ph::Serve) {
@@ -953,7 +995,6 @@ void draw(M5Canvas& canvas) {
         canvas.drawString(run, 2, 54);
         canvas.drawString("Same Wi-Fi. Picture follows.", 2, 68);
         canvas.drawString("File already there: python line.", 2, 80);
-        canvas.drawString("` back", 2, 92);
         return;
     }
     if (s_ph == Ph::Note) {
@@ -1127,15 +1168,14 @@ bool paintDirect() {
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_ph == Ph::Menu) snprintf(out, n, "DESK  ; . PICK  ENT");
-    else if (s_ph == Ph::Info) snprintf(out, n, "DESK  INFO  ` MENU  FN+ESC OUT");
-    else if (s_ph == Ph::Serve) snprintf(out, n, "DESK  WIFI  TYPE IN CMD");
-    else if (s_ph == Ph::WaitYes) snprintf(out, n, "DESK  PRESS 1");
-    else if (s_ph == Ph::Type) snprintf(out, n, "DESK  TYPE %u%%", (unsigned)s_pct);
-    else if (s_ph == Ph::WaitPc) snprintf(out, n, "DESK  WAITING");
-    else if (s_ph == Ph::Live) snprintf(out, n, "DESK");
-    else if (s_ph == Ph::Fail) snprintf(out, n, "DESK  CHECK THE PC");
-    else snprintf(out, n, "DESK  ` BACK");
+    if (s_ph == Ph::Menu) snprintf(out, n, "^/v  ENT  ESC BACK");
+    else if (s_ph == Ph::Info) snprintf(out, n, "^/v PAGE  ESC BACK");
+    else if (s_ph == Ph::Live) snprintf(out, n, "FN+ESC LEAVE");
+    else if (s_ph == Ph::WaitYes) snprintf(out, n, "1 START  ESC BACK");
+    else if (s_ph == Ph::Type) snprintf(out, n, "TYPE %u%%  ESC BACK", (unsigned)s_pct);
+    else if (s_ph == Ph::WaitPc) snprintf(out, n, "WAITING  ESC BACK");
+    else if (s_ph == Ph::Fail) snprintf(out, n, "CHECK THE PC  ESC BACK");
+    else snprintf(out, n, "ESC BACK");
 }
 
 }  // namespace DeskMode
