@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.4.0**
+**Current version: 1.4.1**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -12,9 +12,9 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Release note:** version **1.4.0** focuses on improved stability. The
-> observed free heap is approximately **126 KB**; the actual amount varies
-> depending on active features and runtime state.
+> **Release note:** version **1.4.1** adds **CONNECT → DESK**, a second screen
+> for your own PC on the same home Wi-Fi. The picture buffer is taken from the
+> heap only while a session needs it and is returned when DESK stops.
 
 ---
 
@@ -28,16 +28,17 @@ Secret menu codes are **not** listed here (keep them private).
 6. [Seasons & unlock roadmap](#seasons--unlock-roadmap)
 7. [Radio & tools](#radio--tools)
 8. [BadUSB and BadBLE](#badusb-and-badble)
-9. [LED indicator](#led-indicator)
-10. [XFER file transfer](#xfer-file-transfer)
-11. [FILES — SD File Manager](#files--sd-file-manager)
-12. [Music (MP3 player)](#music-mp3-player)
-13. [InspectorPig](#inspectorpig-inspect)
-14. [PigPass](#pigpass)
-15. [SD layout](#sd-layout)
-16. [Web site](#web-site)
-17. [Version history](#version-history)
-18. [Legal & credits](#legal--credits)
+9. [DESK](#desk)
+10. [LED indicator](#led-indicator)
+11. [XFER file transfer](#xfer-file-transfer)
+12. [FILES — SD File Manager](#files--sd-file-manager)
+13. [Music (MP3 player)](#music-mp3-player)
+14. [InspectorPig](#inspectorpig-inspect)
+15. [PigPass](#pigpass)
+16. [SD layout](#sd-layout)
+17. [Web site](#web-site)
+18. [Version history](#version-history)
+19. [Legal & credits](#legal--credits)
 
 ---
 
@@ -65,7 +66,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.0_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.1_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -95,7 +96,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.4.0`.
+   `1.4.1`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -521,6 +522,63 @@ Supported timing commands include `DELAY`, `DEFAULT_DELAY` (also
 non-production device first. Leaving the BadUSB screen or pressing its exit
 key stops the HID session and releases pressed keys.
 
+## DESK
+
+**CONNECT → DESK** shows your own PC's monitor on the Cardputer. The pig and
+that PC must already share the home Wi-Fi saved under **CONNECT → WIFI**. Use
+it to watch the computer from another room.
+
+The PC needs Python 3 on PATH. **CONNECT**, **INSTALL**, and **DELETE** also
+need the USB cable plugged into that PC. Leave the PC keyboard alone while the
+Cardputer is typing. Before each command the device sends Win+Space once, which
+selects the next Windows input language. With Russian and English installed,
+that switches Russian to English.
+
+### Menu
+
+| Item | Action |
+| --- | --- |
+| **CONNECT** | Runs `on3desk.py` that is already on the PC |
+| **INSTALL** | Writes the script, then installs `mss`, `opencv-python`, and `numpy`, and starts it |
+| **DELETE** | Stops only processes whose command line matches `on3desk.py`, then removes the file |
+| **WIFI** | With USB, opens a CMD window. Press `1` on the pig to start the install. Without USB, the screen shows the CMD lines to type |
+| **INFO** | Five pages: menu, picture, pan, start, and the SD file |
+
+### Controls
+
+The bottom bar names the keys for the current screen.
+
+| Key | Action |
+| --- | --- |
+| `^` / `v` | Move in the menu. On the picture, pan up / down (`;` / `.`) |
+| `<` / `>` | On the picture, pan left / right (`,` / `/`) |
+| `ENT` | Open the selected item |
+| `ESC` | Back one step. On the DESK list, leave DESK. On the live picture, `ESC` does nothing |
+| `FN` + `ESC` | Leave DESK from any screen |
+| `BKSP` | Hide the window onto the farm, or show it again. The session keeps running |
+| `=` / `+` | Zoom in |
+| `-` | Zoom out |
+| `SPACE` | Full screen |
+| `P` | Pause the picture |
+
+While the window is hidden, `ESC` leaves to the menu, the same way as the
+other tools. `BKSP` and `ESC` also work during the home Wi-Fi join and the USB
+wait.
+
+### Picture and file
+
+Frames arrive as JPEG over UDP port **1234**. The live view is only the
+monitor picture.
+
+At boot the device writes `/0N3P0rK/on3desk.py` on the SD card. After DESK
+joins the home network, that file is rewritten with the Cardputer's address.
+The PC console is minimized so it does not cover the desktop.
+
+DESK takes heap for the picture buffer, the served script, and the UDP socket
+only while a session needs them. Leaving the session, **STOP** on the DESK row
+in **TASKS**, or **STOP ALL** returns that memory. The row shows `HEAP nK`
+while those buffers are held.
+
 ## LED indicator
 
 The Cardputer status LED is a built-in WS2812 RGB LED on GPIO 21. LED behavior
@@ -800,7 +858,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.4.0, see
+For the chronological release notes from the early builds through 1.4.1, see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---

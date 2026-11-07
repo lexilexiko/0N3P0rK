@@ -364,4 +364,37 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   copying them into a buffer that no longer fits. Such frames cannot be
   EAPOL-Key frames, and EAPOL is all the scanner looks for.
 
+### 1.4.1
+
+#### DESK — own-PC second screen
+
+- Added **CONNECT → DESK**. The Cardputer joins the saved home Wi-Fi, starts
+  `on3desk.py` on your own PC, and shows that monitor as a live JPEG.
+- **CONNECT** runs a script already on the PC. **INSTALL** writes it and
+  installs `mss`, `opencv-python`, and `numpy`. **DELETE** stops only
+  processes whose command line matches `on3desk.py` and removes the file.
+- **WIFI** opens a visible CMD window when USB is connected. Press `1` on the
+  pig to start the install. Without the cable, the screen shows the CMD lines
+  to type. The hidden PowerShell launcher is not used.
+- Every HID path sends Win+Space once before Win+R, selecting the next Windows
+  input language. With Russian and English installed, that switches to English.
+- The PC console is minimized. The live view draws only the picture.
+- Menu and process screens use the same key names as the other tools: `^` /
+  `v`, `ENT`, `ESC`, and `BKSP`. Plain `ESC` does not leave the live picture.
+  `FN` + `ESC` leaves from every screen.
+- Backspace hides the DESK window onto the farm and shows it again. The
+  session keeps running. `ESC` during the Wi-Fi join or the USB wait returns
+  to the DESK list. `ESC` while the window is hidden leaves to the menu.
+- At boot the device writes `/0N3P0rK/on3desk.py`. After a join, that file is
+  rewritten with the Cardputer's IP. Frames use UDP port 1234.
+- **TASKS** lists DESK. The row shows `HEAP nK` while the picture buffer, the
+  served script, or the UDP socket is allocated. **STOP** and **STOP ALL**
+  release that heap.
+
+#### Shared waits
+
+- `joinHome` and `usbWaitHost` take an optional callback so DESK can redraw
+  and read keys during those blocking waits. Callers that omit it, including
+  Loot sync and the BadUSB screen, behave as before.
+
 ---
