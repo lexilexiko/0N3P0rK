@@ -318,7 +318,13 @@ void loop() {
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
-    // Backspace = minimize overlay, except in file manager where it navigates back.
+    // Backspace = minimize overlay. File manager uses it to go back.
+    // DESK handles Backspace itself, so this block does not eat its key edge.
+    // While DESK is hidden, ESC and farm hotkeys behave like the other tools.
+    if (s_mode == AppMode::DESK && s_winHid && !keyMin() && keyNewPress(s_minLatch)) {
+        if (keyEsc()) setMode(AppMode::MENU);
+        else Menu::tryHotkey();
+    }
     if (overlayMode() && s_mode != AppMode::BADUSB && s_mode != AppMode::FILEMGR &&
         s_mode != AppMode::DESK &&
         !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {

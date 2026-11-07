@@ -20,9 +20,9 @@ static uint32_t s_lastPersist = 0;
 static bool s_allOnDisk = false;
 
 // Early soft ramp (lv 1..7). From lv 8 onward each level costs a flat amount:
-//   same XP as old climb 1→8 (100+250+500+1000+2500+5000+7500 = 16850) + 500.
+//   same XP as old climb 1→8 (9000) + 1000.
 // No more +2500 escalation after 10 — late levels stay playable.
-static constexpr uint32_t XP_FLAT_LATE = 16850u + 500u;  // 17350
+static constexpr uint32_t XP_FLAT_LATE = 9000u + 1000u;  // 10000
 
 static uint32_t xpNeed(uint8_t fromLevel) {
     if (fromLevel < 1) fromLevel = 1;
@@ -35,7 +35,7 @@ static uint32_t xpNeed(uint8_t fromLevel) {
         case 6: return 5000;
         case 7: return 7500;           // last step of the 1→8 climb
         default:
-            return XP_FLAT_LATE;       // every further level ≈ 1→8 + 500
+            return XP_FLAT_LATE;       // every further level ≈ 1→8 + 1000
     }
 }
 

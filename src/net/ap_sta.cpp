@@ -374,7 +374,7 @@ bool resolveHost(const char* host, IPAddress& ip, uint8_t tries) {
     return false;
 }
 
-bool joinHome(uint32_t timeoutMs) {
+bool joinHome(uint32_t timeoutMs, bool (*pump)()) {
     if (!hasStaCreds()) return false;
 
     esp_wifi_set_promiscuous(false);
@@ -391,8 +391,18 @@ bool joinHome(uint32_t timeoutMs) {
 
     uint32_t t0 = millis();
     while (millis() - t0 < timeoutMs) {
+        if (pump && pump()) {
+            Serial.println("[NET] join home aborted");
+            return false;
+        }
         if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress()) {
-            delay(300);
+            for (int i = 0; i < 6; i++) {
+                if (pump && pump()) {
+                    Serial.println("[NET] join home aborted");
+                    return false;
+                }
+                delay(50);
+            }
             IPAddress ip;
             resolveHost("wpa-sec.stanev.org", ip, 2);
             resolveHost("pwncrack.org", ip, 2);

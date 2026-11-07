@@ -4,7 +4,8 @@
 namespace BadUsbHid {
 
 bool usbBegin();
-bool usbWaitHost(uint32_t timeoutMs); // 0 = wait forever (caller yields)
+// 0 = wait forever. pump may return true to abort.
+bool usbWaitHost(uint32_t timeoutMs, bool (*pump)() = nullptr);
 bool usbMounted();
 void usbEnd();
 bool usbReady();

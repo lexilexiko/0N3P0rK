@@ -26,11 +26,12 @@ bool usbBegin() {
 #endif
 }
 
-bool usbWaitHost(uint32_t timeoutMs) {
+bool usbWaitHost(uint32_t timeoutMs, bool (*pump)()) {
 #if !ARDUINO_USB_MODE
     if (!s_on && !usbBegin()) return false;
     uint32_t t0 = millis();
     while (!tud_mounted()) {
+        if (pump && pump()) return false;
         if (timeoutMs && (millis() - t0) > timeoutMs) return false;
         delay(100);
         yield();
@@ -40,6 +41,7 @@ bool usbWaitHost(uint32_t timeoutMs) {
     return true;
 #else
     (void)timeoutMs;
+    (void)pump;
     return false;
 #endif
 }

@@ -5,6 +5,7 @@
 #include <SD.h>
 #include "../audio/sfx.h"
 #include "../piglet/avatar.h"
+#include "../core/app.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"
 #include "badusb_hid.h"
@@ -692,18 +693,79 @@ static void liveKeys(bool edge) {
     }
 }
 
+static bool s_waitAbort = false;
+static bool s_waitLeave = false;
+static bool s_bsWas = false;
+static bool s_escWas = false;
+
+static void syncScene() {
+    if (App::windowHidden()) {
+        if (Avatar::isSceneSuspended()) Avatar::resumeScene();
+    } else if (!Avatar::isSceneSuspended()) {
+        Avatar::suspendScene();
+    }
+}
+
+static void toggleHide() {
+    App::setWindowHidden(!App::windowHidden());
+    syncScene();
+    SFX::play(SFX::MENU_CLICK);
+    Display::showToast(App::windowHidden() ? "MIN" : "WIN", 500);
+}
+
+// Called from inside the Wi-Fi and USB waits, which otherwise block the loop.
+static bool pumpWait() {
+    M5Cardputer.update();
+    bool bs = keyMin();
+    if (bs && !s_bsWas) toggleHide();
+    s_bsWas = bs;
+    bool esc = keyEsc();
+    if (esc && !s_escWas) {
+        s_waitAbort = true;
+        s_waitLeave = App::windowHidden();
+    }
+    s_escWas = esc;
+    Display::update();
+    SFX::update();
+    yield();
+    return s_waitAbort;
+}
+
+static void armWaitKeys() {
+    s_waitAbort = false;
+    s_waitLeave = false;
+    s_bsWas = keyMin();
+    s_escWas = keyEsc();
+}
+
+static void abortWait() {
+    BadUsbHid::usbReleaseAll();
+    BadUsbHid::usbEnd();
+    s_usb = false;
+    Net::leaveHome();
+    s_joined = false;
+    if (s_waitLeave) stop();
+    else backMenu();
+}
+
 void update() {
     if (!s_run) return;
+    syncScene();
 
     // isChange() flips false after the first read in this frame.
     const bool changed = M5Cardputer.Keyboard.isChange();
     const bool edge = changed && M5Cardputer.Keyboard.isPressed();
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
-    const bool esc = edge && keyEsc();
+    if (edge && keyMin()) toggleHide();
+    const bool hidden = App::windowHidden();
+    // Backspace only hides the window. Keys are ignored while it is hidden,
+    // except ESC, which leaves, matching the other tools.
+    const bool keys = edge && !keyMin() && !hidden;
+    const bool esc = keys && keyEsc();
     const bool fnEsc = esc && st.fn;
-    const bool enter = edge && st.enter;
+    const bool enter = keys && st.enter;
     char c = 0;
-    if (edge) {
+    if (keys) {
         for (char k : st.word) {
             c = k;
             break;
@@ -786,7 +848,12 @@ void update() {
             s_ph = Ph::Fail;
             return;
         }
-        s_joined = Net::joinHome(22000);
+        armWaitKeys();
+        s_joined = Net::joinHome(22000, pumpWait);
+        if (s_waitAbort) {
+            abortWait();
+            return;
+        }
         if (!s_joined) {
             setMsg("Home Wi-Fi did not connect.");
             s_ph = Ph::Fail;
@@ -842,7 +909,12 @@ void update() {
     if (s_ph == Ph::Usb) {
         if (UsbSdMode::isRunning()) UsbSdMode::stop();
         uint32_t usbWait = (s_act == Act::Wifi) ? 8000 : 12000;
-        if (!BadUsbHid::usbBegin() || !BadUsbHid::usbWaitHost(usbWait)) {
+        armWaitKeys();
+        if (!BadUsbHid::usbBegin() || !BadUsbHid::usbWaitHost(usbWait, pumpWait)) {
+            if (s_waitAbort) {
+                abortWait();
+                return;
+            }
             if (s_act == Act::Wifi) {
                 BadUsbHid::usbEnd();
                 s_ph = Ph::Serve;
@@ -936,7 +1008,7 @@ void update() {
         return;
     }
     if (s_ph == Ph::Live) {
-        liveKeys(edge);
+        if (keys) liveKeys(true);
         if (!s_run) return;
         pollNet();
         return;
@@ -967,13 +1039,13 @@ void draw(M5Canvas& canvas) {
     }
     if (s_ph == Ph::Info) {
         static const char* titles[] = { "MENU", "PICTURE", "PAN", "START", "FILE" };
-        static const char* p0[] = { "^/v    move", "ENT    open", "ESC    back one step", "FN+ESC leave DESK" };
-        static const char* p1[] = { "FN+ESC leave the picture", "= +    zoom in", "-      zoom out", "SPACE  full screen", "P      pause" };
+        static const char* p0[] = { "^/v    move", "ENT    open", "ESC    back one step", "BKSP   hide window", "FN+ESC leave DESK" };
+        static const char* p1[] = { "BKSP   hide this window", "FN+ESC leave the picture", "= +    zoom in", "-      zoom out", "SPACE  full screen", "P      pause" };
         static const char* p2[] = { "^/v    up / down", "< >    left / right", "Keys are ; . , /", "FN held works too" };
         static const char* p3[] = { "Win+Space sets English", "CONNECT runs the script", "INSTALL writes it", "WIFI opens CMD, press 1" };
         static const char* p4[] = { "SD /0N3P0rK/on3desk.py", "Same Wi-Fi as the pig", "pip install mss", "opencv-python numpy" };
         static const char* const* pages[] = { p0, p1, p2, p3, p4 };
-        static const uint8_t counts[] = { 4, 5, 4, 4, 4 };
+        static const uint8_t counts[] = { 5, 6, 4, 4, 4 };
         uint8_t page = s_page;
         if (page > 4) page = 4;
         uiListBackground(canvas);
@@ -1007,15 +1079,16 @@ void draw(M5Canvas& canvas) {
         canvas.setTextDatum(top_left);
         canvas.setTextSize(1);
         canvas.setTextColor(0xFFE0);
-        canvas.drawString("No USB. Open CMD. ^ then Enter.", 2, 0);
+        canvas.drawString("No USB. Type this in CMD.", 2, 0);
         canvas.setTextColor(0x07E0);
         canvas.drawString("curl.exe -o on3desk.py ^", 2, 14);
         canvas.drawString(url, 2, 26);
         canvas.setTextColor(0xEF5D);
         canvas.drawString("pip install mss opencv-python numpy", 2, 40);
         canvas.drawString(run, 2, 54);
-        canvas.drawString("Same Wi-Fi. Picture follows.", 2, 68);
-        canvas.drawString("File already there: python line.", 2, 80);
+        canvas.drawString("The ^ is a caret, then Enter.", 2, 68);
+        canvas.drawString("ESC back.   BKSP hide.", 2, 80);
+        canvas.drawString("Same Wi-Fi. Picture follows.", 2, 92);
         return;
     }
     if (s_ph == Ph::Note) {
@@ -1024,32 +1097,35 @@ void draw(M5Canvas& canvas) {
             "The PowerShell window",
             "closes itself.",
             "",
-            "ENT menu     ` back"
+            "ENT    menu",
+            "ESC    back",
+            "BKSP   hide"
         };
-        lines(canvas, "DESK", rows, 5);
+        lines(canvas, "DESK", rows, 7);
         return;
     }
     if (s_ph == Ph::Intro) {
         static const char* rows[] = {
-            "Your PC, same network as the pig.",
+            "Your PC, same Wi-Fi as the pig.",
             "Plug USB into that PC.",
-            "Switch the PC to English (US).",
+            "Win+Space sets English.",
             "Python 3 must be on PATH.",
-            "One start installs and runs it.",
             "Leave the PC keyboard alone.",
-            "",
-            "ENT is the menu start.  ` back"
+            "ENT open     ESC back",
+            "BKSP hides this window"
         };
-        lines(canvas, "DESK", rows, 8);
+        lines(canvas, "DESK", rows, 7);
         return;
     }
     if (s_ph == Ph::JoinDraw || s_ph == Ph::Join) {
         static const char* rows[] = {
             "Joining the saved home Wi-Fi.",
-            "PC layout must be English (US).",
-            "Python 3 must be on PATH."
+            "This can take a few seconds.",
+            "",
+            "ESC    back to the menu",
+            "BKSP   hide this window"
         };
-        lines(canvas, "DESK", rows, 3);
+        lines(canvas, "DESK", rows, 5);
         return;
     }
     if (s_ph == Ph::Ready) {
@@ -1060,7 +1136,7 @@ void draw(M5Canvas& canvas) {
             "PC must reach this address.",
             "Do not touch the PC keyboard",
             "while the script is typed.",
-            "Starting the install."
+            "ESC back.   BKSP hide."
         };
         lines(canvas, "DESK", rows, 5);
         return;
@@ -1070,15 +1146,17 @@ void draw(M5Canvas& canvas) {
             "Win+Space switches to English.",
             "Then the command is typed.",
             "Hands off the PC keyboard.",
-            "` cancel"
+            "ESC    back",
+            "BKSP   hide"
         };
         static const char* wifi[] = {
-            "Win+Space switches to English.",
+            "Win+Space sets English.",
             "Then a CMD window opens.",
             "Hands off the PC keyboard.",
-            "` cancel"
+            "ESC    back",
+            "BKSP   hide"
         };
-        lines(canvas, "DESK", s_act == Act::Wifi ? wifi : rows, 4);
+        lines(canvas, "DESK", s_act == Act::Wifi ? wifi : rows, 5);
         return;
     }
     if (s_ph == Ph::Type) {
@@ -1098,45 +1176,49 @@ void draw(M5Canvas& canvas) {
         char pct[8];
         snprintf(pct, sizeof(pct), "%u%%", (unsigned)s_pct);
         canvas.drawString(pct, DISPLAY_W / 2, 80);
-        canvas.drawString("` abort", DISPLAY_W / 2, 94);
+        canvas.drawString("ESC back.   BKSP hide.", DISPLAY_W / 2, 94);
         return;
     }
     if (s_ph == Ph::WaitYes) {
         static const char* rows[] = {
             "CMD is open. Layout is English.",
-            "Press 1 on the pig.",
-            "That starts the install.",
+            "Press 1 on the pig to start.",
             "",
-            "` stops"
+            "1      start the install",
+            "ESC    back",
+            "BKSP   hide"
         };
-        lines(canvas, "DESK", rows, 5);
+        lines(canvas, "DESK", rows, 6);
         return;
     }
     if (s_ph == Ph::WaitPc) {
         static const char* quick[] = {
             "Starting the script already",
             "on this PC.",
-            "ENT writes it again.",
+            "The picture starts itself.",
             "",
-            "` stops"
+            "ESC    back",
+            "BKSP   hide"
         };
         static const char* full[] = {
             "Installing, then the picture",
             "starts by itself.",
-            "First pip can take a few minutes.",
+            "First pip can take a minute.",
             "",
-            "` stops"
+            "ESC    back",
+            "BKSP   hide"
         };
         static const char* wifi[] = {
             "Installing in a small window.",
             "First pip can take a minute.",
             "The picture starts after that.",
             "",
-            "` stops"
+            "ESC    back",
+            "BKSP   hide"
         };
         const char* const* rows = s_quick ? quick : full;
         if (s_act == Act::Wifi) rows = wifi;
-        lines(canvas, "DESK", rows, 5);
+        lines(canvas, "DESK", rows, 6);
         return;
     }
     if (s_ph == Ph::Fail) {
@@ -1168,14 +1250,14 @@ void draw(M5Canvas& canvas) {
         canvas.setTextDatum(top_center);
         canvas.drawString(a, DISPLAY_W / 2, 40);
         if (b[0]) canvas.drawString(b, DISPLAY_W / 2, 54);
-        canvas.drawString("` back", DISPLAY_W / 2, 88);
+        canvas.drawString("ESC back.   BKSP hide.", DISPLAY_W / 2, 88);
         return;
     }
     canvas.fillSprite(0x2145);
 }
 
 bool paintDirect() {
-    if (!s_run || s_ph != Ph::Live) return false;
+    if (!s_run || s_ph != Ph::Live || App::windowHidden()) return false;
     if (!s_haveFrame || !s_buf || s_jpgLen < 4) {
         M5.Display.fillScreen(BLACK);
         return true;
@@ -1189,14 +1271,14 @@ bool paintDirect() {
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_ph == Ph::Menu) snprintf(out, n, "^/v  ENT  ESC BACK");
-    else if (s_ph == Ph::Info) snprintf(out, n, "^/v PAGE  ESC BACK");
-    else if (s_ph == Ph::Live) snprintf(out, n, "FN+ESC LEAVE");
-    else if (s_ph == Ph::WaitYes) snprintf(out, n, "1 START  ESC BACK");
-    else if (s_ph == Ph::Type) snprintf(out, n, "TYPE %u%%  ESC BACK", (unsigned)s_pct);
-    else if (s_ph == Ph::WaitPc) snprintf(out, n, "WAITING  ESC BACK");
-    else if (s_ph == Ph::Fail) snprintf(out, n, "CHECK THE PC  ESC BACK");
-    else snprintf(out, n, "ESC BACK");
+    if (s_ph == Ph::Menu) snprintf(out, n, "^/v  ENT  ESC BACK  BKSP HIDE");
+    else if (s_ph == Ph::Info) snprintf(out, n, "^/v PAGE  ESC BACK  BKSP HIDE");
+    else if (s_ph == Ph::Live) snprintf(out, n, "BKSP HIDE  FN+ESC LEAVE");
+    else if (s_ph == Ph::WaitYes) snprintf(out, n, "1 START  ESC BACK  BKSP HIDE");
+    else if (s_ph == Ph::Type) snprintf(out, n, "TYPE %u%%  ESC BACK  BKSP HIDE", (unsigned)s_pct);
+    else if (s_ph == Ph::WaitPc) snprintf(out, n, "WAITING  ESC BACK  BKSP HIDE");
+    else if (s_ph == Ph::Fail) snprintf(out, n, "ESC BACK  BKSP HIDE");
+    else snprintf(out, n, "ESC BACK  BKSP HIDE");
 }
 
 }  // namespace DeskMode
