@@ -395,7 +395,9 @@ void loop() {
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
-        if (!SettingsMenu::isActive()) setMode(AppMode::MENU);
+        if ((s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
+             s_mode == AppMode::WIFI) && !SettingsMenu::isActive())
+            setMode(AppMode::MENU);
     } else if (s_mode == AppMode::MENU) {
         Menu::update();
         return;
