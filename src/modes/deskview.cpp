@@ -99,6 +99,7 @@ enum class Act : uint8_t { Connect, Install, Remove };
 
 enum class Ph : uint8_t {
     Menu,
+    Info,
     Note,
     Intro,
     JoinDraw,
@@ -507,8 +508,12 @@ static void pollNet() {
     }
 }
 
-static void liveKeys() {
-    if (!M5Cardputer.Keyboard.isChange() || !M5Cardputer.Keyboard.isPressed()) return;
+// FN does not change the letter. Shift does. Accept both, with FN held or not.
+static bool keyZoomIn(char c) { return c == '=' || c == '+'; }
+static bool keyZoomOut(char c) { return c == '-' || c == '_'; }
+
+static void liveKeys(bool edge) {
+    if (!edge) return;
     if (keyEsc()) {
         stop();
         return;
@@ -519,27 +524,27 @@ static void liveKeys() {
         c = k;
         break;
     }
-    if (c == '=' || c == '+') {
+    if (keyZoomIn(c)) {
         s_zoom -= 0.08f;
         if (s_zoom < 0.08f) s_zoom = 0.08f;
         sendCmd("Z+");
         osd("ZOOM IN");
-    } else if (c == '-' || c == '_') {
+    } else if (keyZoomOut(c)) {
         s_zoom += 0.08f;
         if (s_zoom > 1.0f) s_zoom = 1.0f;
         sendCmd("Z-");
         osd("ZOOM OUT");
-    } else if (c == ' ' || M5Cardputer.Keyboard.isKeyPressed(' ')) {
+    } else if (c == ' ' || st.space) {
         s_zoom = 1.0f;
         sendCmd("Z0");
         osd("FULL SCREEN");
-    } else if (c == ';') {
+    } else if (c == ';' || c == ':') {
         sendCmd("U");
-    } else if (c == '.') {
+    } else if (c == '.' || c == '>') {
         sendCmd("D");
-    } else if (c == ',') {
+    } else if (c == ',' || c == '<') {
         sendCmd("L");
-    } else if (c == '/') {
+    } else if (c == '/' || c == '?') {
         sendCmd("R");
     } else if (c == 'p' || c == 'P') {
         s_paused = !s_paused;
@@ -550,8 +555,13 @@ static void liveKeys() {
 void update() {
     if (!s_run) return;
 
-    bool esc = keyEsc() && M5Cardputer.Keyboard.isChange();
-    bool enter = M5Cardputer.Keyboard.keysState().enter && M5Cardputer.Keyboard.isChange();
+    // isChange() flips false after the first read in this frame.
+    const bool changed = M5Cardputer.Keyboard.isChange();
+    const bool edge = changed && M5Cardputer.Keyboard.isPressed();
+    Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
+    const bool esc = edge && keyEsc();
+    const bool fnEsc = esc && st.fn;
+    const bool enter = edge && st.enter;
 
     if (s_ph == Ph::Menu) {
         if (esc) {
@@ -559,21 +569,32 @@ void update() {
             return;
         }
         if (enter) {
+            if (s_pick == 3) {
+                s_ph = Ph::Info;
+                return;
+            }
             s_act = (Act)s_pick;
             s_quick = (s_act == Act::Connect);
             s_ph = (s_act == Act::Remove) ? Ph::UsbDraw : Ph::JoinDraw;
             return;
         }
-        if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
-            Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
+        if (edge) {
             char c = 0;
             for (char k : st.word) {
                 c = k;
                 break;
             }
             if ((c == ';' || c == ',') && s_pick > 0) s_pick--;
-            if ((c == '.' || c == '/') && s_pick < 2) s_pick++;
+            if ((c == '.' || c == '/') && s_pick < 3) s_pick++;
         }
+        return;
+    }
+    if (s_ph == Ph::Info) {
+        if (fnEsc) {
+            stop();
+            return;
+        }
+        if (esc) s_ph = Ph::Menu;
         return;
     }
     if (s_ph == Ph::Note) {
@@ -677,7 +698,11 @@ void update() {
         return;
     }
     if (s_ph == Ph::Live) {
-        liveKeys();
+        if (esc) {
+            stop();
+            return;
+        }
+        liveKeys(edge);
         if (!s_run) return;
         pollNet();
         return;
@@ -687,24 +712,44 @@ void update() {
 
 void draw(M5Canvas& canvas) {
     if (s_ph == Ph::Menu) {
-        static const char* items[] = { "CONNECT", "INSTALL", "DELETE" };
+        static const char* items[] = { "CONNECT", "INSTALL", "DELETE", "INFO" };
         canvas.fillSprite(0x2145);
         canvas.setTextDatum(top_center);
         canvas.setTextSize(2);
         canvas.setTextColor(0xFFE0);
-        canvas.drawString("DESK", DISPLAY_W / 2, 2);
+        canvas.drawString("DESK", DISPLAY_W / 2, 0);
         canvas.setTextSize(1);
         canvas.setTextColor(0xEF5D);
-        canvas.drawString("SD /0N3P0rK/on3desk.py", DISPLAY_W / 2, 20);
-        canvas.setTextSize(1);
-        for (int i = 0; i < 3; i++) {
+        canvas.drawString("SD /0N3P0rK/on3desk.py", DISPLAY_W / 2, 18);
+        for (int i = 0; i < 4; i++) {
             canvas.setTextColor(i == (int)s_pick ? 0x07E0 : 0xEF5D);
             char row[24];
             snprintf(row, sizeof(row), "%s %s", i == (int)s_pick ? ">" : " ", items[i]);
-            canvas.drawString(row, DISPLAY_W / 2, 32 + i * 16);
+            canvas.drawString(row, DISPLAY_W / 2, 30 + i * 14);
         }
         canvas.setTextColor(0xEF5D);
-        canvas.drawString("; . pick    ENT    ` back", DISPLAY_W / 2, 88);
+        canvas.drawString("; . pick   ENT   ` back", DISPLAY_W / 2, 90);
+        return;
+    }
+    if (s_ph == Ph::Info) {
+        static const char* rows[] = {
+            "FN+ESC leaves the picture",
+            "FN+= zoom in    FN+- zoom out",
+            "FN+SPACE full    FN+P pause",
+            "FN+; up   FN+. down",
+            "FN+, left   FN+/ right",
+            "Same key works with FN held",
+            "SD /0N3P0rK/on3desk.py",
+            "Same Wi-Fi. English (US).",
+            "` menu     FN+ESC leave"
+        };
+        canvas.fillSprite(0x2145);
+        canvas.setTextDatum(top_center);
+        canvas.setTextSize(1);
+        for (int i = 0; i < 9; i++) {
+            canvas.setTextColor(i == 0 ? 0xFFE0 : 0xEF5D);
+            canvas.drawString(rows[i], DISPLAY_W / 2, 2 + i * 11);
+        }
         return;
     }
     if (s_ph == Ph::Note) {
@@ -851,6 +896,7 @@ bool paintDirect() {
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
     if (s_ph == Ph::Menu) snprintf(out, n, "DESK  ; . PICK  ENT");
+    else if (s_ph == Ph::Info) snprintf(out, n, "DESK  INFO  ` MENU  FN+ESC OUT");
     else if (s_ph == Ph::Type) snprintf(out, n, "DESK  TYPE %u%%", (unsigned)s_pct);
     else if (s_ph == Ph::WaitPc) snprintf(out, n, "DESK  WAITING");
     else if (s_ph == Ph::Live) snprintf(out, n, "DESK");
