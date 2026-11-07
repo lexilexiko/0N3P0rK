@@ -120,6 +120,7 @@ static const Item RADIO[] = {
     {"HS FILE B",Kind::VALUE, 28, 1024, 8192, 1024},
     {"RING",    Kind::VALUE,  29, 4, 32, 1},
     {"PENDING", Kind::VALUE, 32, 4, 16, 2},
+    {"EAPOL MAX", Kind::VALUE, 35, 512, 1100, 1},
     {"AUTO SKIP", Kind::TOGGLE, 33, 0, 1, 1},
     {"FAT PCAP",Kind::TOGGLE, 17, 0, 1, 1},
     {"TX PWR",  Kind::VALUE,  30, 1, 20, 1},
@@ -572,6 +573,7 @@ static int getValue(const Item& it) {
             case 28: return r.hsFileBytes;
             case 29: return r.ringSlots;
             case 32: return r.pendingSlots;
+            case 35: return r.eapolFrameMax;
             case 33: return r.autoSkipCompleted ? 1 : 0;
             case 34: return r.pendingTimeoutSec;
             case 18: return r.pack;
@@ -673,6 +675,8 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
     } else if (isRadioPage() && it.id == 31) {
         strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (isRadioPage() && it.id == 35) {
+        snprintf(raw, sizeof(raw), "%dB", getValue(it));
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -797,6 +801,27 @@ static bool setValue(const Item& it, int v) {
         Config::markRadioCustom();
         Config::save();
         Display::showToast("PENDING SAVED", 700);
+        return true;
+    }
+
+    // EAPOL MAX (RADIO id 35): toggle between 512 and 1100 bytes.
+    if (isRadioPage() && it.id == 35) {
+        static const uint16_t slots[] = {512, 1100};
+        enum { EAPOL_SLOTS_N = 2 };
+        int current = (int)r.eapolFrameMax;
+        uint8_t slot = 0;
+        for (uint8_t i = 0; i < EAPOL_SLOTS_N; i++) {
+            if (slots[i] == current) {
+                slot = i;
+                break;
+            }
+        }
+        slot = (v > current) ? (uint8_t)((slot + 1) % EAPOL_SLOTS_N)
+                             : (uint8_t)((slot + EAPOL_SLOTS_N - 1) % EAPOL_SLOTS_N);
+        r.eapolFrameMax = slots[slot];
+        Config::markRadioCustom();
+        Config::save();
+        Display::showToast("EAPOL MAX SAVED", 700);
         return true;
     }
 

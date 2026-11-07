@@ -92,6 +92,7 @@ bool Config::init() {
     r.hsFileBytes = s_prefs.getUShort("hsfileb", r.hsFileBytes);
     r.ringSlots = s_prefs.getUChar("rings", r.ringSlots);
     r.pendingSlots = s_prefs.getUChar("pends", r.pendingSlots);
+    r.eapolFrameMax = s_prefs.getUShort("eapmx", r.eapolFrameMax);
     r.pendingTimeoutSec = s_prefs.getUChar("pendto", r.pendingTimeoutSec);
     r.autoSkipCompleted = s_prefs.getBool("autosk", r.autoSkipCompleted);
     r.pack = s_prefs.getUChar("rpack", r.pack);
@@ -185,6 +186,8 @@ bool Config::init() {
         r.ringSlots = 12;
     if (r.pendingSlots < 4 || r.pendingSlots > 16 || (r.pendingSlots & 1u))
         r.pendingSlots = 4;
+    if (r.eapolFrameMax != 512 && r.eapolFrameMax != 1100)
+        r.eapolFrameMax = 512;
     if (r.pendingTimeoutSec != 0 && r.pendingTimeoutSec != 30 &&
         r.pendingTimeoutSec != 60 && r.pendingTimeoutSec != 90 &&
         r.pendingTimeoutSec != 120)
@@ -264,6 +267,7 @@ bool Config::save() {
     s_prefs.putUShort("hsfileb", r.hsFileBytes);
     s_prefs.putUChar("rings", r.ringSlots);
     s_prefs.putUChar("pends", r.pendingSlots);
+    s_prefs.putUShort("eapmx", r.eapolFrameMax);
     s_prefs.putUChar("pendto", r.pendingTimeoutSec);
     s_prefs.putBool("autosk", r.autoSkipCompleted);
     s_prefs.putUChar("rpack", r.pack);

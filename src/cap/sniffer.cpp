@@ -44,11 +44,18 @@ static const uint16_t FRAME_MAX = 1100;
 //  95 B key descriptor (WPA) .. ~250 B with a full RSN IE
 // -> ~143..300 B on the wire.
 //
-// EAPOL_FRAME_MAX = 512 holds an EAPOL body up to 464 B, i.e. far above
-// anything a real handshake produces, while making a ring slot 536 B
-// instead of 1124 B and a pending slot ~2.2 KB instead of ~4.5 KB.
-// That is what buys back the RAM needed to raise RING / PENDING.
-static const uint16_t EAPOL_FRAME_MAX = 512;
+// EAPOL_FRAME_MAX_ABS = 1100 is the compile-time upper bound for a slot's
+// frame buffer (it sizes Slot::frame below). A real EAPOL-Key body is
+// ~143..300 B, so 1100 covers the largest frames seen in the wild.
+//
+// s_eapolFrameMax is the runtime clamp chosen in the RADIO menu (512 or
+// 1100). It is loaded from RadioConfig::eapolFrameMax at the start of each
+// capture session. Frames are clamped to it, so picking 512 keeps captures
+// small while 1100 accepts larger EAPOL bodies. Note: because Slot::frame is
+// a fixed array, every slot always reserves EAPOL_FRAME_MAX_ABS bytes — the
+// 512 option no longer shrinks the slot, it only tightens the clamp.
+static const uint16_t EAPOL_FRAME_MAX_ABS = 1100;
+static uint16_t s_eapolFrameMax = 512;
 // Keep the capture queue bounded so WPA-sec sync still has a large
 // contiguous heap block available after radio capture. The selected size is
 // loaded from RadioConfig before each capture session starts.
@@ -68,7 +75,7 @@ struct Slot {
     uint32_t ts;
     int8_t   rssi;
     uint8_t  channel;
-    uint8_t  frame[EAPOL_FRAME_MAX];
+    uint8_t  frame[EAPOL_FRAME_MAX_ABS];
 };
 
 static Slot* s_ring = nullptr;
@@ -996,8 +1003,8 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     memcpy(s.bssid, bssid, 6);
     memcpy(s.station, station, 6);
     s.originalLen = len;                              // preserve on-air size
-    s.len = (len > EAPOL_FRAME_MAX) ? EAPOL_FRAME_MAX : len;  // clamp for our buffer
-    if (len > EAPOL_FRAME_MAX) s_cnt.framesTruncated++;
+    s.len = (len > s_eapolFrameMax) ? s_eapolFrameMax : len;  // clamp for our buffer
+    if (len > s_eapolFrameMax) s_cnt.framesTruncated++;
     s.ts  = millis();
     s.rssi = (int8_t)pkt->rx_ctrl.rssi;
     s.channel = s_cnt.currentChannel;
@@ -1234,7 +1241,7 @@ static bool hasHandshakeAtDepth(File& file, size_t fileSize,
         // cannot be an EAPOL-Key frame (a real one is ~143..300 B) and the
         // only thing this scanner looks for is EAPOL, so skipping them is
         // safe — and it keeps the copy inside the slot buffer.
-        if (frameLen < 24 || frameLen > EAPOL_FRAME_MAX) continue;
+        if (frameLen < 24 || frameLen > s_eapolFrameMax) continue;
 
         Slot frameSlot{};
         frameSlot.len = frameLen;
@@ -2120,6 +2127,9 @@ static void startCommon(RunMode mode) {
     }
     if (!s_storedSkipsLoaded || sdOk) loadStoredSkips();
     s_ringSlots = Config::radio().ringSlots;
+    s_eapolFrameMax = Config::radio().eapolFrameMax;
+    if (s_eapolFrameMax != 512 && s_eapolFrameMax != 1100)
+        s_eapolFrameMax = 512;
     // MEMFIX: the RADIO menu offers RING 4..32 in steps of 1, but this clamp
     // used to accept only {4,8,12,16,24,28} and silently reset every other
     // value to 12 — the knob appeared to work and did nothing. Now that a
