@@ -150,7 +150,6 @@ struct RadioConfig {
     uint16_t hsFileBytes = 2048; // maximum handshake PCAP size: 1024/2048/4096/8192 bytes
     uint8_t ringSlots = 12;      // capture ring slots: 4/8/12/16/24/32
     uint8_t pendingSlots = 4;    // concurrent pending handshake captures: 4..16
-    uint16_t eapolFrameMax = 512; // EAPOL frame clamp: 512 or 1100 (RADIO menu)
     uint8_t pendingTimeoutSec = 60; // 0=never expire, otherwise 30..120 seconds idle
     bool autoSkipCompleted = false; // persistently skip networks after successful capture
     uint8_t pack = 0;          // RadioPack last applied
