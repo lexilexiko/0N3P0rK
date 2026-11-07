@@ -17,6 +17,7 @@
 #include "../modes/filemgr.h"
 #include "../modes/mp3player.h"
 #include "../modes/inspectorpig.h"
+#include "../modes/deskview.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -53,7 +54,8 @@ bool overlayMode() {
            s_mode == AppMode::INSPECTOR ||
            s_mode == AppMode::TASKS ||
            s_mode == AppMode::PIG ||
-           s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
+           s_mode == AppMode::TUNE || s_mode == AppMode::WIFI ||
+           s_mode == AppMode::DESK;
 }
 
 bool windowHidden() { return s_winHid && overlayMode(); }
@@ -93,6 +95,7 @@ const char* modeName() {
         case AppMode::MP3:      return "MP3";
         case AppMode::TASKS:    return "TASKS";
         case AppMode::INSPECTOR:return "INSPECT";
+        case AppMode::DESK:     return "DESK";
         default:                return "?";
     }
 }
@@ -114,6 +117,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::MP3 && Mp3PlayerMode::isRunning()) Mp3PlayerMode::stop();
     if (s_mode == AppMode::INSPECTOR && InspectorPig::isRunning()) InspectorPig::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
+    if (s_mode == AppMode::DESK && DeskMode::isRunning()) DeskMode::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -130,6 +134,7 @@ void setMode(AppMode m) {
     if (m == AppMode::MP3) Mp3PlayerMode::start();
     if (m == AppMode::INSPECTOR) InspectorPig::start();
     if (m == AppMode::TASKS) TaskManager::start();
+    if (m == AppMode::DESK) DeskMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -315,6 +320,7 @@ void loop() {
 
     // Backspace = minimize overlay, except in file manager where it navigates back.
     if (overlayMode() && s_mode != AppMode::BADUSB && s_mode != AppMode::FILEMGR &&
+        s_mode != AppMode::DESK &&
         !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {
@@ -369,6 +375,9 @@ void loop() {
     } else if (s_mode == AppMode::INSPECTOR) {
         InspectorPig::update();
         if (!InspectorPig::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::DESK) {
+        DeskMode::update();
+        if (!DeskMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
@@ -388,7 +397,8 @@ void loop() {
         s_mode == AppMode::USBSD ||
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
         s_mode == AppMode::WIFI || s_mode == AppMode::TASKS ||
-        s_mode == AppMode::INSPECTOR) return;
+        s_mode == AppMode::INSPECTOR ||
+        s_mode == AppMode::DESK) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();

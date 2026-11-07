@@ -92,8 +92,8 @@ static const char* const H_CONN[] = {
     "HOME WIFI FOR S-SYNC."
 };
 static const char* const H_CONNECT_GRP[] = {
-    "WIFI  BADUSB  USB-SD  XFER.",
-    "LINKS OUTSIDE THE BARN."
+    "WIFI BADUSB USB-SD XFER DESK.",
+    "DESK SHOWS YOUR OWN MONITOR."
 };
 static const char* const H_BADUSB[] = {
     "DUCKY USB/BLE LIVE + PANEL.",
@@ -102,6 +102,10 @@ static const char* const H_BADUSB[] = {
 static const char* const H_XFER[] = {
     "WIFI AP + DOS COMMANDER.",
     "JOIN AP  OPEN 192.168.4.1"
+};
+static const char* const H_DESK[] = {
+    "YOUR MONITOR ON THIS SCREEN.",
+    "ONE START. IT INSTALLS AND RUNS."
 };
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
@@ -207,7 +211,8 @@ static const Item G_CONNECT[] = {
     {"))", "WIFI",    6,  H_CONN,   2},
     {"KB", "BADUSB",  21, H_BADUSB, 2},
     {"U:", "USB SD",  17, H_USB,    2},
-    {"F:", "XFER",    22, H_XFER,   2}
+    {"F:", "XFER",    22, H_XFER,   2},
+    {"PC", "DESK",    27, H_DESK,   2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -238,7 +243,7 @@ static const Item* groupItems(GroupId g) {
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
     if (g == GroupId::SET) return 6;
-    if (g == GroupId::CONNECT) return 4;
+    if (g == GroupId::CONNECT) return 5;
     return 0;
 }
 
@@ -330,6 +335,10 @@ static void doAction(uint8_t id) {
         case 22:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::XFER);
+            break;
+        case 27:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::DESK);
             break;
         case 23:
             App::setMode(AppMode::TASKS);

@@ -31,6 +31,7 @@
 #include "../modes/filemgr.h"
 #include "../modes/inspectorpig.h"
 #include "../modes/mp3player.h"
+#include "../modes/deskview.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -1016,6 +1017,9 @@ void Display::drawBottomBar() {
             case AppMode::TASKS:
                 strncpy(left, "^/v SELECT  ENT STOP  ESC BACK", sizeof(left) - 1);
                 break;
+            case AppMode::DESK:
+                DeskMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -1147,6 +1151,11 @@ void Display::update() {
     SceneLayers::beginFrame();
     updateDimming();
 
+    if (App::mode() == AppMode::DESK && DeskMode::paintDirect()) {
+        SceneLayers::endFrame();
+        return;
+    }
+
     if (!Avatar::isSceneSuspended()) Mood::update();
 
     static int8_t lastSkyNight = -1;
@@ -1161,7 +1170,8 @@ void Display::update() {
         (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD ||
          App::mode() == AppMode::MP3 ||
          App::mode() == AppMode::PIGPASS ||
-         App::mode() == AppMode::INSPECTOR);
+         App::mode() == AppMode::INSPECTOR ||
+         App::mode() == AppMode::DESK);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
@@ -1177,6 +1187,7 @@ void Display::update() {
         else if (App::mode() == AppMode::BADUSB) BadUsbMode::draw(mainCanvas);
         else if (App::mode() == AppMode::MP3) Mp3PlayerMode::draw(mainCanvas);
         else if (App::mode() == AppMode::INSPECTOR) InspectorPig::draw(mainCanvas);
+        else if (App::mode() == AppMode::DESK) DeskMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {
