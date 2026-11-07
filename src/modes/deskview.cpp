@@ -109,6 +109,7 @@ enum class Ph : uint8_t {
     UsbDraw,
     Usb,
     Type,
+    WaitYes,
     WaitPc,
     Serve,
     Live,
@@ -116,6 +117,8 @@ enum class Ph : uint8_t {
 };
 
 enum class Stage : uint8_t {
+    Lang,
+    WaitLang,
     Win,
     WaitRun,
     Ps,
@@ -124,6 +127,9 @@ enum class Stage : uint8_t {
     Ip,
     Tail,
     WaitFile,
+    WaitCmd,
+    Ask,
+    Pause,
     Run,
     Done
 };
@@ -151,6 +157,8 @@ static uint8_t s_pct = 0;
 static WiFiUDP s_udp;
 static WebServer* s_web = nullptr;
 static char* s_py = nullptr;
+static bool s_cmdWin = false;
+static bool s_confirmed = false;
 static uint8_t* s_buf = nullptr;
 static uint16_t s_partLen[kMaxChunks];
 static uint16_t s_asmFid = 0xFFFF;
@@ -415,6 +423,12 @@ static void buildRun() {
     } else if (s_act == Act::Install) {
         snprintf(s_cmd, sizeof(s_cmd),
                  "pip install mss opencv-python numpy; python on3desk.py %s\n", s_ip);
+    } else if (s_act == Act::Wifi) {
+        int n = snprintf(s_cmd, sizeof(s_cmd),
+                         "start /min cmd /c \"curl.exe -o %%USERPROFILE%%\\on3desk.py http://%s/d & pip install mss opencv-python numpy & python %%USERPROFILE%%\\on3desk.py %s\"\n"
+                         "exit\n",
+                         s_ip, s_ip);
+        if (n < 0 || n >= (int)sizeof(s_cmd)) s_cmd[0] = '\0';
     } else {
         snprintf(s_cmd, sizeof(s_cmd),
                  "powershell -WindowStyle Minimized -Command \"python on3desk.py %s\"\n", s_ip);
@@ -427,25 +441,48 @@ static void armText(const char* text, Stage nextAfterWait) {
     s_pos = 0;
 }
 
+static const char kCmdOpen[] = "cmd\n";
+static const char kAsk[] = "choice /c 1 /m \"Press 1 on the pig\"\n";
+
 static bool typingDone() {
     uint32_t now = millis();
+    if (s_stage == Stage::Lang) {
+        // Win+Space selects the next Windows input language. Russian -> English
+        // when those two are installed.
+        BadUsbHid::usbModifierCombo(true, false, false, false, ' ');
+        s_stage = Stage::WaitLang;
+        s_deadline = now + 700;
+        return false;
+    }
     if (s_stage == Stage::Win) {
         BadUsbHid::usbModifierCombo(true, false, false, false, 'r');
         s_stage = Stage::WaitRun;
         s_deadline = now + 800;
         return false;
     }
-    if (s_stage == Stage::WaitRun || s_stage == Stage::WaitPs ||
-        s_stage == Stage::WaitFile) {
+    if (s_stage == Stage::WaitLang || s_stage == Stage::WaitRun ||
+        s_stage == Stage::WaitPs || s_stage == Stage::WaitFile ||
+        s_stage == Stage::WaitCmd || s_stage == Stage::Pause) {
         if (now < s_deadline) return false;
-        if (s_stage == Stage::WaitRun) {
+        if (s_stage == Stage::WaitLang) {
+            s_stage = Stage::Win;
+        } else if (s_stage == Stage::WaitRun) {
             if (s_act == Act::Install) {
                 s_stage = Stage::Ps;
                 armText(kPs, Stage::Ps);
+            } else if (s_act == Act::Wifi) {
+                s_stage = Stage::Run;
+                armText(kCmdOpen, Stage::Run);
             } else {
                 s_stage = Stage::Run;
                 armText(s_cmd, Stage::Run);
             }
+        } else if (s_stage == Stage::WaitCmd) {
+            s_stage = Stage::Ask;
+            armText(kAsk, Stage::Ask);
+        } else if (s_stage == Stage::Pause) {
+            s_stage = Stage::Run;
+            armText(s_cmd, Stage::Run);
         } else if (s_stage == Stage::WaitPs) {
             if (s_quick) {
                 s_stage = Stage::Run;
@@ -480,8 +517,18 @@ static bool typingDone() {
             s_deadline = now + 400;
             break;
         case Stage::Run:
+            if (s_act == Act::Wifi && !s_cmdWin) {
+                s_cmdWin = true;
+                s_stage = Stage::WaitCmd;
+                s_deadline = now + 1400;
+                break;
+            }
             s_stage = Stage::Done;
             s_pct = 100;
+            return true;
+        case Stage::Ask:
+            s_stage = Stage::Done;
+            s_pct = 40;
             return true;
         default:
             return true;
@@ -707,7 +754,7 @@ void update() {
                 s_ph = Ph::Fail;
                 return;
             }
-            s_ph = Ph::Serve;
+            s_ph = Ph::UsbDraw;
             return;
         }
         s_ph = Ph::UsbDraw;
@@ -737,14 +784,29 @@ void update() {
     }
     if (s_ph == Ph::Usb) {
         if (UsbSdMode::isRunning()) UsbSdMode::stop();
-        if (!BadUsbHid::usbBegin() || !BadUsbHid::usbWaitHost(12000)) {
+        uint32_t usbWait = (s_act == Act::Wifi) ? 8000 : 12000;
+        if (!BadUsbHid::usbBegin() || !BadUsbHid::usbWaitHost(usbWait)) {
+            if (s_act == Act::Wifi) {
+                BadUsbHid::usbEnd();
+                s_ph = Ph::Serve;
+                return;
+            }
             setMsg("PC did not see the USB keyboard.");
             s_ph = Ph::Fail;
             return;
         }
         s_usb = true;
         buildRun();
-        s_stage = Stage::Win;
+        if (s_act == Act::Wifi && s_cmd[0] == '\0') {
+            BadUsbHid::usbReleaseAll();
+            BadUsbHid::usbEnd();
+            s_usb = false;
+            s_ph = Ph::Serve;
+            return;
+        }
+        s_cmdWin = false;
+        s_confirmed = false;
+        s_stage = Stage::Lang;
         s_cur = nullptr;
         s_pos = 0;
         s_typed = 0;
@@ -764,11 +826,43 @@ void update() {
         }
         if (typingDone() && s_stage == Stage::Done) {
             BadUsbHid::usbReleaseAll();
+            if (s_act == Act::Wifi) {
+                for (int i = 0; i < 6; i++) {
+                    if (s_web) s_web->handleClient();
+                    delay(15);
+                }
+            }
             if (s_act == Act::Remove) {
                 s_ph = Ph::Note;
+            } else if (s_act == Act::Wifi && !s_confirmed) {
+                s_ph = Ph::WaitYes;
             } else {
                 s_waitSince = millis();
                 s_ph = Ph::WaitPc;
+            }
+        }
+        return;
+    }
+    if (s_ph == Ph::WaitYes) {
+        if (esc) {
+            stop();
+            return;
+        }
+        if (s_web) s_web->handleClient();
+        if (edge) {
+            char c = 0;
+            for (char k : st.word) {
+                c = k;
+                break;
+            }
+            if (c == '1' || c == 'y' || c == 'Y') {
+                typeChar('1');
+                s_confirmed = true;
+                s_stage = Stage::Pause;
+                s_deadline = millis() + 800;
+                s_cur = nullptr;
+                s_pos = 0;
+                s_ph = Ph::Type;
             }
         }
         return;
@@ -778,8 +872,12 @@ void update() {
             stop();
             return;
         }
+        if (s_web) s_web->handleClient();
         pollNet();
-        if (s_haveFrame) s_ph = Ph::Live;
+        if (s_haveFrame) {
+            endHttp();
+            s_ph = Ph::Live;
+        }
         return;
     }
     if (s_ph == Ph::Live) {
@@ -825,7 +923,7 @@ void draw(M5Canvas& canvas) {
             "FN+, left   FN+/ right",
             "Same key works with FN held",
             "SD /0N3P0rK/on3desk.py",
-            "WIFI: CMD curl, no USB.",
+            "WIFI: Win+Space, then press 1.",
             "` menu     FN+ESC leave"
         };
         canvas.fillSprite(0x2145);
@@ -846,7 +944,7 @@ void draw(M5Canvas& canvas) {
         canvas.setTextDatum(top_left);
         canvas.setTextSize(1);
         canvas.setTextColor(0xFFE0);
-        canvas.drawString("CMD on the PC. ^ then Enter.", 2, 0);
+        canvas.drawString("No USB. Open CMD. ^ then Enter.", 2, 0);
         canvas.setTextColor(0x07E0);
         canvas.drawString("curl.exe -o on3desk.py ^", 2, 14);
         canvas.drawString(url, 2, 26);
@@ -907,11 +1005,18 @@ void draw(M5Canvas& canvas) {
     }
     if (s_ph == Ph::UsbDraw || s_ph == Ph::Usb) {
         static const char* rows[] = {
-            "Plug USB into the PC.",
-            "The install starts itself.",
+            "Win+Space switches to English.",
+            "Then the command is typed.",
+            "Hands off the PC keyboard.",
             "` cancel"
         };
-        lines(canvas, "DESK", rows, 3);
+        static const char* wifi[] = {
+            "Win+Space switches to English.",
+            "Then a CMD window opens.",
+            "Hands off the PC keyboard.",
+            "` cancel"
+        };
+        lines(canvas, "DESK", s_act == Act::Wifi ? wifi : rows, 4);
         return;
     }
     if (s_ph == Ph::Type) {
@@ -922,7 +1027,8 @@ void draw(M5Canvas& canvas) {
         canvas.drawString("TYPING", DISPLAY_W / 2, 8);
         canvas.setTextSize(1);
         canvas.setTextColor(0xEF5D);
-        canvas.drawString(s_quick ? "Starting saved on3desk.py" : "Writing on3desk.py. Hands off.",
+        canvas.drawString(s_act == Act::Wifi ? "English, then CMD. Hands off." :
+                          (s_quick ? "ENG, then start on3desk.py" : "ENG, then write on3desk.py"),
                           DISPLAY_W / 2, 36);
         canvas.drawRoundRect(20, 58, 200, 16, 3, 0xEF5D);
         int w = (int)s_pct * 196 / 100;
@@ -931,6 +1037,17 @@ void draw(M5Canvas& canvas) {
         snprintf(pct, sizeof(pct), "%u%%", (unsigned)s_pct);
         canvas.drawString(pct, DISPLAY_W / 2, 80);
         canvas.drawString("` abort", DISPLAY_W / 2, 94);
+        return;
+    }
+    if (s_ph == Ph::WaitYes) {
+        static const char* rows[] = {
+            "CMD is open. Layout is English.",
+            "Press 1 on the pig.",
+            "That starts the install.",
+            "",
+            "` stops"
+        };
+        lines(canvas, "DESK", rows, 5);
         return;
     }
     if (s_ph == Ph::WaitPc) {
@@ -948,7 +1065,16 @@ void draw(M5Canvas& canvas) {
             "",
             "` stops"
         };
-        lines(canvas, "DESK", s_quick ? quick : full, 5);
+        static const char* wifi[] = {
+            "Installing in a small window.",
+            "First pip can take a minute.",
+            "The picture starts after that.",
+            "",
+            "` stops"
+        };
+        const char* const* rows = s_quick ? quick : full;
+        if (s_act == Act::Wifi) rows = wifi;
+        lines(canvas, "DESK", rows, 5);
         return;
     }
     if (s_ph == Ph::Fail) {
@@ -1004,6 +1130,7 @@ void getStatusLine(char* out, size_t n) {
     if (s_ph == Ph::Menu) snprintf(out, n, "DESK  ; . PICK  ENT");
     else if (s_ph == Ph::Info) snprintf(out, n, "DESK  INFO  ` MENU  FN+ESC OUT");
     else if (s_ph == Ph::Serve) snprintf(out, n, "DESK  WIFI  TYPE IN CMD");
+    else if (s_ph == Ph::WaitYes) snprintf(out, n, "DESK  PRESS 1");
     else if (s_ph == Ph::Type) snprintf(out, n, "DESK  TYPE %u%%", (unsigned)s_pct);
     else if (s_ph == Ph::WaitPc) snprintf(out, n, "DESK  WAITING");
     else if (s_ph == Ph::Live) snprintf(out, n, "DESK");
