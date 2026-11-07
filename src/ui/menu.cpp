@@ -64,7 +64,7 @@ static const char* const H_PIG[] = {
     "SKIN SEASON SKY LAYERS LIFE."
 };
 static const char* const H_SET[] = {
-    "SYSTEM STATUS RADIO.",
+    "SYSTEM RADIO BLE GPS KEYS.",
     "EACH PAGE ITS OWN KNOBS."
 };
 static const char* const H_TASKS[] = {
@@ -87,13 +87,17 @@ static const char* const H_BLESET[] = {
     "BURST AND ADV TIME.",
     "ATTACK > BLE USES THESE."
 };
+static const char* const H_GPSSET[] = {
+    "UART BAUD. GROVE AND ADV.",
+    "4800 TO 115200. ENT EDIT."
+};
 static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
     "HOME WIFI FOR S-SYNC."
 };
 static const char* const H_CONNECT_GRP[] = {
-    "WIFI BADUSB USB-SD XFER DESK.",
-    "DESK SHOWS YOUR OWN MONITOR."
+    "WIFI BADUSB USB-SD XFER DESK GPS.",
+    "DESK IS THE MONITOR. GPS IS YOU."
 };
 static const char* const H_BADUSB[] = {
     "DUCKY USB/BLE LIVE + PANEL.",
@@ -106,6 +110,10 @@ static const char* const H_XFER[] = {
 static const char* const H_DESK[] = {
     "YOUR MONITOR ON THIS SCREEN.",
     "ONE START. IT INSTALLS AND RUNS."
+};
+static const char* const H_GPS[] = {
+    "OWN POSITION. GROVE OR ADV CAP.",
+    "FIX WORLD TRAIL. ^/v PAGE."
 };
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
@@ -204,6 +212,7 @@ static const Item G_SET[] = {
     {"::", "STATUS",  19, H_STAT,   2},
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
+    {"GP", "GPS",     29, H_GPSSET, 2},
     {"**", "KEYS",    18, H_KEYS,   2},
     {"[:", "FILES",   20, H_FILEMGR,2}
 };
@@ -212,7 +221,8 @@ static const Item G_CONNECT[] = {
     {"KB", "BADUSB",  21, H_BADUSB, 2},
     {"U:", "USB SD",  17, H_USB,    2},
     {"F:", "XFER",    22, H_XFER,   2},
-    {"PC", "DESK",    27, H_DESK,   2}
+    {"PC", "DESK",    27, H_DESK,   2},
+    {"GP", "GPS",     28, H_GPS,    2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -242,8 +252,8 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 6;
-    if (g == GroupId::CONNECT) return 5;
+    if (g == GroupId::SET) return 7;
+    if (g == GroupId::CONNECT) return 6;
     return 0;
 }
 
@@ -308,6 +318,10 @@ static void doAction(uint8_t id) {
             SettingsMenu::show(SettingsPage::BLE);
             App::setMode(AppMode::TUNE);
             break;
+        case 29:
+            SettingsMenu::show(SettingsPage::GPS);
+            App::setMode(AppMode::TUNE);
+            break;
         case 18:
             SettingsMenu::show(SettingsPage::KEYS);
             App::setMode(AppMode::TUNE);
@@ -339,6 +353,10 @@ static void doAction(uint8_t id) {
         case 27:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::DESK);
+            break;
+        case 28:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::GPS);
             break;
         case 23:
             App::setMode(AppMode::TASKS);
@@ -470,7 +488,7 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 bool tryHotkey() {
     static const uint8_t ACT[HOTKEY_COUNT] = {
         2, 1, 10, 9, 13, 15, 16, 4, 11, 20,
-        7, 22, 21, 17, 6, 3, 23, 24
+        7, 22, 21, 17, 6, 3, 23, 24, 27, 28
     };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
@@ -646,6 +664,12 @@ static void drawModal(M5Canvas& canvas) {
             canvas.print(items[idx].label);
         }
     }
+    canvas.setTextSize(1);
+    canvas.setTextColor(BOX_EDGE);
+    if (s_modalScroll > 0)
+        canvas.drawString("^", boxX + boxW - 14, boxY + 22);
+    if ((uint8_t)(s_modalScroll + MODAL_VIS) < n)
+        canvas.drawString("v", boxX + boxW - 14, boxY + boxH - 12);
 }
 
 static void line(M5Canvas& canvas, int i, int y, const char* text, bool sel) {

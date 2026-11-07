@@ -196,12 +196,23 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-static const uint8_t HOTKEY_COUNT = 18;
-// 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP (unbound)
+// UART baud the GPS mode listens at. Index into GPS_BAUD_TAB.
+// Grove default is 9600 (Unit GPS). ADV cap default is 115200 (ATGM336H).
+static constexpr uint32_t GPS_BAUD_TAB[] = {4800u, 9600u, 19200u, 38400u, 57600u, 115200u};
+static constexpr uint8_t GPS_BAUD_N = 6;
+
+struct GpsConfig {
+    uint8_t groveIdx = 1;
+    uint8_t advIdx = 5;
+};
+
+static const uint8_t HOTKEY_COUNT = 20;
+// 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP; 18 = DESK; 19 = GPS.
+// DESK and GPS stay unbound until the user picks a key.
 struct HotkeyConfig {
     char key[HOTKEY_COUNT] = {
         'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f',
-        0, 0, 0, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
 };
 static const uint8_t HOTKEY_RADIO = 8;
@@ -226,6 +237,7 @@ public:
     static PersonalityConfig& personality() { return personalityConfig; }
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
+    static GpsConfig& gps() { return gpsConfig; }
     static HotkeyConfig& hotkeys() { return hotkeyConfig; }
     static XferConfig& xfer() { return xferConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
@@ -240,6 +252,7 @@ private:
     static PersonalityConfig personalityConfig;
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
+    static GpsConfig gpsConfig;
     static HotkeyConfig hotkeyConfig;
     static XferConfig xferConfig;
     static bool initialized;

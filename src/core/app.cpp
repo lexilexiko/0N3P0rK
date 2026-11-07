@@ -18,6 +18,7 @@
 #include "../modes/mp3player.h"
 #include "../modes/inspectorpig.h"
 #include "../modes/deskview.h"
+#include "../modes/gpspig.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -55,7 +56,8 @@ bool overlayMode() {
            s_mode == AppMode::TASKS ||
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI ||
-           s_mode == AppMode::DESK;
+           s_mode == AppMode::DESK ||
+           s_mode == AppMode::GPS;
 }
 
 bool windowHidden() { return s_winHid && overlayMode(); }
@@ -96,6 +98,7 @@ const char* modeName() {
         case AppMode::TASKS:    return "TASKS";
         case AppMode::INSPECTOR:return "INSPECT";
         case AppMode::DESK:     return "DESK";
+        case AppMode::GPS:      return "GPS";
         default:                return "?";
     }
 }
@@ -118,6 +121,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::INSPECTOR && InspectorPig::isRunning()) InspectorPig::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     if (s_mode == AppMode::DESK && DeskMode::isRunning()) DeskMode::stop();
+    if (s_mode == AppMode::GPS && GpsMode::isRunning()) GpsMode::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -135,6 +139,7 @@ void setMode(AppMode m) {
     if (m == AppMode::INSPECTOR) InspectorPig::start();
     if (m == AppMode::TASKS) TaskManager::start();
     if (m == AppMode::DESK) DeskMode::start();
+    if (m == AppMode::GPS) GpsMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -384,6 +389,9 @@ void loop() {
     } else if (s_mode == AppMode::DESK) {
         DeskMode::update();
         if (!DeskMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::GPS) {
+        GpsMode::update();
+        if (!GpsMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
@@ -404,7 +412,8 @@ void loop() {
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
         s_mode == AppMode::WIFI || s_mode == AppMode::TASKS ||
         s_mode == AppMode::INSPECTOR ||
-        s_mode == AppMode::DESK) return;
+        s_mode == AppMode::DESK ||
+        s_mode == AppMode::GPS) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();

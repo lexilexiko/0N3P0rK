@@ -8,6 +8,7 @@
 PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
+GpsConfig Config::gpsConfig;
 HotkeyConfig Config::hotkeyConfig;
 XferConfig Config::xferConfig;
 bool Config::initialized = false;
@@ -109,6 +110,11 @@ bool Config::init() {
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
+    GpsConfig& g = gpsConfig;
+    g.groveIdx = s_prefs.getUChar("gpsg", g.groveIdx);
+    g.advIdx = s_prefs.getUChar("gpsa", g.advIdx);
+    if (g.groveIdx >= GPS_BAUD_N) g.groveIdx = 1;
+    if (g.advIdx >= GPS_BAUD_N) g.advIdx = 5;
 
     HotkeyConfig def{};
     hotkeyConfig = def;
@@ -282,6 +288,9 @@ bool Config::save() {
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
     s_prefs.putUShort("blea", b.advMs);
+    const GpsConfig& g = gpsConfig;
+    s_prefs.putUChar("gpsg", g.groveIdx);
+    s_prefs.putUChar("gpsa", g.advIdx);
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)

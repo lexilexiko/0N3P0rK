@@ -22,7 +22,8 @@ enum class AppMode : uint8_t {
     MP3,
     TASKS,
     INSPECTOR,
-    DESK
+    DESK,
+    GPS
 };
 
 namespace App {

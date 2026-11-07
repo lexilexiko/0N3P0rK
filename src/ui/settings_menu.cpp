@@ -198,6 +198,12 @@ static const Item BLE[] = {
 };
 static const uint8_t BLE_N = sizeof(BLE) / sizeof(BLE[0]);
 
+static const Item GPS[] = {
+    {"GROVE", Kind::VALUE, 0, 0, GPS_BAUD_N - 1, 1},
+    {"ADV",   Kind::VALUE, 1, 0, GPS_BAUD_N - 1, 1},
+};
+static const uint8_t GPS_N = sizeof(GPS) / sizeof(GPS[0]);
+
 static const Item KEYS[] = {
     {"AGGRO",    Kind::BIND, 0, 0, 0, 0},
     {"LIGHT",    Kind::BIND, 1, 0, 0, 0},
@@ -217,6 +223,8 @@ static const Item KEYS[] = {
     {"STOP",     Kind::BIND, 15, 0, 0, 0},
     {"TASKS",    Kind::BIND, 16, 0, 0, 0},
     {"SNAP",     Kind::BIND, 17, 0, 0, 0},
+    {"DESK",     Kind::BIND, 18, 0, 0, 0},
+    {"GPS",      Kind::BIND, 19, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -317,6 +325,10 @@ static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
     "MS EACH ADVERTISEMENT."
 };
+static const char* const H_GPS[] = {
+    "GROVE GPS BAUD. DEFAULT 9600.",
+    "ADV CAP BAUD. DEFAULT 115200."
+};
 static const char* const H_KEYS[] = {
     "AGGRESSIVE RADIO CAPTURE.",
     "LIGHT RADIO SNIFFER.",
@@ -335,7 +347,9 @@ static const char* const H_KEYS[] = {
     "HOME WIFI SETTINGS.",
     "STOP ACTIVE TASKS.",
     "OPEN TASK MANAGER.",
-    "SCREENSHOT."
+    "SCREENSHOT.",
+    "OPEN DESK.",
+    "OPEN GPS."
 };
 
 struct NetRow {
@@ -386,6 +400,7 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::RADIO_EDIT) { *n = s_editN; return s_editItems; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
+    if (s_page == SettingsPage::GPS) { *n = GPS_N; return GPS; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     if (s_page == SettingsPage::STATUS) { *n = 0; return nullptr; }
@@ -589,6 +604,12 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
+    if (s_page == SettingsPage::GPS) {
+        const GpsConfig& g = Config::gps();
+        uint8_t i = it.id == 0 ? g.groveIdx : g.advIdx;
+        if (i >= GPS_BAUD_N) i = it.id == 0 ? 1 : 5;
+        return i;
+    }
     return it.id == 0 ? b.burstMs : b.advMs;
 }
 
@@ -673,6 +694,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
     } else if (isRadioPage() && it.id == 31) {
         strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::GPS) {
+        uint8_t i = (uint8_t)getValue(it);
+        if (i >= GPS_BAUD_N) i = 0;
+        snprintf(raw, sizeof(raw), "%lu", (unsigned long)GPS_BAUD_TAB[i]);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -1048,6 +1073,13 @@ static bool setValue(const Item& it, int v) {
         Config::save();
         return true;
     }
+    if (s_page == SettingsPage::GPS) {
+        GpsConfig& g = Config::gps();
+        if (it.id == 0) g.groveIdx = (uint8_t)v;
+        else g.advIdx = (uint8_t)v;
+        Config::save();
+        return true;
+    }
     if (it.id == 0) b.burstMs = (uint16_t)v;
     else b.advMs = (uint16_t)v;
     Config::save();
@@ -1168,6 +1200,8 @@ const char* bottomHint() {
                 return H_SYSTEM[s_idx];
             if (s_page == SettingsPage::BLE && s_idx < sizeof(H_BLE) / sizeof(H_BLE[0]))
                 return H_BLE[s_idx];
+            if (s_page == SettingsPage::GPS && s_idx < sizeof(H_GPS) / sizeof(H_GPS[0]))
+                return H_GPS[s_idx];
             if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
                 return H_SCENE[s_idx];
             if (s_page == SettingsPage::SCENE_TREES &&
@@ -1744,6 +1778,7 @@ void draw(M5Canvas& canvas) {
         title = editTitle;
     }
     else if (s_page == SettingsPage::BLE) title = "BLE";
+    else if (s_page == SettingsPage::GPS) title = "GPS";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
 
     canvas.setTextDatum(top_center);

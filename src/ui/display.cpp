@@ -32,6 +32,7 @@
 #include "../modes/inspectorpig.h"
 #include "../modes/mp3player.h"
 #include "../modes/deskview.h"
+#include "../modes/gpspig.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -1020,6 +1021,9 @@ void Display::drawBottomBar() {
             case AppMode::DESK:
                 DeskMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::GPS:
+                GpsMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -1171,7 +1175,8 @@ void Display::update() {
          App::mode() == AppMode::MP3 ||
          App::mode() == AppMode::PIGPASS ||
          App::mode() == AppMode::INSPECTOR ||
-         App::mode() == AppMode::DESK);
+         App::mode() == AppMode::DESK ||
+         App::mode() == AppMode::GPS);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
@@ -1188,6 +1193,7 @@ void Display::update() {
         else if (App::mode() == AppMode::MP3) Mp3PlayerMode::draw(mainCanvas);
         else if (App::mode() == AppMode::INSPECTOR) InspectorPig::draw(mainCanvas);
         else if (App::mode() == AppMode::DESK) DeskMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::GPS) GpsMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

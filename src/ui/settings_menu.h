@@ -16,7 +16,8 @@ enum class SettingsPage : uint8_t {
     FLORA = 8,
     SCENE_TREES = 9,
     SCENE_EFFECTS = 10,
-    SCENE_OTHER = 11
+    SCENE_OTHER = 11,
+    GPS = 12
 };
 
 namespace SettingsMenu {
