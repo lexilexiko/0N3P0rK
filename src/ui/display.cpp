@@ -13,6 +13,7 @@
 #include "../piglet/seasonal_fx.h"
 #include "../piglet/wolf.h"
 #include "../piglet/trees.h"
+#include "../piglet/gps_antenna.h"
 #include "../piglet/scene_layers.h"
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
@@ -271,6 +272,7 @@ void Display::init() {
     SeasonalFx::init();
     Wolf::init();
     Trees::init();
+    GpsAntenna::init();
     SceneLayers::init();
 
     Serial.println("[DISPLAY] ok");
@@ -521,6 +523,8 @@ void Display::drawFarm() {
 
     if (sceneLive) {
         Avatar::draw(mainCanvas);
+        if (App::mode() == AppMode::FARM)
+            GpsAntenna::draw(mainCanvas, GpsMode::isRunning(), GpsMode::hasFix());
         if (wolfLive) Wolf::draw(mainCanvas);
         if (SceneLayers::weather) {
             Weather::drawBirds(mainCanvas, fg);
@@ -539,18 +543,6 @@ void Display::drawFarm() {
     if (sceneLive && App::mode() == AppMode::FARM &&
         !Cap::skipMenuOpen())
         Avatar::drawWaveRipples(mainCanvas);
-
-    if (sceneLive && App::mode() == AppMode::FARM && GpsMode::isRunning() &&
-        ((millis() / 360u) & 1u) == 0) {
-        const int sx = DISPLAY_W - 14;
-        const int sy = 24;
-        const uint16_t star = GpsMode::hasFix() ? 0x07FF : 0xFFE0;
-        mainCanvas.drawPixel(sx, sy - 2, star);
-        mainCanvas.drawFastHLine(sx - 2, sy, 5, star);
-        mainCanvas.drawFastVLine(sx, sy - 2, 5, star);
-        mainCanvas.drawPixel(sx - 2, sy + 2, star);
-        mainCanvas.drawPixel(sx + 2, sy - 2, star);
-    }
 
     if (Cap::skipMenuOpen()) {
         const uint16_t panel = 0x2104;

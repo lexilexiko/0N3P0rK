@@ -5,6 +5,7 @@
 #include "scene_layers.h"
 #include "seasonal_fx.h"
 #include "trees.h"
+#include "gps_antenna.h"
 #include "ground.h"
 #include "sky.h"
 #include "props.h"
@@ -2063,6 +2064,7 @@ bool Avatar::tryStompTree() {
                     (jumpActive && getJumpLiftPx() > 3);
     int feet = currentX + 14 * PX;
     bool hit = Trees::tryStompFruitTree(feet, airborne);
+    if (!hit) hit = GpsAntenna::tryStomp(feet, airborne);
     if (hit) triggerSparkles(4);
     return hit;
 }

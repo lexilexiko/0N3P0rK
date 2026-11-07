@@ -669,9 +669,11 @@ The LED is intentionally quiet to save battery:
 | Other utility screens | Off |
 | Disabled in `SET → SYSTEM` | Always off |
 
-When GPS is running on the farm scene, a small blinking satellite star appears
-instead of changing the season LED color. It is yellow while searching and cyan
-with a valid fix.
+When GPS is running on the farm scene, a separate, tree-like antenna grows in
+the field and changes its foliage with the season. Its signal marks are green
+with a valid fix and yellow while searching. Three airborne stomps break it;
+while GPS remains enabled, it grows back after a short pause. The seasonal LED
+color is unchanged.
 
 Brightness changes are applied immediately and are saved in the device
 configuration. The LED is a status hint only; the display and serial log

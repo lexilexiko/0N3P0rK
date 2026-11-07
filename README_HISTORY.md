@@ -398,8 +398,10 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   running.
 - GPS can continue tracking after leaving its display and resumes at boot when
   enabled. **TASKS** shows fix/search status and can force-stop the service.
-- Added a blinking GPS satellite star on the farm scene: yellow while searching
-  and cyan with a valid fix. GPS no longer overrides the season LED color.
+- Added a separate, procedural GPS antenna object to the farm scene. It changes
+  with the season, grows while GPS is enabled, shows green/yellow signal marks
+  for fix/search status, and can be broken by three airborne stomps before it
+  grows back. GPS does not override the season LED.
 - Matched the Grove connection to UART2 with the Cardputer GPIO 1/2 defaults;
   retained GPIO 15/13 for the ADV LoRa cap. Older saved baud indexes are
   migrated to the supported rates.
