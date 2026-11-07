@@ -83,6 +83,9 @@ pio run -t upload --upload-port COMx
 ```
 
 - Platform: `espressif32@6.12.0`  
+- Pinned board libraries: M5Unified `0.2.21`, M5Cardputer `1.1.1`,
+  M5GFX `0.2.35`, FastLED `3.10.3`. Other dependencies keep their configured
+  version ranges.
 - Artifact: `.pio/build/m5cardputer/firmware.bin`  
 - Version injected from `platformio.ini` → `custom_version`
 
