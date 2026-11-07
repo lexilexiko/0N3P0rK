@@ -197,13 +197,15 @@ struct BleConfig {
 };
 
 // UART baud the GPS mode listens at. Index into GPS_BAUD_TAB.
-// Grove default is 9600 (Unit GPS). ADV cap default is 115200 (ATGM336H).
-static constexpr uint32_t GPS_BAUD_TAB[] = {4800u, 9600u, 19200u, 38400u, 57600u, 115200u};
-static constexpr uint8_t GPS_BAUD_N = 6;
+// Bruce validates the real-world GPS UART values it supports as:
+// 9600, 19200, 38400, 57600, 115200. 4800 is a legacy/rare value and not a
+// normal default for modern Grove GPS modules.
+static constexpr uint32_t GPS_BAUD_TAB[] = {9600u, 19200u, 38400u, 57600u, 115200u};
+static constexpr uint8_t GPS_BAUD_N = 5;
 
 struct GpsConfig {
-    uint8_t groveIdx = 1;
-    uint8_t advIdx = 5;
+    uint8_t groveIdx = 0;
+    uint8_t advIdx = 4;
 };
 
 static const uint8_t HOTKEY_COUNT = 20;
