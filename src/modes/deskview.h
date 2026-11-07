@@ -16,6 +16,9 @@ void draw(M5Canvas& canvas);
 // Live picture is painted on the panel itself (16-bit), not the 8-bit menu canvas.
 bool paintDirect();
 bool isRunning();
+// Bytes taken from the heap for the picture, the served script, and the UDP
+// socket. stop() and leaving a session return this to zero.
+size_t heapHeld();
 void getStatusLine(char* out, size_t n);
 
 }  // namespace DeskMode

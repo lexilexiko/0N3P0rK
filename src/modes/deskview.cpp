@@ -23,6 +23,8 @@ static const uint16_t kPort = 1234;
 static const uint16_t kChunk = 1400;
 static const uint8_t kMaxChunks = 12;
 static const size_t kBufBytes = (size_t)kChunk * kMaxChunks;
+// WiFiUDP::begin mallocs this tx buffer. stop() frees it.
+static const size_t kUdpTxBytes = 1460;
 
 // A later start only runs on3desk.py. The long pip install is for the first PC.
 static const char kPs[] = "powershell\n";
@@ -208,6 +210,8 @@ static bool ensureBuf() {
         s_ph = Ph::Fail;
         return false;
     }
+    Serial.printf("[DESK] took picture %u heap=%u\n",
+                  (unsigned)kBufBytes, (unsigned)ESP.getFreeHeap());
     return true;
 }
 
@@ -215,6 +219,8 @@ static void freeBuf() {
     if (s_buf) {
         heap_caps_free(s_buf);
         s_buf = nullptr;
+        Serial.printf("[DESK] picture returned heap=%u\n",
+                      (unsigned)ESP.getFreeHeap());
     }
     s_jpgLen = 0;
     s_dirty = false;
@@ -369,6 +375,15 @@ static void endHttp() {
         free(s_py);
         s_py = nullptr;
     }
+}
+
+size_t heapHeld() {
+    size_t n = 0;
+    if (s_buf) n += kBufBytes;
+    if (s_py) n += kPyCap;
+    if (s_web) n += sizeof(WebServer);
+    if (s_udpOn) n += kUdpTxBytes;
+    return n;
 }
 
 static void sendPy() {
@@ -577,16 +592,16 @@ void start() {
 }
 
 static void releaseSession() {
+    size_t held = heapHeld();
     if (s_havePeer && s_udpOn) {
         for (int i = 0; i < 4; i++) {
             sendCmd("STOP");
             delay(25);
         }
     }
-    if (s_udpOn) {
-        s_udp.stop();
-        s_udpOn = false;
-    }
+    // stop() frees the 1460-byte tx buffer even if begin() failed halfway.
+    s_udp.stop();
+    s_udpOn = false;
     endHttp();
     s_havePeer = false;
     s_haveFrame = false;
@@ -602,6 +617,10 @@ static void releaseSession() {
     }
     s_cmdWin = false;
     s_confirmed = false;
+    if (held) {
+        Serial.printf("[DESK] returned %u heap=%u\n",
+                      (unsigned)held, (unsigned)ESP.getFreeHeap());
+    }
 }
 
 static void backMenu() {
@@ -779,6 +798,8 @@ void update() {
         if (!s_udpOn) {
             s_udpOn = s_udp.begin(kPort);
             if (!s_udpOn) {
+                // begin() can malloc its tx buffer and then fail the socket.
+                s_udp.stop();
                 setMsg("UDP port did not open.");
                 s_ph = Ph::Fail;
                 return;
