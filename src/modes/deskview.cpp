@@ -1,6 +1,8 @@
 #include "deskview.h"
 
 #include "../net/ap_sta.h"
+#include "../storage/littlefs_ops.h"
+#include <SD.h>
 #include "../piglet/avatar.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"
@@ -20,16 +22,14 @@ static const uint16_t kChunk = 1400;
 static const uint8_t kMaxChunks = 12;
 static const size_t kBufBytes = (size_t)kChunk * kMaxChunks;
 
-// Same steps as the working desktop tool: PowerShell, pip, then on3desk.py.
-// The file is typed before pip, so the console is idle and does not drop keys.
+// A later start only runs on3desk.py. The long pip install is for the first PC.
 static const char kPs[] = "powershell\n";
-static const char kRun[] = "pip install mss opencv-python numpy; python on3desk.py\n";
 static const char kHead[] =
     "Set-Content -Path on3desk.py -Encoding ascii -Value @'\n"
-    "import mss,cv2,socket,numpy as np,struct,time,os\n"
-    "UDP_IP='";
+    "import mss,cv2,socket,numpy as np,struct,time,os,sys,ctypes\n"
+    "UDP_IP=sys.argv[1] if len(sys.argv)>1 else '0.0.0.0'\n";
 static const char kTail[] =
-    R"PY('
+    R"PY(ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(),6)
 UDP_PORT=1234
 sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,2097152)
@@ -95,7 +95,11 @@ while True:
 '@
 )PY";
 
+enum class Act : uint8_t { Connect, Install, Remove };
+
 enum class Ph : uint8_t {
+    Menu,
+    Note,
     Intro,
     JoinDraw,
     Join,
@@ -129,6 +133,11 @@ static Ph s_ph = Ph::Intro;
 static Stage s_stage = Stage::Win;
 static char s_msg[96];
 static char s_ip[16];
+static char s_cmd[320];
+static bool s_quick = true;
+static Act s_act = Act::Connect;
+static uint8_t s_pick = 0;
+static uint32_t s_waitSince = 0;
 static const char* s_cur = nullptr;
 static size_t s_pos = 0;
 static size_t s_typed = 0;
@@ -317,6 +326,39 @@ static void typeChar(char ch) {
     if (s_pct > 100) s_pct = 100;
 }
 
+void publishScript(const char* ip) {
+    if (!Storage::available()) return;
+    const char* use = (ip && ip[0]) ? ip : "255.255.255.255";
+    File f = SD.open("/0N3P0rK/on3desk.py", FILE_WRITE);
+    if (!f) {
+        Serial.println("[DESK] could not write SD script");
+        return;
+    }
+    f.print("import mss,cv2,socket,numpy as np,struct,time,os,sys,ctypes\n");
+    f.print("UDP_IP=sys.argv[1] if len(sys.argv)>1 else '");
+    f.print(use);
+    f.print("'\n");
+    const char* cut = strstr(kTail, "\n'@");
+    if (cut) f.write((const uint8_t*)kTail, (size_t)(cut - kTail));
+    else f.print(kTail);
+    f.print("\n");
+    f.close();
+    Serial.printf("[DESK] SD /0N3P0rK/on3desk.py ip=%s\n", use);
+}
+
+static void buildRun() {
+    if (s_act == Act::Remove) {
+        snprintf(s_cmd, sizeof(s_cmd),
+                 "powershell -WindowStyle Minimized -Command \"Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like '*on3desk.py*'} | ForEach-Object {Stop-Process -Id $_.ProcessId -Force}; Remove-Item on3desk.py -Force\"\n");
+    } else if (s_act == Act::Install) {
+        snprintf(s_cmd, sizeof(s_cmd),
+                 "pip install mss opencv-python numpy; python on3desk.py %s\n", s_ip);
+    } else {
+        snprintf(s_cmd, sizeof(s_cmd),
+                 "powershell -WindowStyle Minimized -Command \"python on3desk.py %s\"\n", s_ip);
+    }
+}
+
 static void armText(const char* text, Stage nextAfterWait) {
     (void)nextAfterWait;
     s_cur = text ? text : "";
@@ -335,14 +377,24 @@ static bool typingDone() {
         s_stage == Stage::WaitFile) {
         if (now < s_deadline) return false;
         if (s_stage == Stage::WaitRun) {
-            s_stage = Stage::Ps;
-            armText(kPs, Stage::Ps);
+            if (s_act == Act::Install) {
+                s_stage = Stage::Ps;
+                armText(kPs, Stage::Ps);
+            } else {
+                s_stage = Stage::Run;
+                armText(s_cmd, Stage::Run);
+            }
         } else if (s_stage == Stage::WaitPs) {
-            s_stage = Stage::Head;
-            armText(kHead, Stage::Head);
+            if (s_quick) {
+                s_stage = Stage::Run;
+                armText(s_cmd, Stage::Run);
+            } else {
+                s_stage = Stage::Head;
+                armText(kHead, Stage::Head);
+            }
         } else {
             s_stage = Stage::Run;
-            armText(kRun, Stage::Run);
+            armText(s_cmd, Stage::Run);
         }
         return false;
     }
@@ -358,10 +410,6 @@ static bool typingDone() {
             s_deadline = now + 1600;
             break;
         case Stage::Head:
-            s_stage = Stage::Ip;
-            armText(s_ip, Stage::Ip);
-            break;
-        case Stage::Ip:
             s_stage = Stage::Tail;
             armText(kTail, Stage::Tail);
             break;
@@ -397,12 +445,13 @@ void start() {
     s_joined = false;
     s_usb = false;
     s_udpOn = false;
-    s_ph = Ph::JoinDraw;
+    s_ph = Ph::Menu;
+    s_pick = 0;
     s_havePeer = false;
     s_peerPort = 0;
     s_paused = false;
     s_follow = false;
-    s_info = true;
+    s_info = false;
     s_q = 50;
     s_sharp = 0;
     s_zoom = 1.0f;
@@ -495,8 +544,6 @@ static void liveKeys() {
     } else if (c == 'p' || c == 'P') {
         s_paused = !s_paused;
         osd(s_paused ? "PAUSED" : "LIVE");
-    } else if (c == 'i' || c == 'I') {
-        s_info = !s_info;
     }
 }
 
@@ -506,6 +553,39 @@ void update() {
     bool esc = keyEsc() && M5Cardputer.Keyboard.isChange();
     bool enter = M5Cardputer.Keyboard.keysState().enter && M5Cardputer.Keyboard.isChange();
 
+    if (s_ph == Ph::Menu) {
+        if (esc) {
+            stop();
+            return;
+        }
+        if (enter) {
+            s_act = (Act)s_pick;
+            s_quick = (s_act == Act::Connect);
+            s_ph = (s_act == Act::Remove) ? Ph::UsbDraw : Ph::JoinDraw;
+            return;
+        }
+        if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+            Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
+            char c = 0;
+            for (char k : st.word) {
+                c = k;
+                break;
+            }
+            if ((c == ';' || c == ',') && s_pick > 0) s_pick--;
+            if ((c == '.' || c == '/') && s_pick < 2) s_pick++;
+        }
+        return;
+    }
+    if (s_ph == Ph::Note) {
+        if (s_usb) {
+            BadUsbHid::usbReleaseAll();
+            BadUsbHid::usbEnd();
+            s_usb = false;
+        }
+        if (esc) stop();
+        else if (enter) s_ph = Ph::Menu;
+        return;
+    }
     if (s_ph == Ph::Intro) {
         if (esc) stop();
         else if (enter) s_ph = Ph::JoinDraw;
@@ -529,6 +609,7 @@ void update() {
         }
         IPAddress ip = WiFi.localIP();
         snprintf(s_ip, sizeof(s_ip), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+        publishScript(s_ip);
         if (!s_udpOn) {
             s_udpOn = s_udp.begin(kPort);
             if (!s_udpOn) {
@@ -556,11 +637,13 @@ void update() {
             return;
         }
         s_usb = true;
+        buildRun();
         s_stage = Stage::Win;
         s_cur = nullptr;
         s_pos = 0;
         s_typed = 0;
-        s_total = strlen(kPs) + strlen(kHead) + strlen(s_ip) + strlen(kTail) + strlen(kRun);
+        s_total = strlen(s_cmd);
+        if (s_act == Act::Install) s_total += strlen(kPs) + strlen(kHead) + strlen(kTail);
         if (!s_total) s_total = 1;
         s_pct = 0;
         s_ph = Ph::Type;
@@ -575,7 +658,12 @@ void update() {
         }
         if (typingDone() && s_stage == Stage::Done) {
             BadUsbHid::usbReleaseAll();
-            s_ph = Ph::WaitPc;
+            if (s_act == Act::Remove) {
+                s_ph = Ph::Note;
+            } else {
+                s_waitSince = millis();
+                s_ph = Ph::WaitPc;
+            }
         }
         return;
     }
@@ -598,6 +686,38 @@ void update() {
 }
 
 void draw(M5Canvas& canvas) {
+    if (s_ph == Ph::Menu) {
+        static const char* items[] = { "CONNECT", "INSTALL", "DELETE" };
+        canvas.fillSprite(0x2145);
+        canvas.setTextDatum(top_center);
+        canvas.setTextSize(2);
+        canvas.setTextColor(0xFFE0);
+        canvas.drawString("DESK", DISPLAY_W / 2, 2);
+        canvas.setTextSize(1);
+        canvas.setTextColor(0xEF5D);
+        canvas.drawString("SD /0N3P0rK/on3desk.py", DISPLAY_W / 2, 20);
+        canvas.setTextSize(1);
+        for (int i = 0; i < 3; i++) {
+            canvas.setTextColor(i == (int)s_pick ? 0x07E0 : 0xEF5D);
+            char row[24];
+            snprintf(row, sizeof(row), "%s %s", i == (int)s_pick ? ">" : " ", items[i]);
+            canvas.drawString(row, DISPLAY_W / 2, 32 + i * 16);
+        }
+        canvas.setTextColor(0xEF5D);
+        canvas.drawString("; . pick    ENT    ` back", DISPLAY_W / 2, 88);
+        return;
+    }
+    if (s_ph == Ph::Note) {
+        static const char* rows[] = {
+            "on3desk.py removed.",
+            "The PowerShell window",
+            "closes itself.",
+            "",
+            "ENT menu     ` back"
+        };
+        lines(canvas, "DESK", rows, 5);
+        return;
+    }
     if (s_ph == Ph::Intro) {
         static const char* rows[] = {
             "Your PC, same network as the pig.",
@@ -651,7 +771,8 @@ void draw(M5Canvas& canvas) {
         canvas.drawString("TYPING", DISPLAY_W / 2, 8);
         canvas.setTextSize(1);
         canvas.setTextColor(0xEF5D);
-        canvas.drawString("pip, then on3desk.py. Hands off.", DISPLAY_W / 2, 36);
+        canvas.drawString(s_quick ? "Starting saved on3desk.py" : "Writing on3desk.py. Hands off.",
+                          DISPLAY_W / 2, 36);
         canvas.drawRoundRect(20, 58, 200, 16, 3, 0xEF5D);
         int w = (int)s_pct * 196 / 100;
         if (w > 0) canvas.fillRect(22, 60, w, 12, 0x07E0);
@@ -662,14 +783,21 @@ void draw(M5Canvas& canvas) {
         return;
     }
     if (s_ph == Ph::WaitPc) {
-        static const char* rows[] = {
-            "Same install as the old tool.",
-            "pip, then on3desk.py starts itself.",
-            "First install can take a few minutes.",
+        static const char* quick[] = {
+            "Starting the script already",
+            "on this PC.",
+            "ENT writes it again.",
             "",
-            "` stops and closes the script"
+            "` stops"
         };
-        lines(canvas, "DESK", rows, 5);
+        static const char* full[] = {
+            "Installing, then the picture",
+            "starts by itself.",
+            "First pip can take a few minutes.",
+            "",
+            "` stops"
+        };
+        lines(canvas, "DESK", s_quick ? quick : full, 5);
         return;
     }
     if (s_ph == Ph::Fail) {
@@ -709,47 +837,25 @@ void draw(M5Canvas& canvas) {
 
 bool paintDirect() {
     if (!s_run || s_ph != Ph::Live) return false;
-    bool show = s_info || millis() < s_osdUntil;
     if (!s_haveFrame || !s_buf || s_jpgLen < 4) {
         M5.Display.fillScreen(BLACK);
-        M5.Display.setTextColor(WHITE);
-        M5.Display.setTextSize(1);
-        M5.Display.setCursor(8, 48);
-        M5.Display.print("Waiting for the PC picture...");
-        M5.Display.setCursor(8, 64);
-        M5.Display.print(s_ip);
-        s_osdWas = false;
         return true;
     }
-    if (s_dirty || (s_osdWas && !show)) {
+    if (s_dirty) {
         M5.Display.drawJpg(s_buf, s_jpgLen, 0, 0, DISPLAY_W, DISPLAY_H);
         s_dirty = false;
-    }
-    s_osdWas = show;
-    if (show) {
-        char line[40];
-        if (millis() < s_osdUntil && s_osd[0]) {
-            snprintf(line, sizeof(line), "%s", s_osd);
-        } else {
-            snprintf(line, sizeof(line), "%dfps Q%d z%.2f %s",
-                     s_fps, s_q, s_zoom, s_paused ? "PAUSE" : "");
-        }
-        M5.Display.fillRect(0, 0, DISPLAY_W, 12, BLACK);
-        M5.Display.setTextSize(1);
-        M5.Display.setTextColor(YELLOW);
-        M5.Display.setCursor(2, 2);
-        M5.Display.print(line);
     }
     return true;
 }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_ph == Ph::Type) snprintf(out, n, "DESK  TYPE %u%%", (unsigned)s_pct);
-    else if (s_ph == Ph::WaitPc) snprintf(out, n, "DESK  INSTALLING");
-    else if (s_ph == Ph::Live) snprintf(out, n, "DESK  %d FPS", s_fps);
+    if (s_ph == Ph::Menu) snprintf(out, n, "DESK  ; . PICK  ENT");
+    else if (s_ph == Ph::Type) snprintf(out, n, "DESK  TYPE %u%%", (unsigned)s_pct);
+    else if (s_ph == Ph::WaitPc) snprintf(out, n, "DESK  WAITING");
+    else if (s_ph == Ph::Live) snprintf(out, n, "DESK");
     else if (s_ph == Ph::Fail) snprintf(out, n, "DESK  CHECK THE PC");
-    else snprintf(out, n, "DESK  ENT NEXT  ` BACK");
+    else snprintf(out, n, "DESK  ` BACK");
 }
 
 }  // namespace DeskMode

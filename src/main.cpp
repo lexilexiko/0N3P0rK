@@ -20,6 +20,7 @@
 #include "cap/sniffer.h"
 #include "modes/evilpig.h"
 #include "modes/pigpass.h"
+#include "modes/deskview.h"
 #include "board/led.h"
 
 static void preInitWiFiDriverEarly() {
@@ -59,6 +60,8 @@ void setup() {
 
     if (!Storage::begin()) {
         Serial.println("[BOOT] LittleFS failed - continuing");
+    } else {
+        DeskMode::publishScript(nullptr);
     }
     Board::startKeyboard();
     Serial.printf("[BOOT] board=%s\n", Board::modelLabel());
