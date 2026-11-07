@@ -72,6 +72,7 @@ void begin() {
     TaskManager::begin();
     pinMode(0, INPUT_PULLUP);
     s_g0Was = digitalRead(0) == LOW;
+    if (Config::gps().enabled) GpsMode::start();
 }
 
 AppMode mode() { return s_mode; }
@@ -121,7 +122,6 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::INSPECTOR && InspectorPig::isRunning()) InspectorPig::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     if (s_mode == AppMode::DESK && DeskMode::isRunning()) DeskMode::stop();
-    if (s_mode == AppMode::GPS && GpsMode::isRunning()) GpsMode::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -312,6 +312,7 @@ void loop() {
     bool g0 = digitalRead(0) == LOW;
     if (g0 && !s_g0Was) Display::toggleScreenPower();
     s_g0Was = g0;
+    GpsMode::update();
     if (Display::isScreenForcedOff()) return;
 
     // Any key wakes the dimmed backlight (not only isChange, not only FARM).
@@ -390,7 +391,6 @@ void loop() {
         DeskMode::update();
         if (!DeskMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::GPS) {
-        GpsMode::update();
         if (!GpsMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {

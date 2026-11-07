@@ -203,9 +203,25 @@ struct BleConfig {
 static constexpr uint32_t GPS_BAUD_TAB[] = {9600u, 19200u, 38400u, 57600u, 115200u};
 static constexpr uint8_t GPS_BAUD_N = 5;
 
+enum class GpsSource : uint8_t {
+    GROVE = 0,
+    ADV_CAP = 1,
+    CUSTOM = 2
+};
+static constexpr uint8_t GPS_SOURCE_N = 3;
+
 struct GpsConfig {
+    bool enabled = false;
+    GpsSource source = GpsSource::GROVE;
+    bool powerSave = false;
+    uint8_t trackIntervalSec = 1;
+    int8_t timezoneOffset = 0;
     uint8_t groveIdx = 0;
     uint8_t advIdx = 4;
+    uint8_t groveRx = 1;
+    uint8_t groveTx = 2;
+    uint8_t advRx = 15;
+    uint8_t advTx = 13;
 };
 
 static const uint8_t HOTKEY_COUNT = 20;

@@ -393,6 +393,18 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   active and are freed when the task stops, keeping heap impact low.
 - The ADV keeps the LoRa radio inactive while GPS runs so the position mode stays
   quiet and independent from the radio stack.
+- Added **SETTINGS → GPS** controls for GPS on/off, baud rate, RX/TX GPIOs, and
+  the live GPS view. UART changes are applied immediately while the service is
+  running.
+- GPS can continue tracking after leaving its display and resumes at boot when
+  enabled. **TASKS** shows fix/search status and can force-stop the service.
+- Added a blinking GPS satellite star on the farm scene: yellow while searching
+  and cyan with a valid fix. GPS no longer overrides the season LED color.
+- Matched the Grove connection to UART2 with the Cardputer GPIO 1/2 defaults;
+  retained GPIO 15/13 for the ADV LoRa cap. Older saved baud indexes are
+  migrated to the supported rates.
+- Added GPS source presets, optional UART power saving, configurable trail
+  interval, and local-time offset settings.
 
 #### Shared waits
 

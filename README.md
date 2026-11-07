@@ -12,9 +12,9 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Release note:** version **1.4.1** adds **CONNECT → DESK**, a second screen
-> for your own PC on the same home Wi-Fi. The picture buffer is taken from the
-> heap only while a session needs it and is returned when DESK stops.
+> **Release note:** version **1.4.1** adds persistent GPS controls under
+> **SETTINGS → GPS**: enable/disable, baud, RX/TX pins, live status, and a
+> running indicator. GPS continues tracking after leaving its display.
 
 ---
 
@@ -585,16 +585,42 @@ while those buffers are held.
 
 **GPS** is a small live position screen that reads NMEA sentences from a GPS
 module and plots the current fix, local trail, and world position on the
-farm-sized display. The mode is available from the main task list as **GPS**.
+farm-sized display. It can also keep tracking in the background when its screen
+is closed.
 
 ### Hardware and connection
 
-- Original **M5Cardputer**: Grove GPS on the dedicated GPS port
+- Original **M5Cardputer**: Grove GPS on the dedicated GPS port (UART2; default
+  RX GPIO **1**, TX GPIO **2**)
 - **Cardputer ADV**: GPS UART on the LoRa cap; the LoRa radio is held inactive
-  while the GPS mode is running
+  while the GPS mode is running (default RX GPIO **15**, TX GPIO **13**)
 - Protocol: standard NMEA `GGA` / `RMC` sentences over UART
-- Default baud is board-dependent and is selected from the runtime GPS config
-  (`GPS_BAUD_TAB`); the screen shows the active port and speed
+- Default baud is **9600** for Grove and **115200** for ADV. Supported rates
+  are **9600**, **19200**, **38400**, **57600**, and **115200**.
+
+### GPS settings and background tracking
+
+Open **SETTINGS → GPS** for the GPS controls:
+
+| Setting | Action |
+| --- | --- |
+| **GPS** | Start/stop tracking; the setting is saved and enabled GPS resumes after reboot |
+| **GPS SRC** | Select Grove, ADV LoRa cap, or custom pins |
+| **PWR SAVE** | Pause the GPS UART when the GPS view is closed and radio capture is idle |
+| **TRACK INT** | Set the minimum seconds between trail points |
+| **BAUD** | Select the receiver's UART speed |
+| **RX PIN** / **TX PIN** | Change UART GPIOs; RX and TX must be distinct; editing either switches to custom |
+| **TZ OFFSET** | Set the local time offset from UTC |
+| **GPS VIEW** | Open the live GPS display |
+
+The source presets configure Grove at UART2 / GPIO 1/2 / 9600 baud, or ADV cap
+at UART1 / GPIO 15/13 / 115200 baud. **CUSTOM** keeps the selected board's
+separate pin and baud settings. Changing source, baud, or pins while GPS is
+running reopens the UART immediately. **PWR SAVE** is off by default; when on,
+the GPS UART pauses outside the live GPS view and radio capture, then resumes
+when needed. The receiver itself remains powered. Use **TASKS → GPS → ENT** to
+check status or force-stop the service. Leaving the live view with `ESC` returns
+to the menu but does not stop tracking.
 
 ### What the mode shows
 
@@ -606,7 +632,8 @@ The GPS screen has three views:
 - **TRAIL**: local path around the last known position, with zoom width control
 
 Use `;` or `.` to switch pages. On the trail page, `-` / `=` zoom in and out
-for a tighter or wider area. `ESC` leaves GPS and resumes the farm scene.
+for a tighter or wider area. `ESC` leaves the view; tracking continues until
+disabled in **SETTINGS → GPS** or stopped from **TASKS**.
 
 ### Fix and trail behavior
 
@@ -615,12 +642,14 @@ for a tighter or wider area. `ESC` leaves GPS and resumes the farm scene.
 - The mode keeps a small rolling trail and writes tracked points to
   `/0N3P0rK/gps/track.csv` on the SD card when storage is available.
 - A new point is only recorded when it moves far enough from the previous one,
-  so the track stays clean instead of filling with jitter.
+  and the configured **TRACK INT** has elapsed, so the track stays clean
+  instead of filling with jitter.
+- The FIX view displays receiver time adjusted by **TZ OFFSET**.
 - When there is no fix yet, the screen reports `NO DATA`, `SEARCH`, or `STALE`
   depending on whether the receiver is only cold-starting or dragging old data.
 
 This is a “quiet” utility tool: it captures position data without turning on the
-radio stack, and it frees its UART buffer and memory when stopped.
+radio stack. Its UART buffer and trail memory are freed when tracking is stopped.
 
 ## LED indicator
 
@@ -637,8 +666,12 @@ The LED is intentionally quiet to save battery:
 | Normal farm / menu | Soft ambient color based on the selected season |
 | Light capture | Off except for a short green blink when a handshake file is written |
 | Aggressive or pinned capture | Off except for three green blinks when a handshake file is written |
-| Loot, Wi-Fi, and other utility screens | Off |
+| Other utility screens | Off |
 | Disabled in `SET → SYSTEM` | Always off |
+
+When GPS is running on the farm scene, a small blinking satellite star appears
+instead of changing the season LED color. It is yellow while searching and cyan
+with a valid fix.
 
 Brightness changes are applied immediately and are saved in the device
 configuration. The LED is a status hint only; the display and serial log

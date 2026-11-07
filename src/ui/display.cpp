@@ -540,6 +540,18 @@ void Display::drawFarm() {
         !Cap::skipMenuOpen())
         Avatar::drawWaveRipples(mainCanvas);
 
+    if (sceneLive && App::mode() == AppMode::FARM && GpsMode::isRunning() &&
+        ((millis() / 360u) & 1u) == 0) {
+        const int sx = DISPLAY_W - 14;
+        const int sy = 24;
+        const uint16_t star = GpsMode::hasFix() ? 0x07FF : 0xFFE0;
+        mainCanvas.drawPixel(sx, sy - 2, star);
+        mainCanvas.drawFastHLine(sx - 2, sy, 5, star);
+        mainCanvas.drawFastVLine(sx, sy - 2, 5, star);
+        mainCanvas.drawPixel(sx - 2, sy + 2, star);
+        mainCanvas.drawPixel(sx + 2, sy - 2, star);
+    }
+
     if (Cap::skipMenuOpen()) {
         const uint16_t panel = 0x2104;
         const uint16_t accent = 0x07FF;

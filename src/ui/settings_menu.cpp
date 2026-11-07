@@ -19,6 +19,7 @@
 #include "../cap/packs/pack_ctx.h"
 #include "../board/board.h"
 #include "../build_info.h"
+#include "../modes/gpspig.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
 #include <string.h>
@@ -199,10 +200,70 @@ static const Item BLE[] = {
 static const uint8_t BLE_N = sizeof(BLE) / sizeof(BLE[0]);
 
 static const Item GPS[] = {
-    {"GROVE", Kind::VALUE, 0, 0, GPS_BAUD_N - 1, 1},
-    {"ADV",   Kind::VALUE, 1, 0, GPS_BAUD_N - 1, 1},
+    {"GPS",     Kind::TOGGLE, 0, 0, 1, 1},
+    {"GPS SRC", Kind::VALUE,  1, 0, GPS_SOURCE_N - 1, 1},
+    {"PWR SAVE",Kind::TOGGLE, 2, 0, 1, 1},
+    {"TRACK INT",Kind::VALUE,3, 1, 30, 1},
+    {"BAUD",    Kind::VALUE,  4, 0, GPS_BAUD_N - 1, 1},
+    {"RX PIN",  Kind::VALUE,  5, 1, 48, 1},
+    {"TX PIN",  Kind::VALUE,  6, 1, 48, 1},
+    {"TZ OFFSET",Kind::VALUE,7, -12, 14, 1},
+    {"GPS VIEW",Kind::ACTION, 8, 0, 0, 0},
 };
 static const uint8_t GPS_N = sizeof(GPS) / sizeof(GPS[0]);
+
+static const char* gpsSourceName(int source) {
+    switch ((GpsSource)source) {
+        case GpsSource::GROVE: return "GROVE";
+        case GpsSource::ADV_CAP: return "ADV CAP";
+        case GpsSource::CUSTOM: return "CUSTOM";
+        default: return "GROVE";
+    }
+}
+
+static uint8_t& gpsBaudIndex(GpsConfig& gps) {
+    return Board::isAdv() ? gps.advIdx : gps.groveIdx;
+}
+
+static uint8_t& gpsRxPin(GpsConfig& gps) {
+    return Board::isAdv() ? gps.advRx : gps.groveRx;
+}
+
+static uint8_t& gpsTxPin(GpsConfig& gps) {
+    return Board::isAdv() ? gps.advTx : gps.groveTx;
+}
+
+static uint8_t gpsCurrentBaudIndex(const GpsConfig& gps) {
+    if (gps.source == GpsSource::GROVE) return 0;
+    if (gps.source == GpsSource::ADV_CAP) return GPS_BAUD_N - 1;
+    uint8_t i = Board::isAdv() ? gps.advIdx : gps.groveIdx;
+    return i < GPS_BAUD_N ? i : 0;
+}
+
+static uint8_t gpsCurrentRxPin(const GpsConfig& gps) {
+    if (gps.source == GpsSource::GROVE) return 1;
+    if (gps.source == GpsSource::ADV_CAP) return 15;
+    return Board::isAdv() ? gps.advRx : gps.groveRx;
+}
+
+static uint8_t gpsCurrentTxPin(const GpsConfig& gps) {
+    if (gps.source == GpsSource::GROVE) return 2;
+    if (gps.source == GpsSource::ADV_CAP) return 13;
+    return Board::isAdv() ? gps.advTx : gps.groveTx;
+}
+
+static void gpsUseCustom(GpsConfig& gps) {
+    if (gps.source == GpsSource::CUSTOM) return;
+    gpsBaudIndex(gps) = gpsCurrentBaudIndex(gps);
+    gpsRxPin(gps) = gpsCurrentRxPin(gps);
+    gpsTxPin(gps) = gpsCurrentTxPin(gps);
+    gps.source = GpsSource::CUSTOM;
+}
+
+static bool gpsPinAllowed(int pin) {
+    return pin > 0 && Board::gpioAllowed(pin) &&
+           (pin < 6 || pin > 11) && pin != 43 && pin != 44;
+}
 
 static const Item KEYS[] = {
     {"AGGRO",    Kind::BIND, 0, 0, 0, 0},
@@ -326,8 +387,15 @@ static const char* const H_BLE[] = {
     "MS EACH ADVERTISEMENT."
 };
 static const char* const H_GPS[] = {
-    "GROVE GPS BAUD. DEFAULT 9600.",
-    "ADV CAP BAUD. DEFAULT 115200."
+    "POSITION TRACKING ON/OFF.",
+    "GROVE / ADV CAP / CUSTOM PINS.",
+    "PAUSE UART WHEN NOT VIEWING OR HUNTING.",
+    "MINIMUM TIME BETWEEN SAVED TRAIL POINTS.",
+    "MATCH THE GPS MODULE UART SPEED.",
+    "GPS UART RECEIVE GPIO.",
+    "GPS UART TRANSMIT GPIO.",
+    "LOCAL TIME OFFSET FROM UTC.",
+    "OPEN THE LIVE GPS DISPLAY."
 };
 static const char* const H_KEYS[] = {
     "AGGRESSIVE RADIO CAPTURE.",
@@ -605,10 +673,18 @@ static int getValue(const Item& it) {
         }
     }
     if (s_page == SettingsPage::GPS) {
-        const GpsConfig& g = Config::gps();
-        uint8_t i = it.id == 0 ? g.groveIdx : g.advIdx;
-        if (i >= GPS_BAUD_N) i = it.id == 0 ? 1 : 5;
-        return i;
+        GpsConfig& g = Config::gps();
+        switch (it.id) {
+            case 0: return g.enabled ? 1 : 0;
+            case 1: return (int)g.source;
+            case 2: return g.powerSave ? 1 : 0;
+            case 3: return g.trackIntervalSec;
+            case 4: return gpsCurrentBaudIndex(g);
+            case 5: return gpsCurrentRxPin(g);
+            case 6: return gpsCurrentTxPin(g);
+            case 7: return g.timezoneOffset;
+            default: return 0;
+        }
     }
     return it.id == 0 ? b.burstMs : b.advMs;
 }
@@ -694,10 +770,18 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
     } else if (isRadioPage() && it.id == 31) {
         strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::GPS) {
+    } else if (s_page == SettingsPage::GPS && it.id == 1) {
+        strncpy(raw, gpsSourceName(getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::GPS && it.id == 3) {
+        snprintf(raw, sizeof(raw), "%dS", getValue(it));
+    } else if (s_page == SettingsPage::GPS && it.id == 4) {
         uint8_t i = (uint8_t)getValue(it);
         if (i >= GPS_BAUD_N) i = 0;
         snprintf(raw, sizeof(raw), "%lu", (unsigned long)GPS_BAUD_TAB[i]);
+    } else if (s_page == SettingsPage::GPS && (it.id == 5 || it.id == 6)) {
+        snprintf(raw, sizeof(raw), "G%d", getValue(it));
+    } else if (s_page == SettingsPage::GPS && it.id == 7) {
+        snprintf(raw, sizeof(raw), "UTC%+d", getValue(it));
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -1075,9 +1159,50 @@ static bool setValue(const Item& it, int v) {
     }
     if (s_page == SettingsPage::GPS) {
         GpsConfig& g = Config::gps();
-        if (it.id == 0) g.groveIdx = (uint8_t)v;
-        else g.advIdx = (uint8_t)v;
+        if (it.id == 0) {
+            if (v) {
+                GpsMode::start();
+                return GpsMode::isRunning();
+            }
+            GpsMode::stop();
+            return true;
+        }
+        if (it.id == 1) {
+            if (v < 0 || v >= GPS_SOURCE_N) return false;
+            if ((GpsSource)v == GpsSource::CUSTOM) gpsUseCustom(g);
+            else g.source = (GpsSource)v;
+            Config::save();
+            if (GpsMode::isRunning()) GpsMode::reconfigure();
+            return true;
+        }
+        if (it.id == 2) {
+            g.powerSave = v != 0;
+            Config::save();
+            GpsMode::updatePowerSave();
+            return true;
+        }
+        if (it.id == 3) {
+            g.trackIntervalSec = (uint8_t)v;
+        } else if (it.id == 4) {
+            gpsUseCustom(g);
+            gpsBaudIndex(g) = (uint8_t)v;
+        } else if (it.id == 5 || it.id == 6) {
+            uint8_t otherPin = it.id == 5 ? gpsCurrentTxPin(g) : gpsCurrentRxPin(g);
+            if (!gpsPinAllowed(v) || v == otherPin) {
+                Display::showToast(v == otherPin ? "RX/TX MUST DIFFER" : "INVALID GPIO", 1100);
+                return false;
+            }
+            gpsUseCustom(g);
+            uint8_t& pin = it.id == 5 ? gpsRxPin(g) : gpsTxPin(g);
+            pin = (uint8_t)v;
+        } else if (it.id == 7) {
+            g.timezoneOffset = (int8_t)v;
+        } else {
+            return false;
+        }
         Config::save();
+        if (GpsMode::isRunning() && (it.id == 4 || it.id == 5 || it.id == 6))
+            GpsMode::reconfigure();
         return true;
     }
     if (it.id == 0) b.burstMs = (uint16_t)v;
@@ -1226,6 +1351,8 @@ const char* bottomHint() {
                 return "ENT OPEN SECTION  ESC BACK";
             if (s_page == SettingsPage::SCENE_TREES && it[s_idx].id == 70)
                 return "ENT OPEN FLORA  ESC BACK";
+            if (s_page == SettingsPage::GPS && it[s_idx].id == 8)
+                return "ENT OPEN GPS VIEW  ESC BACK";
             return "ENT RESET RADIO  ESC BACK";
         }
         return "ENT EDIT  ^/v MOVE  ESC BACK";
@@ -1585,6 +1712,10 @@ void update() {
             s_idx = 2; s_scroll = 0; // land on EDIT row
             s_openMs = millis();
             SFX::play(SFX::BACK_NAV);
+        } else if (s_page == SettingsPage::GPS && cur.id == 8) {
+            GpsMode::start();
+            if (!GpsMode::isRunning()) return;
+            App::setMode(AppMode::GPS);
         }
         return;
     }

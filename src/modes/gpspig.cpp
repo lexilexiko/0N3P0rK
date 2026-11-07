@@ -2,6 +2,7 @@
 
 #include "gps_world.h"
 #include "../board/board.h"
+#include "../cap/sniffer.h"
 #include "../core/app.h"
 #include "../core/config.h"
 #include "../piglet/avatar.h"
@@ -18,10 +19,6 @@
 
 namespace GpsMode {
 
-static const int kRxPinGrove = 1;
-static const int kTxPinGrove = 2;
-static const int kRxPinAdv = 15;
-static const int kTxPinAdv = 13;
 static const int kLoraNss = 5;
 static const size_t kRxBuf = 1024;
 static const uint16_t kTrailCap = 160;
@@ -35,15 +32,18 @@ struct Pt {
     int32_t lon;
 };
 
-static HardwareSerial s_uart(1);
+static HardwareSerial s_uartGrove(2);
+static HardwareSerial s_uartAdv(1);
 static bool s_run = false;
 static bool s_uartOn = false;
 static bool s_keyWas = false;
+static bool s_sceneSuspended = false;
 static uint8_t s_page = 0;
 static uint8_t s_zoom = 1;
 static char s_nmea[96];
 static uint8_t s_nmeaLen = 0;
 static uint32_t s_bytes = 0;
+static uint32_t s_lastPointMs = 0;
 static bool s_valid = false;
 static bool s_havePos = false;
 static uint32_t s_fixMs = 0;
@@ -53,11 +53,15 @@ static float s_alt = 0;
 static float s_kmh = 0;
 static float s_course = 0;
 static int s_sats = 0;
+static int s_localHour = 0;
+static int s_localMinute = 0;
+static bool s_haveTime = false;
 static bool s_haveAlt = false;
 static bool s_haveSpd = false;
 static bool s_haveHdg = false;
 static Pt* s_pts = nullptr;
 static uint16_t s_nPts = 0;
+static HardwareSerial* s_openUart = nullptr;
 
 static int32_t toE7(float d) { return (int32_t)(d * 10000000.0f); }
 static float fromE7(int32_t e) { return (float)e / 10000000.0f; }
@@ -80,37 +84,97 @@ static float metersBetween(float la1, float lo1, float la2, float lo2) {
 }
 
 static void holdLoraOff() {
-    if (!Board::isAdv()) return;
+    if (!Board::isAdv() || Config::gps().source != GpsSource::ADV_CAP) return;
     pinMode(kLoraNss, OUTPUT);
     digitalWrite(kLoraNss, HIGH);
 }
 
+static bool sourceIsCustom() {
+    return Config::gps().source == GpsSource::CUSTOM;
+}
+
+static int defaultRxPin() {
+    return Config::gps().source == GpsSource::ADV_CAP ? 15 : 1;
+}
+
+static int defaultTxPin() {
+    return Config::gps().source == GpsSource::ADV_CAP ? 13 : 2;
+}
+
+static uint32_t defaultBaud() {
+    return Config::gps().source == GpsSource::ADV_CAP ? 115200u : 9600u;
+}
+
 static uint32_t activeBaud() {
     const GpsConfig& g = Config::gps();
+    if (!sourceIsCustom()) return defaultBaud();
     uint8_t i = Board::isAdv() ? g.advIdx : g.groveIdx;
     if (i >= GPS_BAUD_N) i = Board::isAdv() ? 4u : 0u;
     return GPS_BAUD_TAB[i];
 }
 
+static int activeRxPin() {
+    const GpsConfig& g = Config::gps();
+    if (!sourceIsCustom()) return defaultRxPin();
+    return Board::isAdv() ? g.advRx : g.groveRx;
+}
+
+static int activeTxPin() {
+    const GpsConfig& g = Config::gps();
+    if (!sourceIsCustom()) return defaultTxPin();
+    return Board::isAdv() ? g.advTx : g.groveTx;
+}
+
+static HardwareSerial& activeUart() {
+    GpsSource source = Config::gps().source;
+    if (source == GpsSource::GROVE) return s_uartGrove;
+    if (source == GpsSource::ADV_CAP) return s_uartAdv;
+    return Board::isAdv() ? s_uartAdv : s_uartGrove;
+}
+
+static void closeUart();
+
 static void openUart() {
+    if (s_uartOn) closeUart();
     holdLoraOff();
     uint32_t baud = activeBaud();
-    s_uart.setRxBufferSize(kRxBuf);
-    if (Board::isAdv()) s_uart.begin(baud, SERIAL_8N1, kRxPinAdv, kTxPinAdv);
-    else s_uart.begin(baud, SERIAL_8N1, kRxPinGrove, kTxPinGrove);
+    int rxPin = activeRxPin();
+    int txPin = activeTxPin();
+    HardwareSerial& uart = activeUart();
+    uart.setRxBufferSize(kRxBuf);
+    uart.begin(baud, SERIAL_8N1, rxPin, txPin);
+    s_openUart = &uart;
     s_uartOn = true;
+    const char* sourceName = Config::gps().source == GpsSource::GROVE ? "GROVE" :
+                             Config::gps().source == GpsSource::ADV_CAP ? "ADV CAP" : "CUSTOM";
     Serial.printf("[GPS] %s rx=%d tx=%d baud=%u\n",
-                  Board::isAdv() ? "ADV" : "GROVE",
-                  Board::isAdv() ? kRxPinAdv : kRxPinGrove,
-                  Board::isAdv() ? kTxPinAdv : kTxPinGrove,
+                  sourceName,
+                  rxPin, txPin,
                   (unsigned)baud);
 }
 
 static void closeUart() {
     if (!s_uartOn) return;
-    s_uart.end();
+    if (s_openUart) s_openUart->end();
+    s_openUart = nullptr;
     s_uartOn = false;
     holdLoraOff();
+}
+
+static bool shouldKeepUartAwake() {
+    const GpsConfig& g = Config::gps();
+    return !g.powerSave ||
+           (App::mode() == AppMode::GPS && !App::windowHidden()) ||
+           Cap::isRunning();
+}
+
+static void syncUartPower() {
+    if (!s_run) return;
+    if (shouldKeepUartAwake()) {
+        if (!s_uartOn) openUart();
+    } else if (s_uartOn) {
+        closeUart();
+    }
 }
 
 static bool nmeaOk(char* s) {
@@ -167,6 +231,9 @@ static void appendSd(float lat, float lon) {
 }
 
 static void notePoint(float lat, float lon) {
+    uint32_t now = millis();
+    uint32_t interval = (uint32_t)Config::gps().trackIntervalSec * 1000u;
+    if (s_nPts > 0 && now - s_lastPointMs < interval) return;
     if (s_pts && s_nPts > 0) {
         float la = fromE7(s_pts[s_nPts - 1].lat);
         float lo = fromE7(s_pts[s_nPts - 1].lon);
@@ -174,6 +241,23 @@ static void notePoint(float lat, float lon) {
     }
     pushPt(toE7(lat), toE7(lon));
     appendSd(lat, lon);
+    s_lastPointMs = now;
+}
+
+static bool updateLocalTime(const char* utc) {
+    if (!utc || strlen(utc) < 6) return false;
+    for (uint8_t i = 0; i < 6; i++)
+        if (utc[i] < '0' || utc[i] > '9') return false;
+    int hour = (utc[0] - '0') * 10 + utc[1] - '0';
+    int minute = (utc[2] - '0') * 10 + utc[3] - '0';
+    int second = (utc[4] - '0') * 10 + utc[5] - '0';
+    if (hour > 23 || minute > 59 || second > 60) return false;
+    int localMinutes = hour * 60 + minute + Config::gps().timezoneOffset * 60;
+    localMinutes = (localMinutes % 1440 + 1440) % 1440;
+    s_localHour = localMinutes / 60;
+    s_localMinute = localMinutes % 60;
+    s_haveTime = true;
+    return true;
 }
 
 static void takeFix(bool ok, float lat, float lon) {
@@ -225,6 +309,7 @@ static void onSentence(char* s) {
             s_course = (float)atof(f[8]);
             s_haveHdg = true;
         }
+        updateLocalTime(f[1]);
         takeFix(pos, lat, lon);
     }
 }
@@ -244,9 +329,11 @@ static void feed(char c) {
 
 static void pollUart() {
     if (!s_uartOn) return;
-    int n = s_uart.available();
+    if (!s_openUart) return;
+    HardwareSerial& uart = *s_openUart;
+    int n = uart.available();
     if (n > 80) n = 80;
-    while (n-- > 0) feed((char)s_uart.read());
+    while (n-- > 0) feed((char)uart.read());
 }
 
 static void loadTrail() {
@@ -291,10 +378,14 @@ static void loadTrail() {
 }
 
 static void syncScene() {
-    if (App::windowHidden()) {
-        if (Avatar::isSceneSuspended()) Avatar::resumeScene();
-    } else if (!Avatar::isSceneSuspended()) {
-        Avatar::suspendScene();
+    if (App::mode() == AppMode::GPS && !App::windowHidden()) {
+        if (!Avatar::isSceneSuspended()) {
+            Avatar::suspendScene();
+            s_sceneSuspended = true;
+        }
+    } else if (s_sceneSuspended) {
+        Avatar::resumeScene();
+        s_sceneSuspended = false;
     }
 }
 
@@ -309,6 +400,8 @@ void start() {
     if (s_run) return;
     s_pts = (Pt*)malloc((size_t)kTrailCap * sizeof(Pt));
     if (!s_pts) {
+        Config::gps().enabled = false;
+        Config::save();
         Display::showToast("LOW MEM", 1200);
         Serial.printf("[GPS] trail alloc failed heap=%u\n", (unsigned)ESP.getFreeHeap());
         return;
@@ -319,6 +412,7 @@ void start() {
     s_zoom = 1;
     s_nmeaLen = 0;
     s_bytes = 0;
+    s_lastPointMs = 0;
     s_valid = false;
     s_havePos = false;
     s_fixMs = 0;
@@ -326,16 +420,24 @@ void start() {
     s_haveSpd = false;
     s_haveHdg = false;
     s_sats = 0;
+    s_haveTime = false;
     s_keyWas = true;
     loadTrail();
-    openUart();
-    Avatar::suspendScene();
+    syncUartPower();
+    Config::gps().enabled = true;
+    Config::save();
     Serial.printf("[GPS] took %u heap=%u\n", (unsigned)heapHeld(), (unsigned)ESP.getFreeHeap());
     Display::showToast("GPS", 700);
 }
 
 void stop() {
-    if (!s_run && !s_pts && !s_uartOn) return;
+    if (!s_run && !s_pts && !s_uartOn) {
+        if (Config::gps().enabled) {
+            Config::gps().enabled = false;
+            Config::save();
+        }
+        return;
+    }
     size_t held = heapHeld();
     closeUart();
     free(s_pts);
@@ -343,7 +445,12 @@ void stop() {
     s_nPts = 0;
     s_run = false;
     s_valid = false;
-    Avatar::resumeScene();
+    Config::gps().enabled = false;
+    Config::save();
+    if (s_sceneSuspended) {
+        Avatar::resumeScene();
+        s_sceneSuspended = false;
+    }
     if (held) {
         Serial.printf("[GPS] returned %u heap=%u\n",
                       (unsigned)held, (unsigned)ESP.getFreeHeap());
@@ -352,16 +459,40 @@ void stop() {
 
 bool isRunning() { return s_run; }
 
+bool hasFix() {
+    return s_run && s_valid && s_fixMs && millis() - s_fixMs <= 8000;
+}
+
+void reconfigure() {
+    if (!s_run) return;
+    closeUart();
+    s_nmeaLen = 0;
+    s_bytes = 0;
+    s_valid = false;
+    s_havePos = false;
+    s_fixMs = 0;
+    s_haveAlt = false;
+    s_haveSpd = false;
+    s_haveHdg = false;
+    s_sats = 0;
+    s_haveTime = false;
+    syncUartPower();
+}
+
+void updatePowerSave() {
+    syncUartPower();
+}
+
 void update() {
     if (!s_run) return;
     syncScene();
+    syncUartPower();
     pollUart();
-    if (App::windowHidden()) return;
+    if (App::mode() != AppMode::GPS || App::windowHidden()) return;
     if (!keyNewPress(s_keyWas)) return;
     if (keyMin()) return;
     if (keyEsc()) {
-        SFX::play(SFX::BACK_NAV);
-        stop();
+        App::setMode(AppMode::MENU);
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed(';') || M5Cardputer.Keyboard.isKeyPressed(':')) {
@@ -390,8 +521,9 @@ static void drawFix(M5Canvas& canvas) {
     canvas.setTextSize(1);
     canvas.setTextColor(UiStyle::DIM);
     char port[24];
-    snprintf(port, sizeof(port), Board::isAdv() ? "ADV CAP   %lu" : "GROVE     %lu",
-             (unsigned long)activeBaud());
+    const char* sourceName = Config::gps().source == GpsSource::GROVE ? "GROVE" :
+                             Config::gps().source == GpsSource::ADV_CAP ? "ADV CAP" : "CUSTOM";
+    snprintf(port, sizeof(port), "%s   %lu", sourceName, (unsigned long)activeBaud());
     canvas.drawString(port, 8, 22);
     canvas.setTextColor(s_valid ? UiStyle::GREEN : UiStyle::GOLD);
     const char* state = "SEARCH";
@@ -425,6 +557,13 @@ static void drawFix(M5Canvas& canvas) {
         canvas.drawString(b, 8, 90);
     } else {
         canvas.drawString(s_bytes ? "COLD START NEEDS SKY" : "PLUG THE GPS AND WAIT", 8, 90);
+    }
+    if (s_haveTime) {
+        char time[20];
+        snprintf(time, sizeof(time), "UTC%+d %02d:%02d",
+                 Config::gps().timezoneOffset, s_localHour, s_localMinute);
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.drawString(time, 125, 90);
     }
 }
 
@@ -530,8 +669,19 @@ void draw(M5Canvas& canvas) {
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_page == 2) snprintf(out, n, "-/= ZOOM  ^/v PAGE  ESC BKSP");
-    else snprintf(out, n, "^/v PAGE  ESC BACK  BKSP HIDE");
+    if (!s_run) {
+        snprintf(out, n, "OFF");
+    } else if (Config::gps().powerSave && !s_uartOn) {
+        snprintf(out, n, "SLEEP");
+    } else if (hasFix()) {
+        snprintf(out, n, "FIX %02d SAT", s_sats);
+    } else if (s_bytes == 0) {
+        snprintf(out, n, "NO DATA");
+    } else if (s_havePos) {
+        snprintf(out, n, "STALE %02d SAT", s_sats);
+    } else {
+        snprintf(out, n, "SEARCH");
+    }
 }
 
 }  // namespace GpsMode

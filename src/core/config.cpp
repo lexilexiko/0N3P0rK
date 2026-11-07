@@ -29,8 +29,26 @@ static bool hotReserved(char c) {
 
 static Preferences s_prefs;
 
+static bool gpsPinAllowed(uint8_t pin) {
+    return Board::gpioAllowed(pin) && pin != 0 &&
+           (pin < 6 || pin > 11) && pin != 43 && pin != 44;
+}
+
+static uint8_t migrateGpsBaudIndex(uint8_t oldIndex) {
+    switch (oldIndex) {
+        case 0:
+        case 1: return 0;
+        case 2: return 1;
+        case 3: return 2;
+        case 4: return 3;
+        case 5: return 4;
+        default: return 0;
+    }
+}
+
 bool Config::init() {
     if (initialized) return true;
+    gpsConfig.source = Board::isAdv() ? GpsSource::ADV_CAP : GpsSource::GROVE;
     if (!s_prefs.begin("onelpig", false)) {
         Serial.println("[CFG] NVS open failed, using defaults");
         initialized = true;
@@ -112,15 +130,35 @@ bool Config::init() {
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
     GpsConfig& g = gpsConfig;
+    const uint8_t gpsConfigVersion = s_prefs.getUChar("gpsver", 0);
+    g.enabled = s_prefs.getBool("gpsen", g.enabled);
+    uint8_t sourceDefault = Board::isAdv() ? (uint8_t)GpsSource::ADV_CAP : (uint8_t)GpsSource::GROVE;
+    uint8_t gpsSource = s_prefs.getUChar("gpssrc", sourceDefault);
+    if (gpsSource >= GPS_SOURCE_N) gpsSource = sourceDefault;
+    g.source = (GpsSource)gpsSource;
+    g.powerSave = s_prefs.getBool("gpsps", g.powerSave);
+    g.trackIntervalSec = s_prefs.getUChar("gpsint", g.trackIntervalSec);
+    if (g.trackIntervalSec < 1 || g.trackIntervalSec > 30) g.trackIntervalSec = 1;
+    g.timezoneOffset = s_prefs.getChar("gpstz", g.timezoneOffset);
+    if (g.timezoneOffset < -12 || g.timezoneOffset > 14) g.timezoneOffset = 0;
     g.groveIdx = s_prefs.getUChar("gpsg", g.groveIdx);
     g.advIdx = s_prefs.getUChar("gpsa", g.advIdx);
-    if (Board::isAdv()) {
-        if (g.advIdx >= GPS_BAUD_N) g.advIdx = 4;
-        g.groveIdx = 0;
-    } else {
-        if (g.groveIdx >= GPS_BAUD_N) g.groveIdx = 0;
-        g.advIdx = 4;
+    if (gpsConfigVersion == 0) {
+        g.groveIdx = migrateGpsBaudIndex(g.groveIdx);
+        g.advIdx = migrateGpsBaudIndex(g.advIdx);
     }
+    if (g.groveIdx >= GPS_BAUD_N) g.groveIdx = 0;
+    if (g.advIdx >= GPS_BAUD_N) g.advIdx = 4;
+    g.groveRx = s_prefs.getUChar("gpsgrx", g.groveRx);
+    g.groveTx = s_prefs.getUChar("gpsgtx", g.groveTx);
+    g.advRx = s_prefs.getUChar("gpsarx", g.advRx);
+    g.advTx = s_prefs.getUChar("gpsatx", g.advTx);
+    if (!gpsPinAllowed(g.groveRx)) g.groveRx = 1;
+    if (!gpsPinAllowed(g.groveTx) || g.groveTx == g.groveRx)
+        g.groveTx = g.groveRx == 2 ? 1 : 2;
+    if (!gpsPinAllowed(g.advRx)) g.advRx = 15;
+    if (!gpsPinAllowed(g.advTx) || g.advTx == g.advRx)
+        g.advTx = g.advRx == 13 ? 15 : 13;
 
     HotkeyConfig def{};
     hotkeyConfig = def;
@@ -295,8 +333,18 @@ bool Config::save() {
     s_prefs.putUShort("bleb", b.burstMs);
     s_prefs.putUShort("blea", b.advMs);
     const GpsConfig& g = gpsConfig;
+    s_prefs.putUChar("gpsver", 1);
+    s_prefs.putBool("gpsen", g.enabled);
+    s_prefs.putUChar("gpssrc", (uint8_t)g.source);
+    s_prefs.putBool("gpsps", g.powerSave);
+    s_prefs.putUChar("gpsint", g.trackIntervalSec);
+    s_prefs.putChar("gpstz", g.timezoneOffset);
     s_prefs.putUChar("gpsg", g.groveIdx);
     s_prefs.putUChar("gpsa", g.advIdx);
+    s_prefs.putUChar("gpsgrx", g.groveRx);
+    s_prefs.putUChar("gpsgtx", g.groveTx);
+    s_prefs.putUChar("gpsarx", g.advRx);
+    s_prefs.putUChar("gpsatx", g.advTx);
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)

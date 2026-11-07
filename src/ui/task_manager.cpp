@@ -164,10 +164,13 @@ void rowInfo(Row row, char* out, size_t n) {
         }
         case GPS: {
             size_t held = GpsMode::heapHeld();
+            char status[20];
+            GpsMode::getStatusLine(status, sizeof(status));
             if (held)
-                snprintf(out, n, "HEAP %uK", (unsigned)((held + 1023) / 1024));
+                snprintf(out, n, "%s %uK", status,
+                         (unsigned)((held + 1023) / 1024));
             else
-                snprintf(out, n, "ON");
+                snprintf(out, n, "%s", status);
             break;
         }
         case STOP_ALL:
