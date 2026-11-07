@@ -11,6 +11,7 @@
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <WebServer.h>
 #include <esp_heap_caps.h>
 #include <stdio.h>
 #include <string.h>
@@ -95,7 +96,7 @@ while True:
 '@
 )PY";
 
-enum class Act : uint8_t { Connect, Install, Remove };
+enum class Act : uint8_t { Connect, Install, Remove, Wifi };
 
 enum class Ph : uint8_t {
     Menu,
@@ -109,6 +110,7 @@ enum class Ph : uint8_t {
     Usb,
     Type,
     WaitPc,
+    Serve,
     Live,
     Fail
 };
@@ -147,6 +149,8 @@ static uint32_t s_deadline = 0;
 static uint8_t s_pct = 0;
 
 static WiFiUDP s_udp;
+static WebServer* s_web = nullptr;
+static char* s_py = nullptr;
 static uint8_t* s_buf = nullptr;
 static uint16_t s_partLen[kMaxChunks];
 static uint16_t s_asmFid = 0xFFFF;
@@ -327,24 +331,81 @@ static void typeChar(char ch) {
     if (s_pct > 100) s_pct = 100;
 }
 
+static const size_t kPyCap = 3072;
+
+static size_t fillScript(char* dst, size_t cap, const char* ip) {
+    if (!dst || cap < 64) return 0;
+    const char* use = (ip && ip[0]) ? ip : "255.255.255.255";
+    const char* cut = strstr(kTail, "\n'@");
+    size_t tail = cut ? (size_t)(cut - kTail) : strlen(kTail);
+    int h = snprintf(dst, cap,
+                     "import mss,cv2,socket,numpy as np,struct,time,os,sys,ctypes\n"
+                     "UDP_IP=sys.argv[1] if len(sys.argv)>1 else '%s'\n",
+                     use);
+    if (h < 0 || (size_t)h >= cap || (size_t)h + tail + 2 > cap) return 0;
+    memcpy(dst + h, kTail, tail);
+    dst[h + tail] = '\n';
+    dst[h + tail + 1] = '\0';
+    return (size_t)h + tail + 1;
+}
+
+static void endHttp() {
+    if (s_web) {
+        s_web->stop();
+        delete s_web;
+        s_web = nullptr;
+    }
+    if (s_py) {
+        free(s_py);
+        s_py = nullptr;
+    }
+}
+
+static void sendPy() {
+    if (!s_web) return;
+    if (s_py) s_web->send(200, "text/plain", s_py);
+    else s_web->send(404, "text/plain", "missing");
+}
+
+static bool startHttp() {
+    endHttp();
+    s_py = (char*)malloc(kPyCap);
+    if (!s_py) return false;
+    if (!fillScript(s_py, kPyCap, s_ip)) {
+        free(s_py);
+        s_py = nullptr;
+        return false;
+    }
+    s_web = new WebServer(80);
+    if (!s_web) {
+        free(s_py);
+        s_py = nullptr;
+        return false;
+    }
+    s_web->on("/", HTTP_GET, sendPy);
+    s_web->on("/d", HTTP_GET, sendPy);
+    s_web->begin();
+    Serial.printf("[DESK] http://%s/d\n", s_ip);
+    return true;
+}
+
 void publishScript(const char* ip) {
     if (!Storage::available()) return;
-    const char* use = (ip && ip[0]) ? ip : "255.255.255.255";
-    File f = SD.open("/0N3P0rK/on3desk.py", FILE_WRITE);
-    if (!f) {
-        Serial.println("[DESK] could not write SD script");
-        return;
+    char* buf = (char*)malloc(kPyCap);
+    if (!buf) return;
+    size_t n = fillScript(buf, kPyCap, ip);
+    if (n) {
+        File f = SD.open("/0N3P0rK/on3desk.py", FILE_WRITE);
+        if (!f) {
+            Serial.println("[DESK] could not write SD script");
+        } else {
+            f.write((const uint8_t*)buf, n);
+            f.close();
+            Serial.printf("[DESK] SD /0N3P0rK/on3desk.py ip=%s\n",
+                          (ip && ip[0]) ? ip : "255.255.255.255");
+        }
     }
-    f.print("import mss,cv2,socket,numpy as np,struct,time,os,sys,ctypes\n");
-    f.print("UDP_IP=sys.argv[1] if len(sys.argv)>1 else '");
-    f.print(use);
-    f.print("'\n");
-    const char* cut = strstr(kTail, "\n'@");
-    if (cut) f.write((const uint8_t*)kTail, (size_t)(cut - kTail));
-    else f.print(kTail);
-    f.print("\n");
-    f.close();
-    Serial.printf("[DESK] SD /0N3P0rK/on3desk.py ip=%s\n", use);
+    free(buf);
 }
 
 static void buildRun() {
@@ -467,7 +528,7 @@ void start() {
 }
 
 void stop() {
-    if (!s_run && !s_buf && !s_udpOn && !s_usb && !s_joined) return;
+    if (!s_run && !s_buf && !s_udpOn && !s_usb && !s_joined && !s_web && !s_py) return;
     if (s_havePeer && s_udpOn) {
         for (int i = 0; i < 4; i++) {
             sendCmd("STOP");
@@ -478,6 +539,7 @@ void stop() {
         s_udp.stop();
         s_udpOn = false;
     }
+    endHttp();
     s_havePeer = false;
     if (s_usb) {
         BadUsbHid::usbReleaseAll();
@@ -499,7 +561,7 @@ bool isRunning() { return s_run; }
 
 static void pollNet() {
     if (!s_udpOn) return;
-    if (s_ph != Ph::WaitPc && s_ph != Ph::Live) return;
+    if (s_ph != Ph::WaitPc && s_ph != Ph::Live && s_ph != Ph::Serve) return;
     if (!ensureBuf()) return;
     for (int i = 0; i < 10; i++) {
         int n = s_udp.parsePacket();
@@ -569,7 +631,7 @@ void update() {
             return;
         }
         if (enter) {
-            if (s_pick == 3) {
+            if (s_pick == 4) {
                 s_ph = Ph::Info;
                 return;
             }
@@ -585,7 +647,7 @@ void update() {
                 break;
             }
             if ((c == ';' || c == ',') && s_pick > 0) s_pick--;
-            if ((c == '.' || c == '/') && s_pick < 3) s_pick++;
+            if ((c == '.' || c == '/') && s_pick < 4) s_pick++;
         }
         return;
     }
@@ -639,7 +701,30 @@ void update() {
                 return;
             }
         }
+        if (s_act == Act::Wifi) {
+            if (!startHttp()) {
+                setMsg("Could not share the script over Wi-Fi.");
+                s_ph = Ph::Fail;
+                return;
+            }
+            s_ph = Ph::Serve;
+            return;
+        }
         s_ph = Ph::UsbDraw;
+        return;
+    }
+    if (s_ph == Ph::Serve) {
+        if (esc) {
+            stop();
+            return;
+        }
+        if (s_web) s_web->handleClient();
+        pollNet();
+        if (s_ph != Ph::Serve) return;
+        if (s_haveFrame) {
+            endHttp();
+            s_ph = Ph::Live;
+        }
         return;
     }
     if (s_ph == Ph::Ready) {
@@ -712,7 +797,7 @@ void update() {
 
 void draw(M5Canvas& canvas) {
     if (s_ph == Ph::Menu) {
-        static const char* items[] = { "CONNECT", "INSTALL", "DELETE", "INFO" };
+        static const char* items[] = { "CONNECT", "INSTALL", "DELETE", "WIFI", "INFO" };
         canvas.fillSprite(0x2145);
         canvas.setTextDatum(top_center);
         canvas.setTextSize(2);
@@ -720,12 +805,12 @@ void draw(M5Canvas& canvas) {
         canvas.drawString("DESK", DISPLAY_W / 2, 0);
         canvas.setTextSize(1);
         canvas.setTextColor(0xEF5D);
-        canvas.drawString("SD /0N3P0rK/on3desk.py", DISPLAY_W / 2, 18);
-        for (int i = 0; i < 4; i++) {
+        canvas.drawString("SD /0N3P0rK/on3desk.py", DISPLAY_W / 2, 17);
+        for (int i = 0; i < 5; i++) {
             canvas.setTextColor(i == (int)s_pick ? 0x07E0 : 0xEF5D);
             char row[24];
             snprintf(row, sizeof(row), "%s %s", i == (int)s_pick ? ">" : " ", items[i]);
-            canvas.drawString(row, DISPLAY_W / 2, 30 + i * 14);
+            canvas.drawString(row, DISPLAY_W / 2, 28 + i * 12);
         }
         canvas.setTextColor(0xEF5D);
         canvas.drawString("; . pick   ENT   ` back", DISPLAY_W / 2, 90);
@@ -740,7 +825,7 @@ void draw(M5Canvas& canvas) {
             "FN+, left   FN+/ right",
             "Same key works with FN held",
             "SD /0N3P0rK/on3desk.py",
-            "Same Wi-Fi. English (US).",
+            "WIFI: CMD curl, no USB.",
             "` menu     FN+ESC leave"
         };
         canvas.fillSprite(0x2145);
@@ -750,6 +835,27 @@ void draw(M5Canvas& canvas) {
             canvas.setTextColor(i == 0 ? 0xFFE0 : 0xEF5D);
             canvas.drawString(rows[i], DISPLAY_W / 2, 2 + i * 11);
         }
+        return;
+    }
+    if (s_ph == Ph::Serve) {
+        char url[48];
+        char run[48];
+        snprintf(url, sizeof(url), "http://%s/d", s_ip);
+        snprintf(run, sizeof(run), "python on3desk.py %s", s_ip);
+        canvas.fillSprite(0x2145);
+        canvas.setTextDatum(top_left);
+        canvas.setTextSize(1);
+        canvas.setTextColor(0xFFE0);
+        canvas.drawString("CMD on the PC. ^ then Enter.", 2, 0);
+        canvas.setTextColor(0x07E0);
+        canvas.drawString("curl.exe -o on3desk.py ^", 2, 14);
+        canvas.drawString(url, 2, 26);
+        canvas.setTextColor(0xEF5D);
+        canvas.drawString("pip install mss opencv-python numpy", 2, 40);
+        canvas.drawString(run, 2, 54);
+        canvas.drawString("Same Wi-Fi. Picture follows.", 2, 68);
+        canvas.drawString("File already there: python line.", 2, 80);
+        canvas.drawString("` back", 2, 92);
         return;
     }
     if (s_ph == Ph::Note) {
@@ -897,6 +1003,7 @@ void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
     if (s_ph == Ph::Menu) snprintf(out, n, "DESK  ; . PICK  ENT");
     else if (s_ph == Ph::Info) snprintf(out, n, "DESK  INFO  ` MENU  FN+ESC OUT");
+    else if (s_ph == Ph::Serve) snprintf(out, n, "DESK  WIFI  TYPE IN CMD");
     else if (s_ph == Ph::Type) snprintf(out, n, "DESK  TYPE %u%%", (unsigned)s_pct);
     else if (s_ph == Ph::WaitPc) snprintf(out, n, "DESK  WAITING");
     else if (s_ph == Ph::Live) snprintf(out, n, "DESK");
