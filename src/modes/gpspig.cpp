@@ -88,7 +88,7 @@ static void holdLoraOff() {
 static uint32_t activeBaud() {
     const GpsConfig& g = Config::gps();
     uint8_t i = Board::isAdv() ? g.advIdx : g.groveIdx;
-    if (i >= GPS_BAUD_N) i = Board::isAdv() ? 5 : 1;
+    if (i >= GPS_BAUD_N) i = Board::isAdv() ? 4u : 0u;
     return GPS_BAUD_TAB[i];
 }
 

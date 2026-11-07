@@ -1,4 +1,5 @@
 #include "config.h"
+#include "../board/board.h"
 #include "../storage/littlefs_ops.h"
 #include "../cap/methods/method_ctx.h"
 #include "../cap/packs/pack_ctx.h"
@@ -113,8 +114,13 @@ bool Config::init() {
     GpsConfig& g = gpsConfig;
     g.groveIdx = s_prefs.getUChar("gpsg", g.groveIdx);
     g.advIdx = s_prefs.getUChar("gpsa", g.advIdx);
-    if (g.groveIdx >= GPS_BAUD_N) g.groveIdx = 1;
-    if (g.advIdx >= GPS_BAUD_N) g.advIdx = 5;
+    if (Board::isAdv()) {
+        if (g.advIdx >= GPS_BAUD_N) g.advIdx = 4;
+        g.groveIdx = 0;
+    } else {
+        if (g.groveIdx >= GPS_BAUD_N) g.groveIdx = 0;
+        g.advIdx = 4;
+    }
 
     HotkeyConfig def{};
     hotkeyConfig = def;
