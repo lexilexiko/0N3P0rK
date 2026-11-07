@@ -51,6 +51,10 @@ static float s_lat = 0;
 static float s_lon = 0;
 static float s_alt = 0;
 static float s_kmh = 0;
+static float s_speedSamples[5] = {};
+static uint8_t s_speedCount = 0;
+static uint8_t s_speedNext = 0;
+static uint32_t s_speedMs = 0;
 static float s_course = 0;
 static int s_sats = 0;
 static int s_localHour = 0;
@@ -273,6 +277,51 @@ static void takeFix(bool ok, float lat, float lon) {
     notePoint(lat, lon);
 }
 
+static void resetSpeed() {
+    s_kmh = 0;
+    s_speedCount = 0;
+    s_speedNext = 0;
+    s_speedMs = 0;
+    s_haveSpd = false;
+}
+
+static bool updateSpeed(const char* knotsText) {
+    if (!knotsText || !knotsText[0]) {
+        resetSpeed();
+        return false;
+    }
+
+    char* end = nullptr;
+    float knots = strtof(knotsText, &end);
+    if (end == knotsText || *end != '\0' || !isfinite(knots) ||
+        knots < 0.0f || knots > 550.0f) {
+        resetSpeed();
+        return false;
+    }
+
+    float kmh = knots * 1.852f;
+    if (kmh < 1.0f) kmh = 0.0f;
+    s_speedSamples[s_speedNext] = kmh;
+    s_speedNext = (uint8_t)((s_speedNext + 1) % 5);
+    if (s_speedCount < 5) s_speedCount++;
+
+    float sorted[5];
+    for (uint8_t i = 0; i < s_speedCount; i++) sorted[i] = s_speedSamples[i];
+    for (uint8_t i = 1; i < s_speedCount; i++) {
+        float value = sorted[i];
+        uint8_t j = i;
+        while (j > 0 && sorted[j - 1] > value) {
+            sorted[j] = sorted[j - 1];
+            j--;
+        }
+        sorted[j] = value;
+    }
+    s_kmh = sorted[s_speedCount / 2];
+    s_speedMs = millis();
+    s_haveSpd = s_speedCount >= 3;
+    return s_haveSpd;
+}
+
 static void onSentence(char* s) {
     if (!nmeaOk(s)) return;
     char* f[16];
@@ -301,10 +350,8 @@ static void onSentence(char* s) {
         float lat = 0, lon = 0;
         bool pos = f[2][0] == 'A' &&
                    parseDm(f[3], f[4], true, lat) && parseDm(f[5], f[6], false, lon);
-        if (f[7][0]) {
-            s_kmh = (float)atof(f[7]) * 1.852f;
-            s_haveSpd = true;
-        }
+        if (pos) updateSpeed(f[7]);
+        else resetSpeed();
         if (nf >= 9 && f[8][0]) {
             s_course = (float)atof(f[8]);
             s_haveHdg = true;
@@ -417,7 +464,7 @@ void start() {
     s_havePos = false;
     s_fixMs = 0;
     s_haveAlt = false;
-    s_haveSpd = false;
+    resetSpeed();
     s_haveHdg = false;
     s_sats = 0;
     s_haveTime = false;
@@ -472,7 +519,7 @@ void reconfigure() {
     s_havePos = false;
     s_fixMs = 0;
     s_haveAlt = false;
-    s_haveSpd = false;
+    resetSpeed();
     s_haveHdg = false;
     s_sats = 0;
     s_haveTime = false;
@@ -547,7 +594,8 @@ static void drawFix(M5Canvas& canvas) {
     if (s_haveAlt) snprintf(b, sizeof(b), "ALT  %.0f M", s_alt);
     else snprintf(b, sizeof(b), "ALT  --");
     canvas.drawString(b, 8, 74);
-    if (s_haveSpd) snprintf(b, sizeof(b), "%.1f KM/H", s_kmh);
+    if (s_haveSpd && millis() - s_speedMs <= 5000)
+        snprintf(b, sizeof(b), "%.1f KM/H", s_kmh);
     else snprintf(b, sizeof(b), "SPD  --");
     canvas.drawString(b, 120, 74);
     canvas.setTextColor(UiStyle::DIM);
