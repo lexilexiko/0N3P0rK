@@ -637,7 +637,8 @@ The GPS screen has four views:
   speed, and heading
 - **WORLD**: projected map of the globe with a marker for the current fix
 - **TRAIL**: local path around the last known position, with zoom width control
-- **MAP**: street map centered on the current GPS position, with a heading marker
+- **MAP**: street map centered on GPS, the last track point, or an available
+  tile when there is no GPS fix; the position marker appears once GPS data exists
 
 The **MAP** view reads offline raster tiles from the SD card at
 `/0N3P0rK/maps/tiles/<style>/<zoom>/<x>/<y>.jpg` or `.png` (256×256 pixels;
