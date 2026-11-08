@@ -640,25 +640,34 @@ The GPS screen has four views:
 - **MAP**: street map centered on GPS, the last track point, or an available
   tile when there is no GPS fix; the position marker appears once GPS data exists
 
+Use **1–4** to switch between GPS, WORLD, TRAIL, and MAP. On **MAP**, use
+**W/A/S/D** (or `;` / `,` / `.` / `/`) to pan independently of the live GPS
+position; panning locks the map center until you restart GPS. Use **-** / **=**
+to zoom the map. These keys do not zoom the TRAIL view.
+
 The **MAP** view reads offline raster tiles from the SD card at
 `/0N3P0rK/maps/tiles/<style>/<zoom>/<x>/<y>.jpg` or `.png` (256×256 pixels;
 zoom 2–18). Select the matching folder in **SETTINGS → GPS → MAP STYLE**
 (`DARK`, `OSM`, `VOYAGER`, or `TOPO`).
-Use `scripts/download_gps_map.py` to prepare a regional tile pack. It uses
-Python's standard library and writes an SD-ready `0N3P0rK` folder; no extra
-Python packages are required. Choose a tile provider that explicitly permits
-the requested downloads and offline use, and pass its required attribution:
+`scripts/download_gps_map.py` is a standalone computer script; copy it to the
+SD card yourself if you want to keep it there. It uses Python's standard
+library; no extra packages are required. When launched from the SD card's
+`/0N3P0rK/maps/` folder, it saves tiles there. Otherwise, on Windows it offers
+a choice of detected removable drives or a local folder. You can also select a
+destination explicitly with `--output E:\`. The resulting tiles are always
+placed under `<destination>\0N3P0rK\maps\tiles\`. Choose a tile provider that
+explicitly permits the requested downloads and offline use, and pass its
+required attribution:
 
 ```powershell
-python scripts\download_gps_map.py --lat <latitude> --lon <longitude> `
+python X:\0N3P0rK\maps\download_gps_map.py --lat <latitude> --lon <longitude> `
   --radius-km 5 --min-zoom 16 --max-zoom 16 `
   --folder dark `
   --url-template "<permitted-provider-url>/{z}/{x}/{y}.png" `
-  --attribution "<required attribution>"
+  --attribution "<required attribution>" --output X:\
 ```
 
-The script saves under `scripts/gps-map-output/0N3P0rK/`; copy that
-`0N3P0rK` folder to the SD card root. For files already arranged as
+For files already arranged as
 `dark/3/0/7.jpg`, copy the `dark` folder into
 `/0N3P0rK/maps/tiles/` and set **MAP STYLE → DARK**. It resumes existing tiles, limits the
 download size, and accepts PNG or JPEG responses. The attribution is saved in

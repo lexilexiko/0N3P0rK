@@ -2,6 +2,7 @@
 """Download a regional raster tile pack for the 0N3P0rK GPS map."""
 
 import argparse
+import ctypes
 import math
 import os
 import sys
@@ -10,8 +11,52 @@ import urllib.error
 import urllib.request
 
 WEB_MERCATOR_LIMIT = 85.05112878
-DEFAULT_OUTPUT = os.path.join(os.path.dirname(__file__), "gps-map-output")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+IS_SD_MAPS_DIR = (
+    os.path.basename(SCRIPT_DIR).lower() == "maps"
+    and os.path.basename(os.path.dirname(SCRIPT_DIR)).lower() == "0n3p0rk"
+)
+LOCAL_OUTPUT = os.path.join(SCRIPT_DIR, "gps-map-output")
 MAX_TILE_BYTES = 5 * 1024 * 1024
+
+
+def removable_drives():
+    if os.name != "nt":
+        return []
+    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+    drives = []
+    for index in range(26):
+        if bitmask & (1 << index):
+            root = "{}:\\".format(chr(ord("A") + index))
+            if ctypes.windll.kernel32.GetDriveTypeW(root) == 2:
+                drives.append(root)
+    return drives
+
+
+def choose_output():
+    if IS_SD_MAPS_DIR:
+        return os.path.dirname(os.path.dirname(SCRIPT_DIR))
+
+    drives = removable_drives()
+    if not drives:
+        print("No removable drive detected; using local output folder.")
+        return LOCAL_OUTPUT
+
+    print("Choose where to save the GPS map tiles:")
+    for index, drive in enumerate(drives, 1):
+        print("  {}) {} (SD/removable drive)".format(index, drive))
+    print("  0) Local folder: {}".format(LOCAL_OUTPUT))
+    while True:
+        choice = input("Destination: ").strip()
+        if choice == "0":
+            return LOCAL_OUTPUT
+        try:
+            selected = int(choice)
+        except ValueError:
+            selected = 0
+        if 1 <= selected <= len(drives):
+            return drives[selected - 1]
+        print("Enter one of the listed numbers.")
 
 
 def tile_y(latitude, zoom):
@@ -116,8 +161,8 @@ def parse_args():
         help="style folder name used under tiles/ (default: dark)",
     )
     parser.add_argument(
-        "--output", default=DEFAULT_OUTPUT,
-        help="host output directory (default: scripts/gps-map-output)",
+        "--output",
+        help="destination root (tiles go under <root>\\0N3P0rK\\maps; default: choose a removable drive)",
     )
     parser.add_argument(
         "--delay", type=float, default=1.0,
@@ -150,6 +195,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    output_root = args.output if args.output else choose_output()
     tile_list = [
         (zoom, x, y)
         for zoom in range(args.min_zoom, args.max_zoom + 1)
@@ -163,7 +209,7 @@ def main():
         )
         return 2
 
-    maps_dir = os.path.join(args.output, "0N3P0rK", "maps")
+    maps_dir = os.path.join(output_root, "0N3P0rK", "maps")
     tiles_dir = os.path.join(maps_dir, "tiles", args.folder)
     os.makedirs(tiles_dir, exist_ok=True)
     attribution_path = os.path.join(maps_dir, "ATTRIBUTION.txt")
@@ -172,7 +218,7 @@ def main():
 
     print("Tiles planned: {}".format(len(tile_list)))
     print("Style folder: {}".format(args.folder))
-    print("Output SD folder: {}".format(os.path.join(args.output, "0N3P0rK")))
+    print("Output map folder: {}".format(maps_dir))
     for index, (zoom, x, y) in enumerate(tile_list, 1):
         target = os.path.join(tiles_dir, str(zoom), str(x), str(y))
         if os.path.exists(target + ".jpg") or os.path.exists(target + ".png"):
@@ -189,7 +235,10 @@ def main():
             index, len(tile_list), zoom, x, y, os.path.basename(path)
         ))
 
-    print("Done. Copy the generated 0N3P0rK folder to the SD card root.")
+    if IS_SD_MAPS_DIR and not args.output:
+        print("Done. Tiles saved directly to the SD card.")
+    else:
+        print("Done. Map tiles saved to the selected destination.")
     return 0
 
 

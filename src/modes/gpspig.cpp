@@ -55,6 +55,9 @@ static uint8_t s_mapCacheZoom = 0;
 static uint8_t s_mapCacheStyle = UINT8_MAX;
 static float s_mapCenterLat = 0;
 static float s_mapCenterLon = 0;
+static bool s_mapManualCenter = false;
+static double s_mapManualCenterLat = 0;
+static double s_mapManualCenterLon = 0;
 static bool s_mapFallbackTried = false;
 static bool s_mapFallbackFound = false;
 static float s_mapFallbackLat = 0;
@@ -485,6 +488,7 @@ void start() {
     s_page = 0;
     s_zoom = 1;
     s_mapZoom = 16;
+    s_mapManualCenter = false;
     s_mapAllocFailed = false;
     s_mapCacheValid = false;
     s_mapCacheHasTiles = false;
@@ -564,6 +568,8 @@ void updatePowerSave() {
     syncUartPower();
 }
 
+static bool panMap(int dx, int dy);
+
 void update() {
     if (!s_run) return;
     syncScene();
@@ -576,27 +582,39 @@ void update() {
         App::setMode(AppMode::MENU);
         return;
     }
-    if (M5Cardputer.Keyboard.isKeyPressed(';') || M5Cardputer.Keyboard.isKeyPressed(':')) {
-        s_page = (uint8_t)((s_page + 3) % 4);
-        SFX::play(SFX::MENU_CLICK);
-        return;
+    for (uint8_t page = 0; page < 4; ++page) {
+        if (M5Cardputer.Keyboard.isKeyPressed((char)('1' + page))) {
+            s_page = page;
+            SFX::play(SFX::MENU_CLICK);
+            return;
+        }
     }
-    if (M5Cardputer.Keyboard.isKeyPressed('.') || M5Cardputer.Keyboard.isKeyPressed('>')) {
-        s_page = (uint8_t)((s_page + 1) % 4);
-        SFX::play(SFX::MENU_CLICK);
-        return;
-    }
+
     bool zoomOut = M5Cardputer.Keyboard.isKeyPressed('-') || M5Cardputer.Keyboard.isKeyPressed('_');
     bool zoomIn = M5Cardputer.Keyboard.isKeyPressed('=') || M5Cardputer.Keyboard.isKeyPressed('+');
-    if (s_page == 2) {
-        if (zoomOut && s_zoom + 1 < (uint8_t)(sizeof(kSpanM) / sizeof(kSpanM[0]))) {
-            s_zoom++;
+    if (s_page == 3) {
+        int dx = 0;
+        int dy = 0;
+        if (M5Cardputer.Keyboard.isKeyPressed('w') ||
+            M5Cardputer.Keyboard.isKeyPressed('W') ||
+            M5Cardputer.Keyboard.isKeyPressed(';') ||
+            M5Cardputer.Keyboard.isKeyPressed(':')) dy = -1;
+        else if (M5Cardputer.Keyboard.isKeyPressed('s') ||
+                 M5Cardputer.Keyboard.isKeyPressed('S') ||
+                 M5Cardputer.Keyboard.isKeyPressed('.') ||
+                 M5Cardputer.Keyboard.isKeyPressed('>')) dy = 1;
+        else if (M5Cardputer.Keyboard.isKeyPressed('a') ||
+                 M5Cardputer.Keyboard.isKeyPressed('A') ||
+                 M5Cardputer.Keyboard.isKeyPressed(',') ||
+                 M5Cardputer.Keyboard.isKeyPressed('<')) dx = -1;
+        else if (M5Cardputer.Keyboard.isKeyPressed('d') ||
+                 M5Cardputer.Keyboard.isKeyPressed('D') ||
+                 M5Cardputer.Keyboard.isKeyPressed('/')) dx = 1;
+
+        if ((dx || dy) && panMap(dx, dy)) {
             SFX::play(SFX::MENU_CLICK);
-        } else if (zoomIn && s_zoom > 0) {
-            s_zoom--;
-            SFX::play(SFX::MENU_CLICK);
+            return;
         }
-    } else if (s_page == 3) {
         if (zoomOut && s_mapZoom > kMapZoomMin) {
             s_mapZoom--;
             SFX::play(SFX::MENU_CLICK);
@@ -757,6 +775,41 @@ static double mapTileLatitude(double y, uint8_t zoom) {
     const double n = (double)(1UL << zoom);
     return atan(sinh(3.141592653589793 * (1.0 - 2.0 * y / n))) *
            57.29577951308232;
+}
+
+static bool panMap(int dx, int dy) {
+    if (!s_mapManualCenter) {
+        if (s_mapCacheValid) {
+            s_mapManualCenterLat = s_mapCenterLat;
+            s_mapManualCenterLon = s_mapCenterLon;
+        } else if (s_havePos) {
+            s_mapManualCenterLat = s_lat;
+            s_mapManualCenterLon = s_lon;
+        } else if (s_nPts > 0) {
+            s_mapManualCenterLat = fromE7(s_pts[s_nPts - 1].lat);
+            s_mapManualCenterLon = fromE7(s_pts[s_nPts - 1].lon);
+        } else if (s_mapFallbackFound) {
+            s_mapManualCenterLat = s_mapFallbackLat;
+            s_mapManualCenterLon = s_mapFallbackLon;
+        } else {
+            return false;
+        }
+        s_mapManualCenter = true;
+    }
+
+    const double worldPixels = 256.0 * (1UL << s_mapZoom);
+    const double step = 72.0;
+    double x = mapPixelX(s_mapManualCenterLon, s_mapZoom) + dx * step;
+    double y = mapPixelY(s_mapManualCenterLat, s_mapZoom) + dy * step;
+    x = fmod(x, worldPixels);
+    if (x < 0) x += worldPixels;
+    if (y < 0) y = 0;
+    if (y > worldPixels) y = worldPixels;
+
+    s_mapManualCenterLon = x / worldPixels * 360.0 - 180.0;
+    s_mapManualCenterLat = mapTileLatitude(y / 256.0, s_mapZoom);
+    s_mapCacheValid = false;
+    return true;
 }
 
 static bool mapTileFileExists(uint8_t zoom, int x, int y, uint8_t style) {
@@ -1033,11 +1086,15 @@ static void drawStreetMap(M5Canvas& canvas) {
             if (firstFallback) s_mapZoom = s_mapFallbackZoom;
         }
     }
+    if (s_mapManualCenter) {
+        viewLat = (float)s_mapManualCenterLat;
+        viewLon = (float)s_mapManualCenterLon;
+    }
 
     const bool hasMapPosition = s_havePos || s_nPts > 0;
     if (s_mapCacheValid && s_mapCacheHasPosition != hasMapPosition)
         s_mapCacheValid = false;
-    if (hasMapPosition && !s_mapCacheValid) {
+    if (hasMapPosition && !s_mapCacheValid && !s_mapManualCenter) {
         uint8_t availableZoom = s_mapZoom;
         const bool positionTilesFound =
             findZoomForPosition(viewLat, viewLon, selectedStyle, availableZoom);

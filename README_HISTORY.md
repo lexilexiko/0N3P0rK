@@ -392,6 +392,10 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   use `/0N3P0rK/maps/tiles/<zoom>/<x>/<y>`.
 - Added `scripts/download_gps_map.py` to prepare regional, resumable tile packs
   and provider attribution for the SD card using Python's standard library.
+- The standalone downloader can save tiles directly to the SD card's maps
+  folder or to a removable drive selected on Windows.
+- GPS pages can be selected with **1–4**; the MAP view supports manual panning
+  independent of the live GPS position, with **-** / **=** reserved for map zoom.
 - The GPS map now supports zoom levels 2–18 and can read Plai-style
   `dark/<zoom>/<x>/<y>.jpg` tile folders.
 - GPS ground-speed readings below 2.5 km/h are treated as stationary to reduce
