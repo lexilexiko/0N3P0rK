@@ -3,6 +3,7 @@
 src/build_info.h
 *.pyc
 __pycache__/
+scripts/gps-map-output/
 
 # firmware / objects — source only
 *.bin

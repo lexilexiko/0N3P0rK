@@ -613,6 +613,7 @@ Open **SETTINGS → GPS** for the GPS controls:
 | **BAUD** | Select the receiver's UART speed |
 | **RX PIN** / **TX PIN** | Change UART GPIOs; RX and TX must be distinct; editing either switches to custom |
 | **TZ OFFSET** | Set the local time offset from UTC |
+| **MAP STYLE** | Select the matching offline tile folder: DARK, OSM, VOYAGER, or TOPO |
 | **GPS VIEW** | Open the live GPS display |
 
 The source presets configure Grove at UART2 / GPIO 1/2 / 115200 baud, or ADV cap
@@ -630,15 +631,45 @@ AT6558), select **GPS SRC → CUSTOM** and set its documented baud rate (commonl
 
 ### What the mode shows
 
-The GPS screen has three views:
+The GPS screen has four views:
 
 - **FIX**: current status, baud, satellite count, latitude, longitude, altitude,
   speed, and heading
 - **WORLD**: projected map of the globe with a marker for the current fix
 - **TRAIL**: local path around the last known position, with zoom width control
+- **MAP**: street map centered on the current GPS position, with a heading marker
 
-Use `;` or `.` to switch pages. On the trail page, `-` / `=` zoom in and out
-for a tighter or wider area. `ESC` leaves the view; tracking continues until
+The **MAP** view reads offline raster tiles from the SD card at
+`/0N3P0rK/maps/tiles/<style>/<zoom>/<x>/<y>.jpg` or `.png` (256×256 pixels;
+zoom 2–18). Select the matching folder in **SETTINGS → GPS → MAP STYLE**
+(`DARK`, `OSM`, `VOYAGER`, or `TOPO`).
+Use `scripts/download_gps_map.py` to prepare a regional tile pack. It uses
+Python's standard library and writes an SD-ready `0N3P0rK` folder; no extra
+Python packages are required. Choose a tile provider that explicitly permits
+the requested downloads and offline use, and pass its required attribution:
+
+```powershell
+python scripts\download_gps_map.py --lat <latitude> --lon <longitude> `
+  --radius-km 5 --min-zoom 16 --max-zoom 16 `
+  --folder dark `
+  --url-template "<permitted-provider-url>/{z}/{x}/{y}.png" `
+  --attribution "<required attribution>"
+```
+
+The script saves under `scripts/gps-map-output/0N3P0rK/`; copy that
+`0N3P0rK` folder to the SD card root. For files already arranged as
+`dark/3/0/7.jpg`, copy the `dark` folder into
+`/0N3P0rK/maps/tiles/` and set **MAP STYLE → DARK**. It resumes existing tiles, limits the
+download size, and accepts PNG or JPEG responses. The attribution is saved in
+`maps/ATTRIBUTION.txt` and displayed on the map. Do not bulk-download from a
+tile service unless its usage policy allows it. Map tiles are not bundled with
+the firmware; without matching tiles the view reports `NO OFFLINE MAP TILES`.
+`-` / `=` zoom the map in and out.
+
+Use `;` or `.` to switch pages. On **TRAIL**, `-` / `=` change the trail width;
+on **MAP**, they change map zoom. GPS speed is ground speed from the receiver,
+not satellite speed; values below 2.5 km/h are shown as stationary to suppress
+GPS drift while standing still. `ESC` leaves the view; tracking continues until
 disabled in **SETTINGS → GPS** or stopped from **TASKS**.
 
 ### Fix and trail behavior

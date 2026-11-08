@@ -207,6 +207,13 @@ enum class GpsSource : uint8_t {
     CUSTOM = 2
 };
 static constexpr uint8_t GPS_SOURCE_N = 3;
+static constexpr uint8_t GPS_MAP_STYLE_N = 4;
+static constexpr const char* GPS_MAP_STYLE_DIRS[GPS_MAP_STYLE_N] = {
+    "dark", "osm", "voyager", "topo"
+};
+static constexpr const char* GPS_MAP_STYLE_NAMES[GPS_MAP_STYLE_N] = {
+    "DARK", "OSM", "VOYAGER", "TOPO"
+};
 
 struct GpsConfig {
     bool enabled = false;
@@ -220,6 +227,7 @@ struct GpsConfig {
     uint8_t groveTx = 2;
     uint8_t advRx = 15;
     uint8_t advTx = 13;
+    uint8_t mapStyle = 0;
 };
 
 static const uint8_t HOTKEY_COUNT = 20;

@@ -387,6 +387,15 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - The screen shows live latitude/longitude, altitude, speed, heading, a world
   projection, and a local trail view with page switching between fix, world, and
   trail.
+- Added an offline **MAP** view that renders 256×256 JPG/PNG street tiles from
+  the SD card around the current fix, with zoom and a heading marker. Tile packs
+  use `/0N3P0rK/maps/tiles/<zoom>/<x>/<y>`.
+- Added `scripts/download_gps_map.py` to prepare regional, resumable tile packs
+  and provider attribution for the SD card using Python's standard library.
+- The GPS map now supports zoom levels 2–18 and can read Plai-style
+  `dark/<zoom>/<x>/<y>.jpg` tile folders.
+- GPS ground-speed readings below 2.5 km/h are treated as stationary to reduce
+  apparent movement from receiver drift.
 - Trail points are kept in a small rolling buffer and can be saved to
   `/0N3P0rK/gps/track.csv` on the SD card when storage is available.
 - The GPS UART buffer and trail memory are allocated only while the mode is
