@@ -131,6 +131,12 @@ bool begin() {
     SD.mkdir(DIR_TALK);
     SD.mkdir(DIR_MUSIC);
     SD.mkdir(DIR_INSPECTOR);
+    SD.mkdir("/0N3P0rK/maps");
+    SD.mkdir("/0N3P0rK/maps/tiles");
+    SD.mkdir("/0N3P0rK/maps/tiles/dark");
+    SD.mkdir("/0N3P0rK/maps/tiles/osm");
+    SD.mkdir("/0N3P0rK/maps/tiles/voyager");
+    SD.mkdir("/0N3P0rK/maps/tiles/topo");
     migrateLegacy();
     unlockSd();
     return true;
