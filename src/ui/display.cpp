@@ -524,7 +524,8 @@ void Display::drawFarm() {
     if (sceneLive) {
         Avatar::draw(mainCanvas);
         if (App::mode() == AppMode::FARM)
-            GpsAntenna::draw(mainCanvas, GpsMode::isRunning(), GpsMode::hasFix());
+            GpsAntenna::draw(mainCanvas, GpsMode::isRunning(),
+                             GpsMode::signalLevel(), GpsMode::hasFix());
         if (wolfLive) Wolf::draw(mainCanvas);
         if (SceneLayers::weather) {
             Weather::drawBirds(mainCanvas, fg);

@@ -44,6 +44,7 @@ static char s_nmea[96];
 static uint8_t s_nmeaLen = 0;
 static uint32_t s_bytes = 0;
 static uint32_t s_lastPointMs = 0;
+static uint32_t s_satelliteMs = 0;
 static bool s_valid = false;
 static bool s_havePos = false;
 static uint32_t s_fixMs = 0;
@@ -57,6 +58,8 @@ static uint8_t s_speedNext = 0;
 static uint32_t s_speedMs = 0;
 static float s_course = 0;
 static int s_sats = 0;
+static int s_satsInView = 0;
+static uint32_t s_gsvMs = 0;
 static int s_localHour = 0;
 static int s_localMinute = 0;
 static bool s_haveTime = false;
@@ -363,8 +366,18 @@ static void onSentence(char* s) {
         if (hdop > 0.0f && hdop < 99.0f) s_hdop = hdop;
         return;
     }
+    if (endsWith(f[0], "GSV") && nf >= 4) {
+        char* end = nullptr;
+        long count = strtol(f[3], &end, 10);
+        if (end != f[3] && *end == '\0' && count >= 0 && count <= 99) {
+            s_satsInView = (int)count;
+            s_gsvMs = millis();
+        }
+        return;
+    }
     if (endsWith(f[0], "GGA") && nf >= 8) {
         s_sats = atoi(f[7]);
+        s_satelliteMs = millis();
         int q = atoi(f[6]);
         float lat = 0, lon = 0;
         bool pos = q > 0 && parseDm(f[2], f[3], true, lat) && parseDm(f[4], f[5], false, lon);
@@ -497,6 +510,9 @@ void start() {
     resetSpeed();
     s_haveHdg = false;
     s_sats = 0;
+    s_satelliteMs = 0;
+    s_satsInView = 0;
+    s_gsvMs = 0;
     s_haveTime = false;
     s_hdop = 99.9f;
     s_fixMode = 1;
@@ -543,6 +559,18 @@ bool hasFix() {
     return s_run && s_valid && s_fixMs && millis() - s_fixMs <= 8000;
 }
 
+uint8_t signalLevel() {
+    if (!s_run) return 0;
+    const uint32_t now = millis();
+    int count = 0;
+    if (s_gsvMs && now - s_gsvMs <= 8000) count = s_satsInView;
+    else if (s_satelliteMs && now - s_satelliteMs <= 8000) count = s_sats;
+    if (count <= 0) return 0;
+    if (count >= 7) return 3;
+    if (count >= 4) return 2;
+    return 1;
+}
+
 void reconfigure() {
     if (!s_run) return;
     closeTrackFile();
@@ -556,6 +584,9 @@ void reconfigure() {
     resetSpeed();
     s_haveHdg = false;
     s_sats = 0;
+    s_satelliteMs = 0;
+    s_satsInView = 0;
+    s_gsvMs = 0;
     s_haveTime = false;
     s_hdop = 99.9f;
     s_fixMode = 1;
