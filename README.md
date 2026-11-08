@@ -719,11 +719,10 @@ The LED is intentionally quiet to save battery:
 | Other utility screens | Off |
 | Disabled in `SET → SYSTEM` | Always off |
 
-When GPS is running on the farm scene, a separate, tree-like antenna grows in
-the field and changes its foliage with the season. Its signal marks are green
-with a valid fix and yellow while searching. Three airborne stomps break it;
-while GPS remains enabled, it grows back after a short pause. The seasonal LED
-color is unchanged.
+When GPS is running on the farm scene, a sturdy, season-colored tree grows in
+the field. It has a single animated leaf that turns green with a valid GPS fix
+and yellow while searching. Three airborne stomps break it; while GPS remains
+enabled, it grows back after a short pause. The seasonal LED color is unchanged.
 
 Brightness changes are applied immediately and are saved in the device
 configuration. The LED is a status hint only; the display and serial log
