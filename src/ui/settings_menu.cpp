@@ -203,7 +203,7 @@ static const Item GPS[] = {
     {"GPS",     Kind::TOGGLE, 0, 0, 1, 1},
     {"GPS SRC", Kind::VALUE,  1, 0, GPS_SOURCE_N - 1, 1},
     {"PWR SAVE",Kind::TOGGLE, 2, 0, 1, 1},
-    {"TRACK INT",Kind::VALUE,3, 1, 30, 1},
+    {"TRACK INT",Kind::VALUE,3, 0, 30, 1},
     {"BAUD",    Kind::VALUE,  4, 0, GPS_BAUD_N - 1, 1},
     {"RX PIN",  Kind::VALUE,  5, 1, 48, 1},
     {"TX PIN",  Kind::VALUE,  6, 1, 48, 1},
@@ -773,7 +773,9 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
     } else if (s_page == SettingsPage::GPS && it.id == 1) {
         strncpy(raw, gpsSourceName(getValue(it)), sizeof(raw) - 1);
     } else if (s_page == SettingsPage::GPS && it.id == 3) {
-        snprintf(raw, sizeof(raw), "%dS", getValue(it));
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dS", v);
     } else if (s_page == SettingsPage::GPS && it.id == 4) {
         uint8_t i = (uint8_t)getValue(it);
         if (i >= GPS_BAUD_N) i = 0;

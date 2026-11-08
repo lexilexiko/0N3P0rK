@@ -63,9 +63,12 @@ static bool s_haveTime = false;
 static bool s_haveAlt = false;
 static bool s_haveSpd = false;
 static bool s_haveHdg = false;
+static float s_hdop = 99.9f;   // horizontal dilution of precision (lower = better)
+static uint8_t s_fixMode = 1;  // 1=no fix, 2=2D, 3=3D (from GSA)
 static Pt* s_pts = nullptr;
 static uint16_t s_nPts = 0;
 static HardwareSerial* s_openUart = nullptr;
+static File s_trackFile;
 
 static int32_t toE7(float d) { return (int32_t)(d * 10000000.0f); }
 static float fromE7(int32_t e) { return (float)e / 10000000.0f; }
@@ -184,7 +187,13 @@ static void syncUartPower() {
 static bool nmeaOk(char* s) {
     if (s[0] != '$') return false;
     char* star = strchr(s, '*');
-    if (!star || !star[1] || !star[2]) return true;
+    if (!star || !star[1] || !star[2] || star[3] != '\0') return false;
+    for (uint8_t i = 1; i <= 2; i++) {
+        char c = star[i];
+        if (!((c >= '0' && c <= '9') ||
+              (c >= 'A' && c <= 'F') ||
+              (c >= 'a' && c <= 'f'))) return false;
+    }
     uint8_t x = 0;
     for (char* p = s + 1; p < star; p++) x ^= (uint8_t)*p;
     char hex[3] = {star[1], star[2], 0};
@@ -199,13 +208,19 @@ static bool endsWith(const char* s, const char* suf) {
 
 static bool parseDm(const char* dm, const char* hemi, bool lat, float& out) {
     if (!dm || !dm[0] || !hemi || !hemi[0]) return false;
-    double v = atof(dm);
+    char* end = nullptr;
+    double v = strtod(dm, &end);
+    if (end == dm || *end != '\0' || !isfinite(v) || v < 0.0) return false;
+    if (hemi[1] != '\0') return false;
+    if (lat ? (hemi[0] != 'N' && hemi[0] != 'S')
+            : (hemi[0] != 'E' && hemi[0] != 'W')) return false;
     int deg = (int)(v / 100.0);
     double minutes = v - (double)deg * 100.0;
+    int maxDeg = lat ? 90 : 180;
+    if (minutes < 0.0 || minutes >= 60.0 ||
+        deg > maxDeg || (deg == maxDeg && minutes > 0.0)) return false;
     double d = (double)deg + minutes / 60.0;
     if (hemi[0] == 'S' || hemi[0] == 'W') d = -d;
-    if (lat && (d < -90.0 || d > 90.0)) return false;
-    if (!lat && (d < -180.0 || d > 180.0)) return false;
     out = (float)d;
     return true;
 }
@@ -223,18 +238,31 @@ static void pushPt(int32_t lat, int32_t lon) {
     s_pts[kTrailCap - 1].lon = lon;
 }
 
-static void appendSd(float lat, float lon) {
+static void openTrackFile() {
+    if (s_trackFile) return;
     if (!Storage::available()) return;
     if (!SD.exists(kDir)) SD.mkdir(kDir);
-    File f = SD.open(kTrack, FILE_APPEND);
-    if (!f) return;
+    s_trackFile = SD.open(kTrack, FILE_APPEND);
+}
+
+static void closeTrackFile() {
+    if (s_trackFile) {
+        s_trackFile.flush();
+        s_trackFile.close();
+    }
+}
+
+static void appendSd(float lat, float lon) {
+    openTrackFile();
+    if (!s_trackFile) return;
     char line[48];
     snprintf(line, sizeof(line), "%.6f,%.6f\n", lat, lon);
-    f.print(line);
-    f.close();
+    s_trackFile.print(line);
+    s_trackFile.flush();
 }
 
 static void notePoint(float lat, float lon) {
+    if (Config::gps().trackIntervalSec == 0) return;  // 0 = SD track recording OFF
     uint32_t now = millis();
     uint32_t interval = (uint32_t)Config::gps().trackIntervalSec * 1000u;
     if (s_nPts > 0 && now - s_lastPointMs < interval) return;
@@ -265,10 +293,7 @@ static bool updateLocalTime(const char* utc) {
 }
 
 static void takeFix(bool ok, float lat, float lon) {
-    if (!ok) {
-        s_valid = false;
-        return;
-    }
+    if (!ok) return;
     s_valid = true;
     s_havePos = true;
     s_fixMs = millis();
@@ -286,18 +311,14 @@ static void resetSpeed() {
 }
 
 static bool updateSpeed(const char* knotsText) {
-    if (!knotsText || !knotsText[0]) {
-        resetSpeed();
-        return false;
-    }
+    // Empty / missing field: skip this sample, keep existing buffer intact.
+    if (!knotsText || !knotsText[0]) return s_haveSpd;
 
     char* end = nullptr;
     float knots = strtof(knotsText, &end);
+    // Completely garbled field: also skip rather than wiping the buffer.
     if (end == knotsText || *end != '\0' || !isfinite(knots) ||
-        knots < 0.0f || knots > 550.0f) {
-        resetSpeed();
-        return false;
-    }
+        knots < 0.0f || knots > 550.0f) return s_haveSpd;
 
     float kmh = knots * 1.852f;
     if (kmh < 1.0f) kmh = 0.0f;
@@ -324,16 +345,24 @@ static bool updateSpeed(const char* knotsText) {
 
 static void onSentence(char* s) {
     if (!nmeaOk(s)) return;
-    char* f[16];
+    char* f[20];
     int nf = 0;
     f[nf++] = s;
-    for (char* p = s; *p && nf < 16; p++) {
+    for (char* p = s; *p && nf < (int)(sizeof(f) / sizeof(f[0])); p++) {
         if (*p == ',' || *p == '*') {
             *p = 0;
             f[nf++] = p + 1;
         }
     }
     if (nf < 1) return;
+    // $GPGSA / $GNGSA: fix mode (1/2/3) and HDOP (field 16)
+    if (endsWith(f[0], "GSA") && nf >= 17) {
+        uint8_t mode = (uint8_t)atoi(f[2]);
+        if (mode >= 1 && mode <= 3) s_fixMode = mode;
+        float hdop = (float)atof(f[16]);
+        if (hdop > 0.0f && hdop < 99.0f) s_hdop = hdop;
+        return;
+    }
     if (endsWith(f[0], "GGA") && nf >= 8) {
         s_sats = atoi(f[7]);
         int q = atoi(f[6]);
@@ -348,10 +377,12 @@ static void onSentence(char* s) {
     }
     if (endsWith(f[0], "RMC") && nf >= 8) {
         float lat = 0, lon = 0;
-        bool pos = f[2][0] == 'A' &&
+        // Status field: 'A'=active, 'V'=void, missing=treat as void
+        bool active = (f[2][0] == 'A');
+        bool pos = active &&
                    parseDm(f[3], f[4], true, lat) && parseDm(f[5], f[6], false, lon);
-        if (pos) updateSpeed(f[7]);
-        else resetSpeed();
+        // Only update speed when active; don't wipe buffer on void sentences
+        if (active) updateSpeed(f[7]);
         if (nf >= 9 && f[8][0]) {
             s_course = (float)atof(f[8]);
             s_haveHdg = true;
@@ -379,7 +410,6 @@ static void pollUart() {
     if (!s_openUart) return;
     HardwareSerial& uart = *s_openUart;
     int n = uart.available();
-    if (n > 80) n = 80;
     while (n-- > 0) feed((char)uart.read());
 }
 
@@ -468,6 +498,8 @@ void start() {
     s_haveHdg = false;
     s_sats = 0;
     s_haveTime = false;
+    s_hdop = 99.9f;
+    s_fixMode = 1;
     s_keyWas = true;
     loadTrail();
     syncUartPower();
@@ -486,6 +518,7 @@ void stop() {
         return;
     }
     size_t held = heapHeld();
+    closeTrackFile();
     closeUart();
     free(s_pts);
     s_pts = nullptr;
@@ -512,6 +545,7 @@ bool hasFix() {
 
 void reconfigure() {
     if (!s_run) return;
+    closeTrackFile();
     closeUart();
     s_nmeaLen = 0;
     s_bytes = 0;
@@ -523,6 +557,8 @@ void reconfigure() {
     s_haveHdg = false;
     s_sats = 0;
     s_haveTime = false;
+    s_hdop = 99.9f;
+    s_fixMode = 1;
     syncUartPower();
 }
 
@@ -570,48 +606,76 @@ static void drawFix(M5Canvas& canvas) {
     char port[24];
     const char* sourceName = Config::gps().source == GpsSource::GROVE ? "GROVE" :
                              Config::gps().source == GpsSource::ADV_CAP ? "ADV CAP" : "CUSTOM";
-    snprintf(port, sizeof(port), "%s   %lu", sourceName, (unsigned long)activeBaud());
+    snprintf(port, sizeof(port), "%s %lu", sourceName, (unsigned long)activeBaud());
     canvas.drawString(port, 8, 22);
-    canvas.setTextColor(s_valid ? UiStyle::GREEN : UiStyle::GOLD);
+
+    // Fix state label + colour
+    const bool fresh = hasFix();
+    bool stale = s_havePos && s_fixMs && !fresh;
+    uint16_t stateColor = fresh ? UiStyle::GREEN : UiStyle::GOLD;
     const char* state = "SEARCH";
-    if (s_bytes == 0) state = "NO DATA";
-    else if (s_valid) state = "FIX";
-    else if (s_havePos && s_fixMs && millis() - s_fixMs > 8000) state = "STALE";
+    if (s_bytes == 0)  state = "NO DATA";
+    else if (fresh)    state = s_fixMode == 2 ? "FIX 2D" :
+                               s_fixMode == 3 ? "FIX 3D" : "FIX";
+    else if (stale)    { state = "STALE"; stateColor = UiStyle::DIM; }
+    canvas.setTextColor(stateColor);
     canvas.drawString(state, 8, 34);
-    char b[28];
+
+    // Sats + HDOP on same line
+    char b[32];
     canvas.setTextColor(UiStyle::TEXT);
-    snprintf(b, sizeof(b), "SATS  %d", s_sats);
-    canvas.drawString(b, 90, 34);
+    snprintf(b, sizeof(b), "SATS %d", s_sats);
+    canvas.drawString(b, 100, 34);
+    if (s_hdop < 90.0f) {
+        canvas.setTextColor(s_hdop < 2.0f ? UiStyle::GREEN :
+                            s_hdop < 5.0f ? UiStyle::GOLD : UiStyle::RED);
+        snprintf(b, sizeof(b), "H%.1f", s_hdop);
+        canvas.drawString(b, 168, 34);
+        canvas.setTextColor(UiStyle::TEXT);
+    }
+
+    // Coordinates — dim if stale
     if (s_havePos) {
+        canvas.setTextColor(fresh ? UiStyle::TEXT : UiStyle::DIM);
         snprintf(b, sizeof(b), "LAT  %+10.5f", s_lat);
         canvas.drawString(b, 8, 48);
         snprintf(b, sizeof(b), "LON  %+11.5f", s_lon);
         canvas.drawString(b, 8, 60);
+        canvas.setTextColor(UiStyle::TEXT);
     } else {
         canvas.drawString("LAT  --", 8, 48);
         canvas.drawString("LON  --", 8, 60);
     }
+
+    // Altitude
     if (s_haveAlt) snprintf(b, sizeof(b), "ALT  %.0f M", s_alt);
-    else snprintf(b, sizeof(b), "ALT  --");
+    else           snprintf(b, sizeof(b), "ALT  --");
     canvas.drawString(b, 8, 74);
+
+    // Speed
     if (s_haveSpd && millis() - s_speedMs <= 5000)
         snprintf(b, sizeof(b), "%.1f KM/H", s_kmh);
-    else snprintf(b, sizeof(b), "SPD  --");
+    else
+        snprintf(b, sizeof(b), "SPD  --");
     canvas.drawString(b, 120, 74);
-    canvas.setTextColor(UiStyle::DIM);
+
+    // Heading / hint
     if (s_haveHdg) {
         snprintf(b, sizeof(b), "HDG  %.0f", s_course);
-        canvas.setTextColor(UiStyle::TEXT);
         canvas.drawString(b, 8, 90);
     } else {
-        canvas.drawString(s_bytes ? "COLD START NEEDS SKY" : "PLUG THE GPS AND WAIT", 8, 90);
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.drawString(s_bytes ? "COLD START - NEEDS SKY" : "PLUG GPS AND WAIT", 8, 90);
+        canvas.setTextColor(UiStyle::TEXT);
     }
+
+    // Time (top-right, only if we have it)
     if (s_haveTime) {
-        char time[20];
-        snprintf(time, sizeof(time), "UTC%+d %02d:%02d",
+        char t[20];
+        snprintf(t, sizeof(t), "UTC%+d %02d:%02d",
                  Config::gps().timezoneOffset, s_localHour, s_localMinute);
         canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString(time, 125, 90);
+        canvas.drawString(t, 128, 90);
     }
 }
 
@@ -650,7 +714,7 @@ static void drawWorld(M5Canvas& canvas) {
     projectWorld(s_lat, s_lon, mx, my);
     int sx = mx * 2;
     int sy = y0 + my * 2;
-    canvas.fillRect(sx - 2, sy - 2, 6, 6, s_valid ? UiStyle::PINK : UiStyle::GOLD);
+    canvas.fillRect(sx - 2, sy - 2, 6, 6, hasFix() ? UiStyle::PINK : UiStyle::GOLD);
 }
 
 static void projectLocal(float lat, float lon, float clat, float clon, float span,
