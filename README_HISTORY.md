@@ -428,4 +428,27 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   and read keys during those blocking waits. Callers that omit it, including
   Loot sync and the BadUSB screen, behave as before.
 
+### 1.4.2
+
+#### GPS maps and navigation
+
+- Expanded offline map storage to
+  `/0N3P0rK/maps/tiles/<style>/<zoom>/<x>/<y>.jpg|png`, with `dark`, `osm`,
+  `voyager`, and `topo` styles. The firmware creates the map and style folders
+  when the SD card is mounted; map images themselves remain user-supplied.
+- Updated the standalone `scripts/download_gps_map.py` workflow for removable
+  drives, local output, and direct SD-card use. Tile-provider attribution is
+  saved on the card and shown in the map's bottom bar.
+- Made MAP use the full area between the top and bottom bars. Navigation
+  instructions and rotating attribution stay in the bottom bar so they do not
+  cover the tiles.
+- Added independent map panning with **W/A/S/D** (also `;` / `,` / `.` / `/`)
+  and map zoom with **-** / **=**. The map can use a saved trail position or an
+  available tile pack when there is no live GPS fix.
+- Reworked WORLD as a flat, pannable map using a 240×120 Natural Earth land
+  mask, with zoom levels 1–4 and the GPS position marker.
+- Release the MAP image buffer when leaving MAP or closing the GPS view.
+- Draw the farm's GPS antenna behind the pig, consistent with the scene's
+  background-to-foreground order.
+
 ---

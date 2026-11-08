@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.4.1**
+**Current version: 1.4.2**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -12,9 +12,8 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Release note:** version **1.4.1** adds persistent GPS controls under
-> **SETTINGS → GPS**: enable/disable, baud, RX/TX pins, live status, and a
-> running indicator. GPS continues tracking after leaving its display.
+> **Release note:** version **1.4.2** expands GPS with offline SD maps, a
+> movable and zoomable WORLD view, and clearer full-screen MAP controls.
 
 ---
 
@@ -68,7 +67,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.1_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.2_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -98,7 +97,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.4.1`.
+   `1.4.2`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -635,8 +634,8 @@ The GPS screen has four views:
 
 - **FIX**: current status, baud, satellite count, latitude, longitude, altitude,
   speed, and heading
-- **WORLD**: movable, zoomable flat world map with shaded continents, grid
-  lines, and the current GPS position
+- **WORLD**: movable, zoomable flat world map with a detailed land mask,
+  shaded continents, grid lines, and the current GPS position
 - **TRAIL**: local path around the last known position, with zoom width control
 - **MAP**: street map centered on GPS, the last track point, or an available
   tile when there is no GPS fix; the position marker appears once GPS data exists
@@ -644,9 +643,9 @@ The GPS screen has four views:
 Use **1–4** to switch between GPS, WORLD, TRAIL, and MAP. On **WORLD**, use
 **W/A/S/D** (or `;` / `,` / `.` / `/`) to pan and **-** / **=** to zoom from
 level 1 (whole world) to level 4. On **MAP**, the same keys pan independently
-of the live GPS position and zoom the offline tiles. Controls appear in the
-bottom bar; map-provider attribution is shown there periodically, leaving the
-map itself unobstructed. These keys do not zoom the TRAIL view.
+of the live GPS position and zoom the offline tiles (zoom 2–18). The MAP image
+fills the display area between the top and bottom bars; controls and periodic
+map-provider attribution appear in the bottom bar, not over the map.
 
 The **MAP** view reads offline raster tiles from the SD card at
 `/0N3P0rK/maps/tiles/<style>/<zoom>/<x>/<y>.jpg` or `.png` (256×256 pixels;
@@ -677,13 +676,14 @@ download size, and accepts PNG or JPEG responses. The attribution is saved in
 `maps/ATTRIBUTION.txt` and displayed on the map. Do not bulk-download from a
 tile service unless its usage policy allows it. Map tiles are not bundled with
 the firmware; without matching tiles the view reports `NO OFFLINE MAP TILES`.
-`-` / `=` zoom the map in and out.
+When the SD card is mounted, the firmware creates `/0N3P0rK/maps/tiles/` and
+the `dark`, `osm`, `voyager`, and `topo` style folders for your tiles.
 
-Use `;` or `.` to switch pages. On **TRAIL**, `-` / `=` change the trail width;
-on **MAP**, they change map zoom. GPS speed is ground speed from the receiver,
-not satellite speed; values below 2.5 km/h are shown as stationary to suppress
-GPS drift while standing still. `ESC` leaves the view; tracking continues until
-disabled in **SETTINGS → GPS** or stopped from **TASKS**.
+On **TRAIL**, `-` / `=` change the trail width. GPS speed is ground speed from
+the receiver, not satellite speed; values below 2.5 km/h are shown as
+stationary to suppress GPS drift while standing still. `ESC` leaves the view;
+tracking continues until disabled in **SETTINGS → GPS** or stopped from
+**TASKS**.
 
 ### Fix and trail behavior
 
@@ -719,10 +719,10 @@ The LED is intentionally quiet to save battery:
 | Other utility screens | Off |
 | Disabled in `SET → SYSTEM` | Always off |
 
-When GPS is running on the farm scene, a sturdy, season-colored tree grows in
-the field. It has a single animated leaf that turns green with a valid GPS fix
-and yellow while searching. Three airborne stomps break it; while GPS remains
-enabled, it grows back after a short pause. The seasonal LED color is unchanged.
+When GPS is running on the farm scene, its seasonal radio antenna grows in the
+background behind the pig. Signal waves are green with a valid fix and yellow
+while searching. Three airborne stomps break it; while GPS remains enabled,
+it grows back after a short pause. The seasonal LED color is unchanged.
 
 Brightness changes are applied immediately and are saved in the device
 configuration. The LED is a status hint only; the display and serial log
@@ -985,7 +985,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.4.1, see
+For the chronological release notes from the early builds through 1.4.2, see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---

@@ -17,6 +17,8 @@
 #include "../audio/sfx.h"
 #include "../modes/fruit_run.h"
 #include "mood.h"
+#include "../core/app.h"
+#include "../modes/gpspig.h"
 #include "../storage/littlefs_ops.h"
 #include <time.h>
 #include <math.h>
@@ -1694,6 +1696,9 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         }
         // Trees in front of back grass, behind pig
         drawTree(canvas);
+    }
+    if (App::mode() == AppMode::FARM) {
+        GpsAntenna::draw(canvas, GpsMode::isRunning(), GpsMode::hasFix());
     }
 
     // Calculate vertical shake/jump offset
