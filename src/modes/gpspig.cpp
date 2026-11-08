@@ -47,6 +47,9 @@ static bool s_sceneSuspended = false;
 static uint8_t s_page = 0;
 static uint8_t s_zoom = 1;
 static uint8_t s_mapZoom = 16;
+static uint8_t s_worldZoom = 1;
+static float s_worldCenterLat = 0;
+static float s_worldCenterLon = 0;
 static bool s_mapAllocFailed = false;
 static bool s_mapCacheValid = false;
 static bool s_mapCacheHasTiles = false;
@@ -473,6 +476,12 @@ size_t heapHeld() {
     return n;
 }
 
+static void releaseMapCanvas() {
+    if (s_mapCanvas.getBuffer()) s_mapCanvas.deleteSprite();
+    s_mapCacheValid = false;
+    s_mapAllocFailed = false;
+}
+
 void start() {
     if (s_run) return;
     s_pts = (Pt*)malloc((size_t)kTrailCap * sizeof(Pt));
@@ -488,6 +497,9 @@ void start() {
     s_page = 0;
     s_zoom = 1;
     s_mapZoom = 16;
+    s_worldZoom = 1;
+    s_worldCenterLat = 0;
+    s_worldCenterLon = 0;
     s_mapManualCenter = false;
     s_mapAllocFailed = false;
     s_mapCacheValid = false;
@@ -523,8 +535,7 @@ void stop() {
     }
     size_t held = heapHeld();
     closeUart();
-    s_mapCanvas.deleteSprite();
-    s_mapCacheValid = false;
+    releaseMapCanvas();
     free(s_pts);
     s_pts = nullptr;
     s_nPts = 0;
@@ -575,16 +586,21 @@ void update() {
     syncScene();
     syncUartPower();
     pollUart();
-    if (App::mode() != AppMode::GPS || App::windowHidden()) return;
+    if (App::mode() != AppMode::GPS || App::windowHidden()) {
+        releaseMapCanvas();
+        return;
+    }
     if (!keyNewPress(s_keyWas)) return;
     if (keyMin()) return;
     if (keyEsc()) {
+        releaseMapCanvas();
         App::setMode(AppMode::MENU);
         return;
     }
     for (uint8_t page = 0; page < 4; ++page) {
         if (M5Cardputer.Keyboard.isKeyPressed((char)('1' + page))) {
             s_page = page;
+            if (s_page != 3) releaseMapCanvas();
             SFX::play(SFX::MENU_CLICK);
             return;
         }
@@ -592,7 +608,7 @@ void update() {
 
     bool zoomOut = M5Cardputer.Keyboard.isKeyPressed('-') || M5Cardputer.Keyboard.isKeyPressed('_');
     bool zoomIn = M5Cardputer.Keyboard.isKeyPressed('=') || M5Cardputer.Keyboard.isKeyPressed('+');
-    if (s_page == 3) {
+    if (s_page == 1 || s_page == 3) {
         int dx = 0;
         int dy = 0;
         if (M5Cardputer.Keyboard.isKeyPressed('w') ||
@@ -611,16 +627,37 @@ void update() {
                  M5Cardputer.Keyboard.isKeyPressed('D') ||
                  M5Cardputer.Keyboard.isKeyPressed('/')) dx = 1;
 
-        if ((dx || dy) && panMap(dx, dy)) {
+        if (s_page == 1 && (dx || dy)) {
+            const float step = 24.0f / s_worldZoom;
+            s_worldCenterLon -= dx * step;
+            s_worldCenterLat += dy * step;
+            if (s_worldCenterLon < -180.0f) s_worldCenterLon += 360.0f;
+            if (s_worldCenterLon >= 180.0f) s_worldCenterLon -= 360.0f;
+            if (s_worldCenterLat < -85.0f) s_worldCenterLat = -85.0f;
+            if (s_worldCenterLat > 85.0f) s_worldCenterLat = 85.0f;
             SFX::play(SFX::MENU_CLICK);
             return;
         }
-        if (zoomOut && s_mapZoom > kMapZoomMin) {
-            s_mapZoom--;
+        if (s_page == 3 && (dx || dy) && panMap(dx, dy)) {
             SFX::play(SFX::MENU_CLICK);
-        } else if (zoomIn && s_mapZoom < kMapZoomMax) {
-            s_mapZoom++;
-            SFX::play(SFX::MENU_CLICK);
+            return;
+        }
+        if (s_page == 1) {
+            if (zoomOut && s_worldZoom > 1) {
+                s_worldZoom--;
+                SFX::play(SFX::MENU_CLICK);
+            } else if (zoomIn && s_worldZoom < 4) {
+                s_worldZoom++;
+                SFX::play(SFX::MENU_CLICK);
+            }
+        } else if (s_page == 3) {
+            if (zoomOut && s_mapZoom > kMapZoomMin) {
+                s_mapZoom--;
+                SFX::play(SFX::MENU_CLICK);
+            } else if (zoomIn && s_mapZoom < kMapZoomMax) {
+                s_mapZoom++;
+                SFX::play(SFX::MENU_CLICK);
+            }
         }
     }
 }
@@ -677,42 +714,82 @@ static void drawFix(M5Canvas& canvas) {
     }
 }
 
-static void projectWorld(float lat, float lon, int& x, int& y) {
-    float fx = (lon + 180.0f) / 360.0f * (float)GPS_MAP_W;
-    float fy = (90.0f - lat) / 180.0f * (float)GPS_MAP_H;
-    if (fx < 0) fx = 0;
-    if (fy < 0) fy = 0;
-    if (fx > GPS_MAP_W - 1) fx = GPS_MAP_W - 1;
-    if (fy > GPS_MAP_H - 1) fy = GPS_MAP_H - 1;
-    x = (int)fx;
-    y = (int)fy;
-}
-
 static void drawWorld(M5Canvas& canvas) {
-    const int y0 = 22;
-    for (int y = 0; y < GPS_MAP_H; y++) {
-        int run = -1;
-        for (int x = 0; x <= GPS_MAP_W; x++) {
-            bool land = x < GPS_MAP_W && mapBit(x, y);
-            if (land && run < 0) run = x;
-            if (!land && run >= 0) {
-                canvas.fillRect(run * 2, y0 + y * 2, (x - run) * 2, 2, 0x2589);
-                run = -1;
+    constexpr int mapX = 8;
+    constexpr int mapY = 22;
+    constexpr int mapW = DISPLAY_W - 16;
+    constexpr int mapH = MAIN_H - mapY - 5;
+    constexpr double baseW = mapW;
+    constexpr double baseH = mapH;
+    const double worldW = baseW * s_worldZoom;
+    const double worldH = baseH * s_worldZoom;
+    const double centerX = mapX + mapW * 0.5;
+    const double centerY = mapY + mapH * 0.5;
+    const double mapLeft = centerX -
+        (s_worldCenterLon + 180.0) / 360.0 * worldW;
+    const double rowHeight = worldH / GPS_MAP_H;
+
+    canvas.fillRect(mapX, mapY, mapW, mapH, 0x000D);
+    canvas.setClipRect(mapX, mapY, mapW, mapH);
+
+    for (int y = 0; y < GPS_MAP_H; ++y) {
+        const double latitude = 90.0 - (y + 0.5) * 180.0 / GPS_MAP_H;
+        const int screenY = (int)round(
+            centerY - (latitude - s_worldCenterLat) * worldH / 180.0 - rowHeight * 0.5);
+        const uint16_t landColor = fabs(latitude) > 60.0 ? 0xB6F2 :
+                                   fabs(latitude) > 30.0 ? 0x75A8 : 0x4E65;
+        int runStart = -1;
+        for (int x = 0; x <= GPS_MAP_W; ++x) {
+            const bool land = x < GPS_MAP_W && mapBit(x, y);
+            if (land && runStart < 0) runStart = x;
+            if (!land && runStart >= 0) {
+                const double runLon = runStart * 360.0 / GPS_MAP_W - 180.0;
+                const double runEndLon = x * 360.0 / GPS_MAP_W - 180.0;
+                const double startX = mapLeft + (runLon + 180.0) / 360.0 * worldW;
+                const double endX = mapLeft + (runEndLon + 180.0) / 360.0 * worldW;
+                for (int wrap = -1; wrap <= 1; ++wrap) {
+                    const int drawX = (int)floor(startX + wrap * worldW);
+                    const int drawW = (int)ceil(endX + wrap * worldW) - drawX;
+                    canvas.fillRect(drawX, screenY, drawW, (int)ceil(rowHeight), landColor);
+                }
+                runStart = -1;
             }
         }
     }
-    if (!s_havePos) {
-        canvas.setTextColor(UiStyle::GOLD);
-        canvas.setTextDatum(top_center);
-        canvas.drawString("NO FIX", DISPLAY_W / 2, y0 + 32);
-        canvas.setTextDatum(top_left);
-        return;
+
+    for (int longitude = -150; longitude <= 180; longitude += 30) {
+        double delta = longitude - s_worldCenterLon;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        const int x = (int)round(centerX + delta * worldW / 360.0);
+        canvas.drawFastVLine(x, mapY, mapH, 0x2340);
     }
-    int mx, my;
-    projectWorld(s_lat, s_lon, mx, my);
-    int sx = mx * 2;
-    int sy = y0 + my * 2;
-    canvas.fillRect(sx - 2, sy - 2, 6, 6, hasFix() ? UiStyle::PINK : UiStyle::GOLD);
+    for (int latitude = -60; latitude <= 60; latitude += 30) {
+        const int y = (int)round(
+            centerY - (latitude - s_worldCenterLat) * worldH / 180.0);
+        canvas.drawFastHLine(mapX, y, mapW, latitude == 0 ? 0x3B86 : 0x2340);
+    }
+
+    if (s_havePos) {
+        double delta = s_lon - s_worldCenterLon;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        const int markerX = (int)round(centerX + delta * worldW / 360.0);
+        const int markerY = (int)round(
+            centerY - (s_lat - s_worldCenterLat) * worldH / 180.0);
+        canvas.drawLine(markerX - 4, markerY, markerX + 4, markerY, UiStyle::BG);
+        canvas.drawLine(markerX, markerY - 4, markerX, markerY + 4, UiStyle::BG);
+        canvas.fillCircle(markerX, markerY, 2,
+                          hasFix() ? UiStyle::PINK : UiStyle::GOLD);
+    }
+    canvas.clearClipRect();
+
+    canvas.setTextColor(UiStyle::GOLD);
+    canvas.setTextDatum(top_right);
+    char zoomLabel[8];
+    snprintf(zoomLabel, sizeof(zoomLabel), "Z%u", s_worldZoom);
+    canvas.drawString(zoomLabel, DISPLAY_W - 8, 20);
+    canvas.setTextDatum(top_left);
 }
 
 static void projectLocal(float lat, float lon, float clat, float clon, float span,
@@ -1029,10 +1106,10 @@ static bool drawMapTile(M5Canvas& canvas, uint8_t zoom, int tileX, int tileY,
 }
 
 static void drawStreetMap(M5Canvas& canvas) {
-    constexpr int mapX = 8;
-    constexpr int mapY = 24;
-    constexpr int mapW = DISPLAY_W - 16;
-    constexpr int mapH = MAIN_H - mapY - 5;
+    constexpr int mapX = 0;
+    constexpr int mapY = 0;
+    constexpr int mapW = DISPLAY_W;
+    constexpr int mapH = MAIN_H;
     constexpr int mapCenterX = mapW / 2;
     constexpr int mapCenterY = mapH / 2;
     constexpr int centerX = mapX + mapCenterX;
@@ -1164,14 +1241,6 @@ static void drawStreetMap(M5Canvas& canvas) {
     }
     s_mapCanvas.pushSprite(&canvas, mapX, mapY);
 
-    canvas.setTextSize(1);
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.setTextDatum(top_right);
-    char zoomLabel[12];
-    snprintf(zoomLabel, sizeof(zoomLabel), "Z%u", (unsigned)s_mapZoom);
-    canvas.drawString(zoomLabel, DISPLAY_W - 9, 20);
-    canvas.setTextDatum(top_left);
-
     if (!s_mapCacheHasTiles) {
         canvas.fillRect(mapX + 8, centerY - 15, mapW - 16, 30, UiStyle::BG);
         canvas.setTextColor(UiStyle::GOLD);
@@ -1206,14 +1275,16 @@ static void drawStreetMap(M5Canvas& canvas) {
                         UiStyle::PINK);
     }
     canvas.clearClipRect();
-    canvas.fillRect(mapX, mapY + mapH - 10, mapW, 10, UiStyle::BG);
-    canvas.setTextColor(UiStyle::TEXT);
     loadMapAttribution();
-    canvas.drawString(s_mapAttribution, mapX + 3, mapY + mapH - 9);
 }
 
 void draw(M5Canvas& canvas) {
     uiListBackground(canvas);
+    if (s_page == 3) {
+        drawStreetMap(canvas);
+        return;
+    }
+
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
     canvas.setTextColor(UiStyle::TITLE);
@@ -1229,12 +1300,23 @@ void draw(M5Canvas& canvas) {
     canvas.drawLine(8, 18, DISPLAY_W - 8, 18, UiStyle::TITLE);
     if (s_page == 0) drawFix(canvas);
     else if (s_page == 1) drawWorld(canvas);
-    else if (s_page == 2) drawTrail(canvas);
-    else drawStreetMap(canvas);
+    else drawTrail(canvas);
 }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
+    if (s_run && s_page == 1) {
+        snprintf(out, n, "WORLD Z%u  WASD MOVE  -/+ ZOOM", s_worldZoom);
+        return;
+    }
+    if (s_run && s_page == 3) {
+        if (s_mapAttribution[0] && (millis() / 5000u) % 2u) {
+            snprintf(out, n, "MAP DATA: %s", s_mapAttribution);
+        } else {
+            snprintf(out, n, "MAP 1-4 PAGE  WASD PAN  -/+ ZOOM");
+        }
+        return;
+    }
     if (!s_run) {
         snprintf(out, n, "OFF");
     } else if (Config::gps().powerSave && !s_uartOn) {

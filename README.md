@@ -635,15 +635,18 @@ The GPS screen has four views:
 
 - **FIX**: current status, baud, satellite count, latitude, longitude, altitude,
   speed, and heading
-- **WORLD**: projected map of the globe with a marker for the current fix
+- **WORLD**: movable, zoomable flat world map with shaded continents, grid
+  lines, and the current GPS position
 - **TRAIL**: local path around the last known position, with zoom width control
 - **MAP**: street map centered on GPS, the last track point, or an available
   tile when there is no GPS fix; the position marker appears once GPS data exists
 
-Use **1–4** to switch between GPS, WORLD, TRAIL, and MAP. On **MAP**, use
-**W/A/S/D** (or `;` / `,` / `.` / `/`) to pan independently of the live GPS
-position; panning locks the map center until you restart GPS. Use **-** / **=**
-to zoom the map. These keys do not zoom the TRAIL view.
+Use **1–4** to switch between GPS, WORLD, TRAIL, and MAP. On **WORLD**, use
+**W/A/S/D** (or `;` / `,` / `.` / `/`) to pan and **-** / **=** to zoom from
+level 1 (whole world) to level 4. On **MAP**, the same keys pan independently
+of the live GPS position and zoom the offline tiles. Controls appear in the
+bottom bar; map-provider attribution is shown there periodically, leaving the
+map itself unobstructed. These keys do not zoom the TRAIL view.
 
 The **MAP** view reads offline raster tiles from the SD card at
 `/0N3P0rK/maps/tiles/<style>/<zoom>/<x>/<y>.jpg` or `.png` (256×256 pixels;
