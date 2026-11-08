@@ -595,8 +595,10 @@ is closed.
 - **Cardputer ADV**: GPS UART on the LoRa cap; the LoRa radio is held inactive
   while the GPS mode is running (default RX GPIO **15**, TX GPIO **13**)
 - Protocol: standard NMEA `GGA` / `RMC` sentences over UART
-- Default baud is **9600** for Grove and **115200** for ADV. Supported rates
-  are **9600**, **19200**, **38400**, **57600**, and **115200**.
+- The M5Stack **Unit GPS v1.1 (AT6668)** uses **115200 baud** by default on
+  Grove; the ADV GPS UART preset also uses **115200 baud**. Older GPS units may
+  use **9600 baud**. Supported rates are **9600**, **19200**, **38400**,
+  **57600**, and **115200**.
 
 ### GPS settings and background tracking
 
@@ -613,7 +615,7 @@ Open **SETTINGS → GPS** for the GPS controls:
 | **TZ OFFSET** | Set the local time offset from UTC |
 | **GPS VIEW** | Open the live GPS display |
 
-The source presets configure Grove at UART2 / GPIO 1/2 / 9600 baud, or ADV cap
+The source presets configure Grove at UART2 / GPIO 1/2 / 115200 baud, or ADV cap
 at UART1 / GPIO 15/13 / 115200 baud. **CUSTOM** keeps the selected board's
 separate pin and baud settings. Changing source, baud, or pins while GPS is
 running reopens the UART immediately. **PWR SAVE** is off by default; when on,
@@ -621,6 +623,10 @@ the GPS UART pauses outside the live GPS view and radio capture, then resumes
 when needed. The receiver itself remains powered. Use **TASKS → GPS → ENT** to
 check status or force-stop the service. Leaving the live view with `ESC` returns
 to the menu but does not stop tracking.
+
+If using an older receiver (for example, the original M5Stack Unit GPS with
+AT6558), select **GPS SRC → CUSTOM** and set its documented baud rate (commonly
+9600). The AT6668 preset is intended for Unit GPS v1.1.
 
 ### What the mode shows
 

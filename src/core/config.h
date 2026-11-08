@@ -196,10 +196,8 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-// UART baud the GPS mode listens at. Index into GPS_BAUD_TAB.
-// Bruce validates the real-world GPS UART values it supports as:
-// 9600, 19200, 38400, 57600, 115200. 4800 is a legacy/rare value and not a
-// normal default for modern Grove GPS modules.
+// UART baud the GPS mode listens at. The M5Stack Unit GPS v1.1 (AT6668) uses
+// 115200 by default; 9600 remains available for older or custom receivers.
 static constexpr uint32_t GPS_BAUD_TAB[] = {9600u, 19200u, 38400u, 57600u, 115200u};
 static constexpr uint8_t GPS_BAUD_N = 5;
 
@@ -216,7 +214,7 @@ struct GpsConfig {
     bool powerSave = false;
     uint8_t trackIntervalSec = 1;
     int8_t timezoneOffset = 0;
-    uint8_t groveIdx = 0;
+    uint8_t groveIdx = 4;
     uint8_t advIdx = 4;
     uint8_t groveRx = 1;
     uint8_t groveTx = 2;

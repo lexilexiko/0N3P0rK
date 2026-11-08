@@ -234,7 +234,7 @@ static uint8_t& gpsTxPin(GpsConfig& gps) {
 }
 
 static uint8_t gpsCurrentBaudIndex(const GpsConfig& gps) {
-    if (gps.source == GpsSource::GROVE) return 0;
+    if (gps.source == GpsSource::GROVE) return GPS_BAUD_N - 1;
     if (gps.source == GpsSource::ADV_CAP) return GPS_BAUD_N - 1;
     uint8_t i = Board::isAdv() ? gps.advIdx : gps.groveIdx;
     return i < GPS_BAUD_N ? i : 0;

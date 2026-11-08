@@ -20,7 +20,7 @@
 namespace GpsMode {
 
 static const int kLoraNss = 5;
-static const size_t kRxBuf = 1024;
+static const size_t kRxBuf = 4096;
 static const uint16_t kTrailCap = 160;
 static const float kStepM = 8.0f;
 static const char* kDir = "/0N3P0rK/gps";
@@ -106,7 +106,7 @@ static int defaultTxPin() {
 }
 
 static uint32_t defaultBaud() {
-    return Config::gps().source == GpsSource::ADV_CAP ? 115200u : 9600u;
+    return 115200u;
 }
 
 static uint32_t activeBaud() {
@@ -265,10 +265,7 @@ static bool updateLocalTime(const char* utc) {
 }
 
 static void takeFix(bool ok, float lat, float lon) {
-    if (!ok) {
-        s_valid = false;
-        return;
-    }
+    if (!ok) return;
     s_valid = true;
     s_havePos = true;
     s_fixMs = millis();
@@ -363,6 +360,12 @@ static void onSentence(char* s) {
 
 static void feed(char c) {
     s_bytes++;
+    if (c == '$') {
+        s_nmea[0] = '$';
+        s_nmeaLen = 1;
+        return;
+    }
+    if (s_nmeaLen == 0) return;
     if (c == '\r') return;
     if (c != '\n') {
         if (s_nmeaLen + 1 < sizeof(s_nmea)) s_nmea[s_nmeaLen++] = c;
@@ -378,9 +381,10 @@ static void pollUart() {
     if (!s_uartOn) return;
     if (!s_openUart) return;
     HardwareSerial& uart = *s_openUart;
-    int n = uart.available();
-    if (n > 80) n = 80;
-    while (n-- > 0) feed((char)uart.read());
+    while (uart.available() > 0) {
+        int c = uart.read();
+        if (c >= 0) feed((char)c);
+    }
 }
 
 static void loadTrail() {
@@ -572,10 +576,11 @@ static void drawFix(M5Canvas& canvas) {
                              Config::gps().source == GpsSource::ADV_CAP ? "ADV CAP" : "CUSTOM";
     snprintf(port, sizeof(port), "%s   %lu", sourceName, (unsigned long)activeBaud());
     canvas.drawString(port, 8, 22);
-    canvas.setTextColor(s_valid ? UiStyle::GREEN : UiStyle::GOLD);
+    const bool freshFix = hasFix();
+    canvas.setTextColor(freshFix ? UiStyle::GREEN : UiStyle::GOLD);
     const char* state = "SEARCH";
     if (s_bytes == 0) state = "NO DATA";
-    else if (s_valid) state = "FIX";
+    else if (freshFix) state = "FIX";
     else if (s_havePos && s_fixMs && millis() - s_fixMs > 8000) state = "STALE";
     canvas.drawString(state, 8, 34);
     char b[28];
@@ -650,7 +655,7 @@ static void drawWorld(M5Canvas& canvas) {
     projectWorld(s_lat, s_lon, mx, my);
     int sx = mx * 2;
     int sy = y0 + my * 2;
-    canvas.fillRect(sx - 2, sy - 2, 6, 6, s_valid ? UiStyle::PINK : UiStyle::GOLD);
+    canvas.fillRect(sx - 2, sy - 2, 6, 6, hasFix() ? UiStyle::PINK : UiStyle::GOLD);
 }
 
 static void projectLocal(float lat, float lon, float clat, float clon, float span,

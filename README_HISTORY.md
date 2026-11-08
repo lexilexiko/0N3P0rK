@@ -402,9 +402,10 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   with the season, grows while GPS is enabled, shows green/yellow signal marks
   for fix/search status, and can be broken by three airborne stomps before it
   grows back. GPS does not override the season LED.
-- Matched the Grove connection to UART2 with the Cardputer GPIO 1/2 defaults;
-  retained GPIO 15/13 for the ADV LoRa cap. Older saved baud indexes are
-  migrated to the supported rates.
+- Matched the Grove connection to UART2 with the Cardputer GPIO 1/2 defaults
+  and the M5Stack Unit GPS v1.1 (AT6668) default of 115200 baud; retained GPIO
+  15/13 and 115200 baud for the ADV LoRa cap. Older receivers can use CUSTOM
+  with their documented baud rate.
 - Added GPS source presets, optional UART power saving, configurable trail
   interval, and local-time offset settings.
 
