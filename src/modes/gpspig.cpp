@@ -1,5 +1,4 @@
 #include "gpspig.h"
-#include "mesh_pig.h"
 
 #include "gps_world.h"
 #include "../board/board.h"
@@ -73,8 +72,6 @@ static char s_nmea[96];
 static uint8_t s_nmeaLen = 0;
 static uint32_t s_bytes = 0;
 static uint32_t s_lastPointMs = 0;
-static bool s_meshTyping = false;
-static char s_meshDraft[48] = {};
 static bool s_valid = false;
 static bool s_havePos = false;
 static uint32_t s_fixMs = 0;
@@ -509,8 +506,6 @@ void start() {
     s_mapCacheHasTiles = false;
     s_mapAttributionLoaded = false;
     s_nmeaLen = 0;
-    s_meshTyping = false;
-    s_meshDraft[0] = '\0';
     s_bytes = 0;
     s_lastPointMs = 0;
     s_valid = false;
@@ -527,18 +522,7 @@ void start() {
     Config::gps().enabled = true;
     Config::save();
     Serial.printf("[GPS] took %u heap=%u\n", (unsigned)heapHeld(), (unsigned)ESP.getFreeHeap());
-    // Start Meshtastic if configured
-    if (Config::mesh().enabled) MeshPig::start();
     Display::showToast("GPS", 700);
-}
-
-void openMeshPage() {
-    if (!s_run || !MeshPig::isRunning()) return;
-    s_page = 4;
-    s_meshTyping = false;
-    s_meshDraft[0] = '\0';
-    MeshPig::clearNew();
-    releaseMapCanvas();
 }
 
 void stop() {
@@ -556,8 +540,6 @@ void stop() {
     s_pts = nullptr;
     s_nPts = 0;
     s_run = false;
-    s_meshTyping = false;
-    s_meshDraft[0] = '\0';
     s_valid = false;
     Config::gps().enabled = false;
     Config::save();
@@ -609,58 +591,20 @@ void update() {
         return;
     }
     if (!keyNewPress(s_keyWas)) return;
-    if (s_meshTyping) {
-        auto keys = M5Cardputer.Keyboard.keysState();
-        if (keyEsc()) {
-            s_meshTyping = false;
-            s_meshDraft[0] = '\0';
-            SFX::play(SFX::BACK_NAV);
-        } else if (M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del) {
-            size_t len = strlen(s_meshDraft);
-            if (len) s_meshDraft[len - 1] = '\0';
-        } else if (keys.enter) {
-            if (!s_meshDraft[0]) {
-                Display::showToast("EMPTY MESSAGE", 900);
-            } else if (MeshPig::sendText(s_meshDraft)) {
-                s_meshTyping = false;
-                s_meshDraft[0] = '\0';
-                SFX::play(SFX::CONFIRM);
-                Display::showToast("MESH SENT", 900);
-            } else {
-                Display::showToast("MESH SEND FAILED", 1100);
-            }
-        } else {
-            size_t len = strlen(s_meshDraft);
-            for (char ch : keys.word) {
-                if (ch < 32 || ch >= 127 || len + 1 >= sizeof(s_meshDraft)) continue;
-                s_meshDraft[len++] = ch;
-                s_meshDraft[len] = '\0';
-            }
-        }
-        return;
-    }
     if (keyMin()) return;
     if (keyEsc()) {
         releaseMapCanvas();
         App::setMode(AppMode::MENU);
         return;
     }
-    // Pages 1-4 always; page 5 (MESH) only when Meshtastic enabled
-    uint8_t maxPage = MeshPig::isRunning() ? 5 : 4;
+    const uint8_t maxPage = 4;
     for (uint8_t page = 0; page < maxPage; ++page) {
         if (M5Cardputer.Keyboard.isKeyPressed((char)('1' + page))) {
             s_page = page;
             if (s_page != 3) releaseMapCanvas();
-            if (s_page == 4) MeshPig::clearNew();
             SFX::play(SFX::MENU_CLICK);
             return;
         }
-    }
-    if (s_page == 4 && M5Cardputer.Keyboard.keysState().enter) {
-        s_meshTyping = true;
-        s_meshDraft[0] = '\0';
-        SFX::play(SFX::MENU_CLICK);
-        return;
     }
 
     bool zoomOut = M5Cardputer.Keyboard.isKeyPressed('-') || M5Cardputer.Keyboard.isKeyPressed('_');
@@ -1335,106 +1279,6 @@ static void drawStreetMap(M5Canvas& canvas) {
     loadMapAttribution();
 }
 
-// -------------------------------------------------------------------------
-// Page 5 (index 4): MESH — Meshtastic node list + message feed
-// -------------------------------------------------------------------------
-static void drawMesh(M5Canvas& canvas) {
-    // Header already drawn by draw().
-    // Layout: left half = node list, right half = last messages
-    const uint8_t nodeCount = MeshPig::nodeCount();
-    const uint8_t msgCount  = MeshPig::msgCount();
-    const uint16_t y0 = 22;
-    const uint16_t midX = DISPLAY_W / 2;
-
-    // --- Node list (left) ---
-    canvas.setTextSize(1);
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.setTextDatum(top_left);
-    canvas.drawString("NODES", 8, y0);
-    canvas.drawFastVLine(midX - 2, y0, DISPLAY_H - y0 - 14, UiStyle::PANEL);
-
-    if (nodeCount == 0) {
-        canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("searching...", 8, y0 + 12);
-    } else {
-        uint8_t shown = 0;
-        for (uint8_t i = 0; i < nodeCount && shown < 6; i++) {
-            const MeshNode* n = MeshPig::nodeAt(i);
-            if (!n) continue;
-            uint16_t ny = y0 + 10 + shown * 16;
-            // Name
-            const char* name = n->shortName[0] ? n->shortName : "????";
-            uint16_t nameCol = n->isSelf ? UiStyle::GOLD : UiStyle::TEXT;
-            canvas.setTextColor(nameCol);
-            canvas.drawString(name, 8, ny);
-            // RSSI
-            char rssiStr[8];
-            snprintf(rssiStr, sizeof(rssiStr), "%d", (int)n->rssi);
-            uint16_t rssiCol = n->rssi > -80 ? UiStyle::GREEN
-                             : n->rssi > -100 ? UiStyle::GOLD : UiStyle::RED;
-            canvas.setTextColor(rssiCol);
-            canvas.setTextDatum(top_right);
-            canvas.drawString(rssiStr, midX - 6, ny);
-            canvas.setTextDatum(top_left);
-            // GPS dot if position known
-            if (n->hasPos) {
-                canvas.fillCircle(midX - 16, ny + 4, 2, UiStyle::CYAN);
-            }
-            shown++;
-        }
-        if (nodeCount > 6) {
-            char more[8];
-            snprintf(more, sizeof(more), "+%u", nodeCount - 6);
-            canvas.setTextColor(UiStyle::DIM);
-            canvas.drawString(more, 8, y0 + 10 + 6 * 16);
-        }
-    }
-
-    // --- Message feed (right) ---
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.setTextDatum(top_left);
-    canvas.drawString("MSGS", midX + 2, y0);
-
-    uint8_t showMsgs = 5;
-    uint8_t startMsg = msgCount > showMsgs ? msgCount - showMsgs : 0;
-    for (uint8_t mi = startMsg; mi < msgCount && (mi - startMsg) < showMsgs; mi++) {
-        const MeshMsg* m = MeshPig::msgAt(mi);
-        if (!m) continue;
-        uint16_t my = y0 + 10 + (mi - startMsg) * 20;
-        bool isSelf = (m->from == MeshPig::selfNodeNum());
-        // sender badge
-        canvas.setTextColor(isSelf ? UiStyle::GOLD : UiStyle::PINK);
-        canvas.drawString(m->fromName, midX + 2, my);
-        // message text (truncated)
-        canvas.setTextColor(UiStyle::TEXT);
-        char truncText[22];
-        strncpy(truncText, m->text, sizeof(truncText) - 1);
-        truncText[sizeof(truncText) - 1] = '\0';
-        canvas.drawString(truncText, midX + 2, my + 9);
-    }
-
-    if (msgCount == 0) {
-        canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("no messages", midX + 2, y0 + 12);
-    }
-
-    if (s_meshTyping) {
-        const int inputY = MAIN_H - 14;
-        canvas.setClipRect(4, inputY, DISPLAY_W - 8, 12);
-        canvas.fillRect(4, inputY, DISPLAY_W - 8, 12, UiStyle::PANEL);
-        char input[40];
-        const size_t len = strlen(s_meshDraft);
-        const char* visible = len > sizeof(input) - 2
-            ? s_meshDraft + len - (sizeof(input) - 2) : s_meshDraft;
-        snprintf(input, sizeof(input), ">%s", visible);
-        canvas.setTextSize(1);
-        canvas.setTextDatum(top_left);
-        canvas.setTextColor(UiStyle::TEXT);
-        canvas.drawString(input, 7, inputY + 2);
-        canvas.clearClipRect();
-    }
-}
-
 void draw(M5Canvas& canvas) {
     uiListBackground(canvas);
     if (s_page == 3) {
@@ -1445,36 +1289,24 @@ void draw(M5Canvas& canvas) {
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
     canvas.setTextColor(UiStyle::TITLE);
-    uint8_t totalPages = MeshPig::isRunning() ? 5 : 4;
     const char* title = s_page == 1 ? "WORLD" :
                         (s_page == 2 ? "TRAIL" :
-                        (s_page == 3 ? "MAP"   :
-                        (s_page == 4 ? "MESH"  : "GPS")));
+                        (s_page == 3 ? "MAP" : "GPS"));
     canvas.drawString(title, 8, 0);
     canvas.setTextSize(1);
     canvas.setTextDatum(top_right);
     char pg[8];
-    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(s_page + 1), (unsigned)totalPages);
+    snprintf(pg, sizeof(pg), "%u/4", (unsigned)(s_page + 1));
     canvas.drawString(pg, DISPLAY_W - 8, 4);
     canvas.setTextDatum(top_left);
     canvas.drawLine(8, 18, DISPLAY_W - 8, 18, UiStyle::TITLE);
     if (s_page == 0) drawFix(canvas);
     else if (s_page == 1) drawWorld(canvas);
-    else if (s_page == 4) drawMesh(canvas);
     else drawTrail(canvas);
 }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_run && s_page == 4 && s_meshTyping) {
-        snprintf(out, n, "TYPE MESSAGE  ENT SEND  ESC CANCEL");
-        return;
-    }
-    if (s_run && s_page == 4 && MeshPig::isRunning()) {
-        strncpy(out, MeshPig::getStatusLine(), n - 1);
-        out[n - 1] = '\0';
-        return;
-    }
     if (s_run && s_page == 1) {
         snprintf(out, n, "WORLD Z%u  WASD MOVE  -/+ ZOOM", s_worldZoom);
         return;

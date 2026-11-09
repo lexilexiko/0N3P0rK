@@ -218,25 +218,26 @@ static const uint8_t GPS_N = sizeof(GPS) / sizeof(GPS[0]);
 
 // ── MESH (Meshtastic SX1262 direct) ──────────────────────────────────────────
 // id mapping:
-//  0 = enabled toggle
 //  1 = regional profile
 //  2 = channel name (string ACTION → keyboard; default key is used)
 //  3 = shortName     (string ACTION → keyboard)
-//  4 = MESH VIEW action (opens GPS mode page 5)
+//  4 = open standalone mesh chat
 //  5 = channel PSK (Base64, matching Meshtastic channel settings)
 //  6 = optional manual frequency in MHz
 static const uint8_t MESH_REGION_N = MESH_REGION_COUNT;
 
 static const Item MESH_ITEMS[] = {
-    {"MESH",      Kind::TOGGLE, 0, 0, 1, 1},
     {"REGION",    Kind::VALUE,  1, 0, (int8_t)(MESH_REGION_N - 1), 1},
     {"CHANNEL",   Kind::ACTION, 2, 0, 0, 0},
     {"NAME",      Kind::ACTION, 3, 0, 0, 0},
-    {"MESH VIEW", Kind::ACTION, 4, 0, 0, 0},
+    {"CHAT",      Kind::ACTION, 4, 0, 0, 0},
     {"PSK",       Kind::ACTION, 5, 0, 0, 0},
     {"FREQ",      Kind::ACTION, 6, 0, 0, 0},
 };
 static const uint8_t MESH_ITEMS_N = sizeof(MESH_ITEMS)/sizeof(MESH_ITEMS[0]);
+static const Item MESH_POWER_ITEMS[] = {
+    {"MESH RADIO", Kind::TOGGLE, 0, 0, 1, 1},
+};
 
 static const char* gpsSourceName(int source) {
     switch ((GpsSource)source) {
@@ -424,13 +425,15 @@ static const char* const H_GPS[] = {
     "OPEN THE LIVE GPS DISPLAY."
 };
 static const char* const H_MESH[] = {
-    "ENABLE MESHTASTIC RADIO.",
-    "FREQ PRESET; CHECK LOCAL RULES.",
+    "REGIONAL BAND; CHECK LOCAL RULES.",
     "CHANNEL NAME; MATCH FRIENDS' CHANNEL AND KEY.",
     "SET THE NODE SHORT NAME (4 CHARS).",
-    "OPEN THE MESH NODE / MESSAGE SCREEN.",
+    "OPEN STANDALONE MESH CHAT.",
     "BASE64 PSK: AQ== DEFAULT, AA== OPEN.",
     "CENTER MHz IN BAND; TYPE AUTO TO RESTORE SLOT."
+};
+static const char* const H_MESH_POWER[] = {
+    "OFF STOPS RADIO AND RELEASES ITS MEMORY."
 };
 static const char* const H_KEYS[] = {
     "AGGRESSIVE RADIO CAPTURE.",
@@ -506,6 +509,10 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::GPS)   { *n = GPS_N;        return GPS; }
     if (s_page == SettingsPage::MESH)  { *n = MESH_ITEMS_N; return MESH_ITEMS; }
+    if (s_page == SettingsPage::MESH_POWER) {
+        *n = sizeof(MESH_POWER_ITEMS) / sizeof(MESH_POWER_ITEMS[0]);
+        return MESH_POWER_ITEMS;
+    }
     if (s_page == SettingsPage::KEYS)  { *n = KEYS_N;       return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     if (s_page == SettingsPage::STATUS) { *n = 0; return nullptr; }
@@ -724,10 +731,10 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
-    if (s_page == SettingsPage::MESH) {
+    if (s_page == SettingsPage::MESH || s_page == SettingsPage::MESH_POWER) {
         const MeshConfig& mc = Config::mesh();
         switch (it.id) {
-            case 0: return mc.enabled ? 1 : 0;
+            case 0: return s_page == SettingsPage::MESH_POWER && mc.enabled ? 1 : 0;
             case 1: return mc.region;
             default: return 0;
         }
@@ -855,6 +862,8 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         } else {
             strncpy(raw, "AUTO", sizeof(raw) - 1);
         }
+    } else if (s_page == SettingsPage::MESH_POWER && it.id == 0) {
+        strncpy(raw, Config::mesh().enabled ? "ON" : "OFF", sizeof(raw) - 1);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -1284,24 +1293,26 @@ static bool setValue(const Item& it, int v) {
             GpsMode::reconfigure();
         return true;
     }
+    if (s_page == SettingsPage::MESH_POWER) {
+        MeshConfig& mc = Config::mesh();
+        mc.enabled = (v != 0);
+        Config::save();
+        if (mc.enabled && !MeshPig::isRunning()) {
+            MeshPig::start();
+            if (!MeshPig::isRunning()) {
+                Display::showToast("MESH RADIO FAILED", 1200);
+                mc.enabled = false;
+                Config::save();
+                return false;
+            }
+        } else if (!mc.enabled && MeshPig::isRunning()) {
+            MeshPig::stop();
+        }
+        return true;
+    }
     if (s_page == SettingsPage::MESH) {
         MeshConfig& mc = Config::mesh();
         switch (it.id) {
-            case 0:
-                mc.enabled = (v != 0);
-                Config::save();
-                if (mc.enabled && !MeshPig::isRunning()) {
-                    MeshPig::start();
-                    if (!MeshPig::isRunning()) {
-                        Display::showToast("MESH RADIO FAILED", 1200);
-                        mc.enabled = false;
-                        Config::save();
-                        return false;
-                    }
-                } else if (!mc.enabled && MeshPig::isRunning()) {
-                    MeshPig::stop();
-                }
-                return true;
             case 1: {
                 if (v < 0 || v >= MESH_REGION_N) return false;
                 mc.region = (uint8_t)v;
@@ -1444,6 +1455,8 @@ const char* bottomHint() {
                 return H_GPS[s_idx];
             if (s_page == SettingsPage::MESH && s_idx < sizeof(H_MESH) / sizeof(H_MESH[0]))
                 return H_MESH[s_idx];
+            if (s_page == SettingsPage::MESH_POWER && s_idx == 0)
+                return H_MESH_POWER[0];
             if (s_page == SettingsPage::SCENE && s_idx < sizeof(H_SCENE) / sizeof(H_SCENE[0]))
                 return H_SCENE[s_idx];
             if (s_page == SettingsPage::SCENE_TREES &&
@@ -1471,7 +1484,7 @@ const char* bottomHint() {
             if (s_page == SettingsPage::GPS && it[s_idx].id == 8)
                 return "ENT OPEN GPS VIEW  ESC BACK";
             if (s_page == SettingsPage::MESH && it[s_idx].id == 4)
-                return "ENT OPEN MESH VIEW  ESC BACK";
+                return "ENT OPEN MESH CHAT  ESC BACK";
             if (s_page == SettingsPage::MESH &&
                 (it[s_idx].id == 5 || it[s_idx].id == 6))
                 return "ENT EDIT  ESC BACK";
@@ -1962,17 +1975,13 @@ void update() {
                 Display::showToast("ENABLE MESH FIRST", 1000);
                 return;
             }
-            const bool startedGps = !GpsMode::isRunning();
-            if (!GpsMode::isRunning()) GpsMode::start();
-            if (!GpsMode::isRunning()) return;
             if (!MeshPig::isRunning()) MeshPig::start();
             if (!MeshPig::isRunning()) {
-                if (startedGps) GpsMode::stop();
                 Display::showToast("MESH RADIO FAILED", 1200);
                 return;
             }
-            GpsMode::openMeshPage();
-            App::setMode(AppMode::GPS);
+            MeshPig::clearNew();
+            App::setMode(AppMode::MESH);
         }
         return;
     }
@@ -2167,7 +2176,8 @@ void draw(M5Canvas& canvas) {
     }
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::GPS) title = "GPS";
-    else if (s_page == SettingsPage::MESH) title = "MESH";
+    else if (s_page == SettingsPage::MESH) title = "MESH SETUP";
+    else if (s_page == SettingsPage::MESH_POWER) title = "MESH";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
 
     canvas.setTextDatum(top_center);

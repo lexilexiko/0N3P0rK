@@ -34,15 +34,45 @@
 #include <RadioLib.h>
 #include <M5Unified.h>
 #include <mbedtls/aes.h>   // ESP-IDF AES (included with esp32 Arduino)
+#include <new>
 
 // ── SX1262 pin mapping for CAP LoRa-1262 on Cardputer-Adv ──────────────────
 // NSS=G5, IRQ=G4, RST=G3, BUSY=G6
 // The SX1262 shares the SD SPI bus: MOSI=G14, MISO=G39, SCK=G40.
-static SX1262& radio() {
-    static SX1262 instance = new Module(
+static Module* s_radioModule = nullptr;
+static SX1262* s_radioInstance = nullptr;
+static bool s_radioInitialized = false;
+
+static bool createRadio() {
+    if (s_radioModule && s_radioInstance) return true;
+    s_radioModule = new (std::nothrow) Module(
         5, 4, 3, 6, Storage::spiBus(),
         SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    return instance;
+    if (!s_radioModule) return false;
+    s_radioInstance = new (std::nothrow) SX1262(s_radioModule);
+    if (!s_radioInstance) {
+        delete s_radioModule;
+        s_radioModule = nullptr;
+        return false;
+    }
+    return true;
+}
+
+static SX1262& radio() {
+    return *s_radioInstance;
+}
+
+static void releaseRadio() {
+    if (s_radioInstance && s_radioInitialized) {
+        s_radioInstance->standby();
+    }
+    if (s_radioInstance) {
+        delete s_radioInstance;
+        s_radioInstance = nullptr;
+    }
+    delete s_radioModule;
+    s_radioModule = nullptr;
+    s_radioInitialized = false;
 }
 
 // ── Meshtastic OTA constants ─────────────────────────────────────────────────
@@ -166,18 +196,32 @@ static void IRAM_ATTR rxISR() { s_rxFlag = true; }
 
 // Node ring (newest overwrites oldest, max 16)
 static const uint8_t NODE_MAX = 16;
-static MeshNode s_nodes[NODE_MAX];
+static MeshNode* s_nodes = nullptr;
 static uint8_t  s_nodeHead = 0;   // next write slot
 static uint8_t  s_nodeCount = 0;
 
 // Message circular log (max 24)
 static const uint8_t MSG_MAX = 24;
-static MeshMsg  s_msgs[MSG_MAX];
+static MeshMsg*  s_msgs = nullptr;
 static uint8_t  s_msgHead  = 0;
 static uint8_t  s_msgCount = 0;
 static uint8_t  s_newMsgs  = 0;
 
 static char s_statusLine[48] = "MESH  NO SIGNAL";
+
+static void releaseMeshStorage() {
+    releaseRadio();
+    delete[] s_nodes;
+    s_nodes = nullptr;
+    delete[] s_msgs;
+    s_msgs = nullptr;
+    s_nodeHead = 0;
+    s_nodeCount = 0;
+    s_msgHead = 0;
+    s_msgCount = 0;
+    s_newMsgs = 0;
+    s_rxFlag = false;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 static bool rememberPacket(uint32_t from, uint32_t id) {
@@ -715,6 +759,15 @@ void start() {
               (unsigned)mc.region, (unsigned long)frequency);
         return;
     }
+    if (!s_nodes) s_nodes = new (std::nothrow) MeshNode[NODE_MAX]();
+    if (!s_msgs) s_msgs = new (std::nothrow) MeshMsg[MSG_MAX]();
+    if (!s_nodes || !s_msgs || !createRadio()) {
+        releaseMeshStorage();
+        snprintf(s_statusLine, sizeof(s_statusLine), "MESH LOW MEM");
+        log_w("[MeshPig] unable to allocate radio state");
+        return;
+    }
+
     const float freqMHz = frequency / 1000.0f;
     const float txPower = MESH_TX_POWER < region->maxTxPowerDbm
         ? MESH_TX_POWER : (float)region->maxTxPowerDbm;
@@ -733,8 +786,10 @@ void start() {
     if (state != RADIOLIB_ERR_NONE) {
         snprintf(s_statusLine, sizeof(s_statusLine), "MESH RADIO ERR");
         log_w("[MeshPig] radio.begin failed: %d", state);
+        releaseMeshStorage();
         return;
     }
+    s_radioInitialized = true;
 
     radio().setCurrentLimit(140.0f);
     radio().setPacketReceivedAction(rxISR);
@@ -762,9 +817,9 @@ void start() {
     state = radio().startReceive();
     if (state != RADIOLIB_ERR_NONE) {
         log_w("[MeshPig] startReceive failed: %d", state);
-        radio().standby();
         s_running = false;
         snprintf(s_statusLine, sizeof(s_statusLine), "MESH RX ERR");
+        releaseMeshStorage();
         return;
     }
 
@@ -774,9 +829,10 @@ void start() {
 }
 
 void stop() {
-    if (!s_running) return;
-    radio().standby();
+    if (!s_running && !s_radioInstance && !s_nodes && !s_msgs) return;
     s_running = false;
+    releaseMeshStorage();
+    snprintf(s_statusLine, sizeof(s_statusLine), "MESH OFF");
 }
 
 void requestNodeInfo() {
@@ -844,7 +900,7 @@ bool isRunning() { return s_running; }
 
 uint8_t nodeCount() { return s_nodeCount; }
 MeshNode* nodeAt(uint8_t i) {
-    if (i >= s_nodeCount) return nullptr;
+    if (!s_nodes || i >= s_nodeCount) return nullptr;
     // Return newest first: walk back from head
     int8_t slot = (int8_t)s_nodeHead - 1 - i;
     while (slot < 0) slot += NODE_MAX;
@@ -853,7 +909,7 @@ MeshNode* nodeAt(uint8_t i) {
 
 uint8_t msgCount()  { return s_msgCount; }
 MeshMsg* msgAt(uint8_t i) {
-    if (i >= s_msgCount) return nullptr;
+    if (!s_msgs || i >= s_msgCount) return nullptr;
     int8_t slot = (int8_t)s_msgHead - 1 - i;
     while (slot < 0) slot += MSG_MAX;
     return &s_msgs[slot];

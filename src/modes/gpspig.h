@@ -8,7 +8,6 @@
 namespace GpsMode {
 
 void start();
-void openMeshPage();
 void stop();
 void reconfigure();
 void updatePowerSave();

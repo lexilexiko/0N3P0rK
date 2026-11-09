@@ -688,11 +688,13 @@ tracking continues until disabled in **SETTINGS → GPS** or stopped from
 ### Experimental SX1262 mesh
 
 The experimental SX1262 feature requires a **Cardputer ADV with the LoRa-1262
-cap**. Open **SET → MESH** to enable it, choose a region, edit the
-node's short name, and open **MESH VIEW**. The mesh view shows received nodes
-and messages. Press **ENTER** to type a broadcast message, **ENTER** again to
-send, **BACKSPACE** to edit, or **ESC** to cancel typing. In the regular GPS
-view, the MESH page is also available with **5** while the radio is active.
+cap**. Use **SET → MESH** only to turn the radio on or off. When enabled, the
+radio runs independently of GPS. Open **CONNECT → MESH** for its standalone
+setup and chat interface. There you can choose a region, channel, node name,
+PSK, and frequency, then open chat to see nodes and messages. Press **ENTER**
+to type a broadcast message, **ENTER** again to send, **BACKSPACE** to edit,
+or **ESC** to cancel typing. Turning the radio off releases its SX1262 driver
+and dynamically allocated node/message tables.
 
 The **CHANNEL** setting is the exact Meshtastic channel name and is case
 sensitive; both devices must use the same name and key. **PSK** accepts the

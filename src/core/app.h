@@ -23,7 +23,9 @@ enum class AppMode : uint8_t {
     TASKS,
     INSPECTOR,
     DESK,
-    GPS
+    GPS,
+    MESH_SETUP,
+    MESH
 };
 
 namespace App {

@@ -92,8 +92,12 @@ static const char* const H_GPSSET[] = {
     "4800 TO 115200. ENT EDIT."
 };
 static const char* const H_MESHSET[] = {
-    "MESHTASTIC SX1262. ADV CAP.",
-    "REGION, NODE NAME, MESH CHAT."
+    "RADIO POWER ONLY.",
+    "SETUP AND CHAT LIVE IN MESH."
+};
+static const char* const H_MESH[] = {
+    "STANDALONE MESHTASTIC SETUP AND CHAT.",
+    "REGION, CHANNEL, PSK, NAME, FREQUENCY."
 };
 static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
@@ -227,7 +231,8 @@ static const Item G_CONNECT[] = {
     {"U:", "USB SD",  17, H_USB,    2},
     {"F:", "XFER",    22, H_XFER,   2},
     {"PC", "DESK",    27, H_DESK,   2},
-    {"GP", "GPS",     28, H_GPS,    2}
+    {"GP", "GPS",     28, H_GPS,    2},
+    {"MS", "MESH",    31, H_MESH,   2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -328,8 +333,12 @@ static void doAction(uint8_t id) {
             App::setMode(AppMode::TUNE);
             break;
         case 30:
-            SettingsMenu::show(SettingsPage::MESH);
+            SettingsMenu::show(SettingsPage::MESH_POWER);
             App::setMode(AppMode::TUNE);
+            break;
+        case 31:
+            SettingsMenu::show(SettingsPage::MESH);
+            App::setMode(AppMode::MESH_SETUP);
             break;
         case 18:
             SettingsMenu::show(SettingsPage::KEYS);
@@ -454,7 +463,7 @@ const char* hint() {
         return s_group == GroupId::NONE ? "^/v  ENT OPEN  ESC FARM" : "^/v  ENT  ESC BACK";
     }
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
-        App::mode() == AppMode::WIFI)
+        App::mode() == AppMode::WIFI || App::mode() == AppMode::MESH_SETUP)
         return SettingsMenu::bottomHint();
     return "^/v  ENT  ESC BACK";
 }
@@ -695,7 +704,7 @@ void draw(M5Canvas& canvas) {
         return;
     }
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
-        App::mode() == AppMode::WIFI) {
+        App::mode() == AppMode::WIFI || App::mode() == AppMode::MESH_SETUP) {
         SettingsMenu::draw(canvas);
         return;
     }
