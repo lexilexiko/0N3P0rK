@@ -34,7 +34,6 @@
 #include "../modes/mp3player.h"
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
-#include "../modes/mesh_mode.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -524,6 +523,8 @@ void Display::drawFarm() {
 
     if (sceneLive) {
         Avatar::draw(mainCanvas);
+        if (App::mode() == AppMode::FARM)
+            GpsAntenna::draw(mainCanvas, GpsMode::isRunning(), GpsMode::hasFix());
         if (wolfLive) Wolf::draw(mainCanvas);
         if (SceneLayers::weather) {
             Weather::drawBirds(mainCanvas, fg);
@@ -973,11 +974,7 @@ void Display::drawBottomBar() {
             case AppMode::WIFI:
             case AppMode::PIG:
             case AppMode::TUNE:
-            case AppMode::MESH_SETUP:
                 strncpy(left, SettingsMenu::bottomHint(), sizeof(left) - 1);
-                break;
-            case AppMode::MESH:
-                MeshMode::getStatusLine(left, sizeof(left));
                 break;
             case AppMode::MENU:
                 strncpy(left, Menu::selectedHint(), sizeof(left) - 1);
@@ -1063,11 +1060,7 @@ void Display::drawBottomBar() {
             case AppMode::WIFI:
             case AppMode::PIG:
             case AppMode::TUNE:
-            case AppMode::MESH_SETUP:
                 strncpy(left, SettingsMenu::bottomHint(), sizeof(left) - 1);
-                break;
-            case AppMode::MESH:
-                MeshMode::getStatusLine(left, sizeof(left));
                 break;
             case AppMode::TASKS:
                 strncpy(left, "^/v SELECT  ENT STOP  ESC BACK", sizeof(left) - 1);
@@ -1187,8 +1180,7 @@ void Display::update() {
          App::mode() == AppMode::PIGPASS ||
          App::mode() == AppMode::INSPECTOR ||
          App::mode() == AppMode::DESK ||
-         App::mode() == AppMode::GPS ||
-         App::mode() == AppMode::MESH);
+         App::mode() == AppMode::GPS);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
@@ -1206,7 +1198,6 @@ void Display::update() {
         else if (App::mode() == AppMode::INSPECTOR) InspectorPig::draw(mainCanvas);
         else if (App::mode() == AppMode::DESK) DeskMode::draw(mainCanvas);
         else if (App::mode() == AppMode::GPS) GpsMode::draw(mainCanvas);
-        else if (App::mode() == AppMode::MESH) MeshMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

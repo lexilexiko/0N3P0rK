@@ -17,9 +17,7 @@ enum class SettingsPage : uint8_t {
     SCENE_TREES = 9,
     SCENE_EFFECTS = 10,
     SCENE_OTHER = 11,
-    GPS = 12,
-    MESH = 13,
-    MESH_POWER = 14
+    GPS = 12
 };
 
 namespace SettingsMenu {

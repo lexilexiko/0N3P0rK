@@ -19,8 +19,6 @@
 #include "../modes/inspectorpig.h"
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
-#include "../modes/mesh_pig.h"
-#include "../modes/mesh_mode.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -59,9 +57,7 @@ bool overlayMode() {
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI ||
            s_mode == AppMode::DESK ||
-           s_mode == AppMode::GPS ||
-           s_mode == AppMode::MESH_SETUP ||
-           s_mode == AppMode::MESH;
+           s_mode == AppMode::GPS;
 }
 
 bool windowHidden() { return s_winHid && overlayMode(); }
@@ -77,7 +73,6 @@ void begin() {
     pinMode(0, INPUT_PULLUP);
     s_g0Was = digitalRead(0) == LOW;
     if (Config::gps().enabled) GpsMode::start();
-    if (Config::mesh().enabled) MeshPig::start();
 }
 
 AppMode mode() { return s_mode; }
@@ -105,8 +100,6 @@ const char* modeName() {
         case AppMode::INSPECTOR:return "INSPECT";
         case AppMode::DESK:     return "DESK";
         case AppMode::GPS:      return "GPS";
-        case AppMode::MESH_SETUP:return "MESH SETUP";
-        case AppMode::MESH:     return "MESH";
         default:                return "?";
     }
 }
@@ -115,8 +108,7 @@ void setMode(AppMode m) {
     if (s_mode == m) return;
     if (s_mode == AppMode::LOOT) LootMenu::hide();
     if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
-        s_mode == AppMode::WIFI || s_mode == AppMode::MESH_SETUP)
-        SettingsMenu::hide();
+        s_mode == AppMode::WIFI) SettingsMenu::hide();
     if (s_mode == AppMode::EVILPIG && EvilPigMode::isRunning()) EvilPigMode::stop();
     if (s_mode == AppMode::PIGPASS && PigpassMode::isRunning()) PigpassMode::stop();
     if (s_mode == AppMode::BLE && BlePigMode::isRunning()) BlePigMode::stop();
@@ -321,16 +313,13 @@ void loop() {
     if (g0 && !s_g0Was) Display::toggleScreenPower();
     s_g0Was = g0;
     GpsMode::update();
-    if (Config::mesh().enabled) MeshPig::update();
-    else if (MeshPig::isRunning()) MeshPig::stop();
     if (Display::isScreenForcedOff()) return;
 
     // Any key wakes the dimmed backlight (not only isChange, not only FARM).
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
 
-    if (!SettingsMenu::isTyping() && !FileMgrMode::isTyping() &&
-        !MeshMode::isTyping())
+    if (!SettingsMenu::isTyping() && !FileMgrMode::isTyping())
         Screenshot::poll();
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
@@ -344,8 +333,7 @@ void loop() {
     }
     if (overlayMode() && s_mode != AppMode::BADUSB && s_mode != AppMode::FILEMGR &&
         s_mode != AppMode::DESK &&
-        !SettingsMenu::isTyping() && !FileMgrMode::isTyping() &&
-        !MeshMode::isTyping()) {
+        !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {
                 s_winHid = !s_winHid;
@@ -404,14 +392,11 @@ void loop() {
         if (!DeskMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::GPS) {
         if (!GpsMode::isRunning()) setMode(AppMode::MENU);
-    } else if (s_mode == AppMode::MESH) {
-        MeshMode::update();
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
-               s_mode == AppMode::WIFI || s_mode == AppMode::MESH_SETUP) {
+               s_mode == AppMode::WIFI) {
         SettingsMenu::update();
         if ((s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
-             s_mode == AppMode::WIFI || s_mode == AppMode::MESH_SETUP) &&
-            !SettingsMenu::isActive())
+             s_mode == AppMode::WIFI) && !SettingsMenu::isActive())
             setMode(AppMode::MENU);
     } else if (s_mode == AppMode::MENU) {
         Menu::update();
@@ -430,8 +415,7 @@ void loop() {
         s_mode == AppMode::WIFI || s_mode == AppMode::TASKS ||
         s_mode == AppMode::INSPECTOR ||
         s_mode == AppMode::DESK ||
-        s_mode == AppMode::GPS || s_mode == AppMode::MESH_SETUP ||
-        s_mode == AppMode::MESH) return;
+        s_mode == AppMode::GPS) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();

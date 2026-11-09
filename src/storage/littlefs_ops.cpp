@@ -14,10 +14,6 @@ static bool s_mounted = false;
 static SPIClass s_sdSPI(FSPI);
 static SemaphoreHandle_t s_sdMux = nullptr;
 
-SPIClass& spiBus() {
-    return s_sdSPI;
-}
-
 static void lockSd() {
     if (!s_sdMux) s_sdMux = xSemaphoreCreateMutex();
     if (s_sdMux) xSemaphoreTake(s_sdMux, portMAX_DELAY);
@@ -135,12 +131,6 @@ bool begin() {
     SD.mkdir(DIR_TALK);
     SD.mkdir(DIR_MUSIC);
     SD.mkdir(DIR_INSPECTOR);
-    SD.mkdir("/0N3P0rK/maps");
-    SD.mkdir("/0N3P0rK/maps/tiles");
-    SD.mkdir("/0N3P0rK/maps/tiles/dark");
-    SD.mkdir("/0N3P0rK/maps/tiles/osm");
-    SD.mkdir("/0N3P0rK/maps/tiles/voyager");
-    SD.mkdir("/0N3P0rK/maps/tiles/topo");
     migrateLegacy();
     unlockSd();
     return true;

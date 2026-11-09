@@ -196,8 +196,10 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-// UART baud the GPS mode listens at. The M5Stack Unit GPS v1.1 (AT6668) uses
-// 115200 by default; 9600 remains available for older or custom receivers.
+// UART baud the GPS mode listens at. Index into GPS_BAUD_TAB.
+// Bruce validates the real-world GPS UART values it supports as:
+// 9600, 19200, 38400, 57600, 115200. 4800 is a legacy/rare value and not a
+// normal default for modern Grove GPS modules.
 static constexpr uint32_t GPS_BAUD_TAB[] = {9600u, 19200u, 38400u, 57600u, 115200u};
 static constexpr uint8_t GPS_BAUD_N = 5;
 
@@ -207,13 +209,6 @@ enum class GpsSource : uint8_t {
     CUSTOM = 2
 };
 static constexpr uint8_t GPS_SOURCE_N = 3;
-static constexpr uint8_t GPS_MAP_STYLE_N = 4;
-static constexpr const char* GPS_MAP_STYLE_DIRS[GPS_MAP_STYLE_N] = {
-    "dark", "osm", "voyager", "topo"
-};
-static constexpr const char* GPS_MAP_STYLE_NAMES[GPS_MAP_STYLE_N] = {
-    "DARK", "OSM", "VOYAGER", "TOPO"
-};
 
 struct GpsConfig {
     bool enabled = false;
@@ -221,57 +216,12 @@ struct GpsConfig {
     bool powerSave = false;
     uint8_t trackIntervalSec = 1;
     int8_t timezoneOffset = 0;
-    uint8_t groveIdx = 4;
+    uint8_t groveIdx = 0;
     uint8_t advIdx = 4;
     uint8_t groveRx = 1;
     uint8_t groveTx = 2;
     uint8_t advRx = 15;
     uint8_t advTx = 13;
-    uint8_t mapStyle = 0;
-};
-
-enum MeshRegion : uint8_t {
-    MESH_REGION_EU_868 = 0,
-    MESH_REGION_US,
-    MESH_REGION_EU_433,
-    MESH_REGION_CN,
-    MESH_REGION_JP,
-    MESH_REGION_ANZ,
-    MESH_REGION_ANZ_433,
-    MESH_REGION_RU,
-    MESH_REGION_KR,
-    MESH_REGION_TW,
-    MESH_REGION_IN,
-    MESH_REGION_NZ_865,
-    MESH_REGION_TH,
-    MESH_REGION_UA_433,
-    MESH_REGION_UA_868,
-    MESH_REGION_MY_433,
-    MESH_REGION_MY_919,
-    MESH_REGION_SG_923,
-    MESH_REGION_PH_433,
-    MESH_REGION_PH_868,
-    MESH_REGION_PH_915,
-    MESH_REGION_KZ_433,
-    MESH_REGION_KZ_863,
-    MESH_REGION_NP_865,
-    MESH_REGION_BR_902,
-    MESH_REGION_COUNT
-};
-
-// Meshtastic-compatible LoRa mesh radio config (SX1262 direct, no UART).
-// SX1262 on CAP LoRa-1262: NSS=G5, IRQ=G4, RST=G3, BUSY=G6.
-struct MeshConfig {
-    bool    enabled     = false;
-    uint8_t region      = MESH_REGION_EU_868;
-    bool    frequencyOverride = false;
-    // Manual center frequency in kHz; ignored unless frequencyOverride is set.
-    uint32_t freqKHz    = 869525u;
-    // Meshtastic channel name and Base64-encoded PSK (16 or 32 bytes).
-    char    channel[20] = "LongFast";
-    char    psk[45]     = "AQ==";
-    // Our node short name broadcast to peers (max 4 chars)
-    char    shortName[5] = "PIG";
 };
 
 static const uint8_t HOTKEY_COUNT = 20;
@@ -306,7 +256,6 @@ public:
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
     static GpsConfig& gps() { return gpsConfig; }
-    static MeshConfig& mesh() { return meshConfig; }
     static HotkeyConfig& hotkeys() { return hotkeyConfig; }
     static XferConfig& xfer() { return xferConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
@@ -322,7 +271,6 @@ private:
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
     static GpsConfig gpsConfig;
-    static MeshConfig meshConfig;
     static HotkeyConfig hotkeyConfig;
     static XferConfig xferConfig;
     static bool initialized;

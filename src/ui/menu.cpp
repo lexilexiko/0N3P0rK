@@ -64,7 +64,7 @@ static const char* const H_PIG[] = {
     "SKIN SEASON SKY LAYERS LIFE."
 };
 static const char* const H_SET[] = {
-    "SYSTEM RADIO BLE GPS MESH KEYS.",
+    "SYSTEM RADIO BLE GPS KEYS.",
     "EACH PAGE ITS OWN KNOBS."
 };
 static const char* const H_TASKS[] = {
@@ -90,14 +90,6 @@ static const char* const H_BLESET[] = {
 static const char* const H_GPSSET[] = {
     "UART BAUD. GROVE AND ADV.",
     "4800 TO 115200. ENT EDIT."
-};
-static const char* const H_MESHSET[] = {
-    "RADIO POWER ONLY.",
-    "SETUP AND CHAT LIVE IN MESH."
-};
-static const char* const H_MESH[] = {
-    "STANDALONE MESHTASTIC SETUP AND CHAT.",
-    "REGION, CHANNEL, PSK, NAME, FREQUENCY."
 };
 static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
@@ -221,7 +213,6 @@ static const Item G_SET[] = {
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
     {"GP", "GPS",     29, H_GPSSET, 2},
-    {"MS", "MESH",    30, H_MESHSET,2},
     {"**", "KEYS",    18, H_KEYS,   2},
     {"[:", "FILES",   20, H_FILEMGR,2}
 };
@@ -231,8 +222,7 @@ static const Item G_CONNECT[] = {
     {"U:", "USB SD",  17, H_USB,    2},
     {"F:", "XFER",    22, H_XFER,   2},
     {"PC", "DESK",    27, H_DESK,   2},
-    {"GP", "GPS",     28, H_GPS,    2},
-    {"MS", "MESH",    31, H_MESH,   2}
+    {"GP", "GPS",     28, H_GPS,    2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -262,7 +252,7 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 8;
+    if (g == GroupId::SET) return 7;
     if (g == GroupId::CONNECT) return 6;
     return 0;
 }
@@ -331,14 +321,6 @@ static void doAction(uint8_t id) {
         case 29:
             SettingsMenu::show(SettingsPage::GPS);
             App::setMode(AppMode::TUNE);
-            break;
-        case 30:
-            SettingsMenu::show(SettingsPage::MESH_POWER);
-            App::setMode(AppMode::TUNE);
-            break;
-        case 31:
-            SettingsMenu::show(SettingsPage::MESH);
-            App::setMode(AppMode::MESH_SETUP);
             break;
         case 18:
             SettingsMenu::show(SettingsPage::KEYS);
@@ -463,7 +445,7 @@ const char* hint() {
         return s_group == GroupId::NONE ? "^/v  ENT OPEN  ESC FARM" : "^/v  ENT  ESC BACK";
     }
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
-        App::mode() == AppMode::WIFI || App::mode() == AppMode::MESH_SETUP)
+        App::mode() == AppMode::WIFI)
         return SettingsMenu::bottomHint();
     return "^/v  ENT  ESC BACK";
 }
@@ -704,7 +686,7 @@ void draw(M5Canvas& canvas) {
         return;
     }
     if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
-        App::mode() == AppMode::WIFI || App::mode() == AppMode::MESH_SETUP) {
+        App::mode() == AppMode::WIFI) {
         SettingsMenu::draw(canvas);
         return;
     }
