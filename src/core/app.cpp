@@ -19,6 +19,7 @@
 #include "../modes/inspectorpig.h"
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
+#include "../modes/mesh_pig.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -73,6 +74,7 @@ void begin() {
     pinMode(0, INPUT_PULLUP);
     s_g0Was = digitalRead(0) == LOW;
     if (Config::gps().enabled) GpsMode::start();
+    if (Config::mesh().enabled) MeshPig::start();
 }
 
 AppMode mode() { return s_mode; }
@@ -313,6 +315,7 @@ void loop() {
     if (g0 && !s_g0Was) Display::toggleScreenPower();
     s_g0Was = g0;
     GpsMode::update();
+    MeshPig::update();
     if (Display::isScreenForcedOff()) return;
 
     // Any key wakes the dimmed backlight (not only isChange, not only FARM).

@@ -64,7 +64,7 @@ static const char* const H_PIG[] = {
     "SKIN SEASON SKY LAYERS LIFE."
 };
 static const char* const H_SET[] = {
-    "SYSTEM RADIO BLE GPS KEYS.",
+    "SYSTEM RADIO BLE GPS MESH KEYS.",
     "EACH PAGE ITS OWN KNOBS."
 };
 static const char* const H_TASKS[] = {
@@ -90,6 +90,10 @@ static const char* const H_BLESET[] = {
 static const char* const H_GPSSET[] = {
     "UART BAUD. GROVE AND ADV.",
     "4800 TO 115200. ENT EDIT."
+};
+static const char* const H_MESHSET[] = {
+    "MESHTASTIC SX1262. ADV CAP.",
+    "REGION, NODE NAME, MESH CHAT."
 };
 static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
@@ -213,6 +217,7 @@ static const Item G_SET[] = {
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
     {"GP", "GPS",     29, H_GPSSET, 2},
+    {"MS", "MESH",    30, H_MESHSET,2},
     {"**", "KEYS",    18, H_KEYS,   2},
     {"[:", "FILES",   20, H_FILEMGR,2}
 };
@@ -252,7 +257,7 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 7;
+    if (g == GroupId::SET) return 8;
     if (g == GroupId::CONNECT) return 6;
     return 0;
 }
@@ -320,6 +325,10 @@ static void doAction(uint8_t id) {
             break;
         case 29:
             SettingsMenu::show(SettingsPage::GPS);
+            App::setMode(AppMode::TUNE);
+            break;
+        case 30:
+            SettingsMenu::show(SettingsPage::MESH);
             App::setMode(AppMode::TUNE);
             break;
         case 18:

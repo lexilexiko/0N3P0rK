@@ -14,6 +14,10 @@ static bool s_mounted = false;
 static SPIClass s_sdSPI(FSPI);
 static SemaphoreHandle_t s_sdMux = nullptr;
 
+SPIClass& spiBus() {
+    return s_sdSPI;
+}
+
 static void lockSd() {
     if (!s_sdMux) s_sdMux = xSemaphoreCreateMutex();
     if (s_sdMux) xSemaphoreTake(s_sdMux, portMAX_DELAY);

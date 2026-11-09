@@ -230,6 +230,50 @@ struct GpsConfig {
     uint8_t mapStyle = 0;
 };
 
+enum MeshRegion : uint8_t {
+    MESH_REGION_EU_868 = 0,
+    MESH_REGION_US,
+    MESH_REGION_EU_433,
+    MESH_REGION_CN,
+    MESH_REGION_JP,
+    MESH_REGION_ANZ,
+    MESH_REGION_ANZ_433,
+    MESH_REGION_RU,
+    MESH_REGION_KR,
+    MESH_REGION_TW,
+    MESH_REGION_IN,
+    MESH_REGION_NZ_865,
+    MESH_REGION_TH,
+    MESH_REGION_UA_433,
+    MESH_REGION_UA_868,
+    MESH_REGION_MY_433,
+    MESH_REGION_MY_919,
+    MESH_REGION_SG_923,
+    MESH_REGION_PH_433,
+    MESH_REGION_PH_868,
+    MESH_REGION_PH_915,
+    MESH_REGION_KZ_433,
+    MESH_REGION_KZ_863,
+    MESH_REGION_NP_865,
+    MESH_REGION_BR_902,
+    MESH_REGION_COUNT
+};
+
+// Meshtastic-compatible LoRa mesh radio config (SX1262 direct, no UART).
+// SX1262 on CAP LoRa-1262: NSS=G5, IRQ=G4, RST=G3, BUSY=G6.
+struct MeshConfig {
+    bool    enabled     = false;
+    uint8_t region      = MESH_REGION_EU_868;
+    bool    frequencyOverride = false;
+    // Manual center frequency in kHz; ignored unless frequencyOverride is set.
+    uint32_t freqKHz    = 869525u;
+    // Meshtastic channel name and Base64-encoded PSK (16 or 32 bytes).
+    char    channel[20] = "LongFast";
+    char    psk[45]     = "AQ==";
+    // Our node short name broadcast to peers (max 4 chars)
+    char    shortName[5] = "PIG";
+};
+
 static const uint8_t HOTKEY_COUNT = 20;
 // 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP; 18 = DESK; 19 = GPS.
 // DESK and GPS stay unbound until the user picks a key.
@@ -262,6 +306,7 @@ public:
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
     static GpsConfig& gps() { return gpsConfig; }
+    static MeshConfig& mesh() { return meshConfig; }
     static HotkeyConfig& hotkeys() { return hotkeyConfig; }
     static XferConfig& xfer() { return xferConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
@@ -277,6 +322,7 @@ private:
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
     static GpsConfig gpsConfig;
+    static MeshConfig meshConfig;
     static HotkeyConfig hotkeyConfig;
     static XferConfig xferConfig;
     static bool initialized;

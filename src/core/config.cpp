@@ -10,6 +10,7 @@ PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
 GpsConfig Config::gpsConfig;
+MeshConfig Config::meshConfig;
 HotkeyConfig Config::hotkeyConfig;
 XferConfig Config::xferConfig;
 bool Config::initialized = false;
@@ -161,6 +162,29 @@ bool Config::init() {
         g.advTx = g.advRx == 13 ? 15 : 13;
     g.mapStyle = s_prefs.getUChar("gpsmap", g.mapStyle);
     if (g.mapStyle >= GPS_MAP_STYLE_N) g.mapStyle = 0;
+
+    // Mesh (Meshtastic SX1262 direct) config
+    MeshConfig& mc = meshConfig;
+    mc.enabled  = s_prefs.getBool("meshen",   mc.enabled);
+    mc.region = s_prefs.getUChar("meshreg", mc.region);
+    mc.frequencyOverride = s_prefs.getBool("meshoff", mc.frequencyOverride);
+    mc.freqKHz  = s_prefs.getUInt("meshfreq", mc.freqKHz);
+    if (mc.freqKHz < 400000u || mc.freqKHz > 960000u) mc.freqKHz = 869525u;
+    {
+        String ch = s_prefs.getString("meshch", mc.channel);
+        strncpy(mc.channel, ch.c_str(), sizeof(mc.channel) - 1);
+        mc.channel[sizeof(mc.channel) - 1] = '\0';
+    }
+    {
+        String psk = s_prefs.getString("meshpsk", mc.psk);
+        strncpy(mc.psk, psk.c_str(), sizeof(mc.psk) - 1);
+        mc.psk[sizeof(mc.psk) - 1] = '\0';
+    }
+    {
+        String sn = s_prefs.getString("meshsn", mc.shortName);
+        strncpy(mc.shortName, sn.c_str(), sizeof(mc.shortName) - 1);
+        mc.shortName[sizeof(mc.shortName) - 1] = '\0';
+    }
 
     HotkeyConfig def{};
     hotkeyConfig = def;
@@ -348,6 +372,16 @@ bool Config::save() {
     s_prefs.putUChar("gpsarx", g.advRx);
     s_prefs.putUChar("gpsatx", g.advTx);
     s_prefs.putUChar("gpsmap", g.mapStyle);
+
+    // Mesh config save
+    const MeshConfig& mc = meshConfig;
+    s_prefs.putBool  ("meshen",   mc.enabled);
+    s_prefs.putUChar ("meshreg",  mc.region);
+    s_prefs.putBool  ("meshoff",  mc.frequencyOverride);
+    s_prefs.putUInt  ("meshfreq", mc.freqKHz);
+    s_prefs.putString("meshch",   mc.channel);
+    s_prefs.putString("meshpsk",  mc.psk);
+    s_prefs.putString("meshsn",   mc.shortName);
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)

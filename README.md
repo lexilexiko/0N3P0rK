@@ -52,7 +52,7 @@ Secret menu codes are **not** listed here (keep them private).
 | Display | 240 × 135 ST7789 — top bar + farm field + bottom bar |
 | Keyboard | Original: 74HC138 matrix · ADV: TCA8418 |
 | USB | CDC serial — pick COM yourself (VID `303A`) |
-| GPS | Grove NMEA receiver on the original Cardputer; GPS UART on the ADV LoRa cap; LoRa stays off while GPS is active |
+| GPS | Grove NMEA receiver on the original Cardputer; GPS UART on the ADV LoRa cap; LoRa stays off unless MESH is enabled |
 | SD | SPI: CS **12**, MOSI **14**, MISO **39**, SCK **40** |
 
 Same firmware `.bin` for original and ADV.  
@@ -684,6 +684,36 @@ the receiver, not satellite speed; values below 2.5 km/h are shown as
 stationary to suppress GPS drift while standing still. `ESC` leaves the view;
 tracking continues until disabled in **SETTINGS → GPS** or stopped from
 **TASKS**.
+
+### Experimental SX1262 mesh
+
+The experimental SX1262 feature requires a **Cardputer ADV with the LoRa-1262
+cap**. Open **SET → MESH** to enable it, choose a region, edit the
+node's short name, and open **MESH VIEW**. The mesh view shows received nodes
+and messages. Press **ENTER** to type a broadcast message, **ENTER** again to
+send, **BACKSPACE** to edit, or **ESC** to cancel typing. In the regular GPS
+view, the MESH page is also available with **5** while the radio is active.
+
+The **CHANNEL** setting is the exact Meshtastic channel name and is case
+sensitive; both devices must use the same name and key. **PSK** accepts the
+Base64 channel key used by Meshtastic: `AQ==` selects the shared default key,
+`AA==` disables encryption, and custom keys can be entered in Base64. The
+shared default key is publicly known and is not private.
+
+The current build still does **not** support PKI direct messages,
+acknowledgements, or packet relaying, so it is not yet a full Meshtastic
+router. **REGION** chooses a regional band and the default channel frequency
+slot; **FREQ** can override the center frequency in MHz, but only inside that
+region's band. Enter `AUTO` to restore the channel-derived slot. The available
+sub-GHz regions are EU868, US, EU433, CN, JP, ANZ, ANZ433, RU, KR, TW, IN,
+NZ865, TH, UA433, UA868, MY433, MY919, SG923, PH433/868/915, KZ433/863,
+NP865, and BR902. The 2.4 GHz region is not available on the SX1262. Every
+peer must use the same region, channel, and override frequency. Manual
+selection does not scan for or guarantee an unused channel. This build does
+not implement regional duty-cycle/LBT enforcement, alternate modem presets,
+or special frequency-hopping regions, and the presets are not a complete
+regulatory profile. Check local regulations before transmitting.
+Device-to-device compatibility has not yet been verified.
 
 ### Fix and trail behavior
 
