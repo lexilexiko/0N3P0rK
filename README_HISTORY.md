@@ -451,4 +451,5 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Draw the farm's GPS antenna behind the pig, consistent with the scene's
   background-to-foreground order.
 
+- Soon Mesh-
 ---
