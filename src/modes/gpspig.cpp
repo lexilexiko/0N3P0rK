@@ -13,6 +13,7 @@
 
 #include <SD.h>
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,12 +21,16 @@
 namespace GpsMode {
 
 static const int kLoraNss = 5;
-static const size_t kRxBuf = 1024;
+static const size_t kRxBuf = 4096;
 static const uint16_t kTrailCap = 160;
 static const float kStepM = 8.0f;
 static const char* kDir = "/0N3P0rK/gps";
 static const char* kTrack = "/0N3P0rK/gps/track.csv";
+static const char* kMapDir = "/0N3P0rK/maps/tiles";
+static const char* kMapAttributionPath = "/0N3P0rK/maps/ATTRIBUTION.txt";
 static const uint16_t kSpanM[] = {100, 300, 1000, 4000, 20000};
+static const uint8_t kMapZoomMin = 2;
+static const uint8_t kMapZoomMax = 18;
 
 struct Pt {
     int32_t lat;
@@ -34,12 +39,35 @@ struct Pt {
 
 static HardwareSerial s_uartGrove(2);
 static HardwareSerial s_uartAdv(1);
+static M5Canvas s_mapCanvas(&M5.Display);
 static bool s_run = false;
 static bool s_uartOn = false;
 static bool s_keyWas = false;
 static bool s_sceneSuspended = false;
 static uint8_t s_page = 0;
 static uint8_t s_zoom = 1;
+static uint8_t s_mapZoom = 16;
+static uint8_t s_worldZoom = 1;
+static float s_worldCenterLat = 0;
+static float s_worldCenterLon = 0;
+static bool s_mapAllocFailed = false;
+static bool s_mapCacheValid = false;
+static bool s_mapCacheHasTiles = false;
+static bool s_mapCacheHasPosition = false;
+static uint8_t s_mapCacheZoom = 0;
+static uint8_t s_mapCacheStyle = UINT8_MAX;
+static float s_mapCenterLat = 0;
+static float s_mapCenterLon = 0;
+static bool s_mapManualCenter = false;
+static double s_mapManualCenterLat = 0;
+static double s_mapManualCenterLon = 0;
+static bool s_mapFallbackTried = false;
+static bool s_mapFallbackFound = false;
+static float s_mapFallbackLat = 0;
+static float s_mapFallbackLon = 0;
+static uint8_t s_mapFallbackZoom = 0;
+static bool s_mapAttributionLoaded = false;
+static char s_mapAttribution[40] = "Map data contributors";
 static char s_nmea[96];
 static uint8_t s_nmeaLen = 0;
 static uint32_t s_bytes = 0;
@@ -106,7 +134,7 @@ static int defaultTxPin() {
 }
 
 static uint32_t defaultBaud() {
-    return Config::gps().source == GpsSource::ADV_CAP ? 115200u : 9600u;
+    return 115200u;
 }
 
 static uint32_t activeBaud() {
@@ -265,10 +293,7 @@ static bool updateLocalTime(const char* utc) {
 }
 
 static void takeFix(bool ok, float lat, float lon) {
-    if (!ok) {
-        s_valid = false;
-        return;
-    }
+    if (!ok) return;
     s_valid = true;
     s_havePos = true;
     s_fixMs = millis();
@@ -300,7 +325,7 @@ static bool updateSpeed(const char* knotsText) {
     }
 
     float kmh = knots * 1.852f;
-    if (kmh < 1.0f) kmh = 0.0f;
+    if (kmh < 2.5f) kmh = 0.0f;
     s_speedSamples[s_speedNext] = kmh;
     s_speedNext = (uint8_t)((s_speedNext + 1) % 5);
     if (s_speedCount < 5) s_speedCount++;
@@ -363,6 +388,12 @@ static void onSentence(char* s) {
 
 static void feed(char c) {
     s_bytes++;
+    if (c == '$') {
+        s_nmea[0] = '$';
+        s_nmeaLen = 1;
+        return;
+    }
+    if (s_nmeaLen == 0) return;
     if (c == '\r') return;
     if (c != '\n') {
         if (s_nmeaLen + 1 < sizeof(s_nmea)) s_nmea[s_nmeaLen++] = c;
@@ -378,9 +409,10 @@ static void pollUart() {
     if (!s_uartOn) return;
     if (!s_openUart) return;
     HardwareSerial& uart = *s_openUart;
-    int n = uart.available();
-    if (n > 80) n = 80;
-    while (n-- > 0) feed((char)uart.read());
+    while (uart.available() > 0) {
+        int c = uart.read();
+        if (c >= 0) feed((char)c);
+    }
 }
 
 static void loadTrail() {
@@ -440,7 +472,14 @@ size_t heapHeld() {
     size_t n = 0;
     if (s_uartOn) n += kRxBuf;
     if (s_pts) n += (size_t)kTrailCap * sizeof(Pt);
+    if (s_mapCanvas.getBuffer()) n += (size_t)(DISPLAY_W - 16) * (MAIN_H - 24 - 5);
     return n;
+}
+
+static void releaseMapCanvas() {
+    if (s_mapCanvas.getBuffer()) s_mapCanvas.deleteSprite();
+    s_mapCacheValid = false;
+    s_mapAllocFailed = false;
 }
 
 void start() {
@@ -457,6 +496,15 @@ void start() {
     s_run = true;
     s_page = 0;
     s_zoom = 1;
+    s_mapZoom = 16;
+    s_worldZoom = 1;
+    s_worldCenterLat = 0;
+    s_worldCenterLon = 0;
+    s_mapManualCenter = false;
+    s_mapAllocFailed = false;
+    s_mapCacheValid = false;
+    s_mapCacheHasTiles = false;
+    s_mapAttributionLoaded = false;
     s_nmeaLen = 0;
     s_bytes = 0;
     s_lastPointMs = 0;
@@ -487,6 +535,7 @@ void stop() {
     }
     size_t held = heapHeld();
     closeUart();
+    releaseMapCanvas();
     free(s_pts);
     s_pts = nullptr;
     s_nPts = 0;
@@ -530,37 +579,86 @@ void updatePowerSave() {
     syncUartPower();
 }
 
+static bool panMap(int dx, int dy);
+
 void update() {
     if (!s_run) return;
     syncScene();
     syncUartPower();
     pollUart();
-    if (App::mode() != AppMode::GPS || App::windowHidden()) return;
+    if (App::mode() != AppMode::GPS || App::windowHidden()) {
+        releaseMapCanvas();
+        return;
+    }
     if (!keyNewPress(s_keyWas)) return;
     if (keyMin()) return;
     if (keyEsc()) {
+        releaseMapCanvas();
         App::setMode(AppMode::MENU);
         return;
     }
-    if (M5Cardputer.Keyboard.isKeyPressed(';') || M5Cardputer.Keyboard.isKeyPressed(':')) {
-        s_page = (uint8_t)((s_page + 2) % 3);
-        SFX::play(SFX::MENU_CLICK);
-        return;
+    for (uint8_t page = 0; page < 4; ++page) {
+        if (M5Cardputer.Keyboard.isKeyPressed((char)('1' + page))) {
+            s_page = page;
+            if (s_page != 3) releaseMapCanvas();
+            SFX::play(SFX::MENU_CLICK);
+            return;
+        }
     }
-    if (M5Cardputer.Keyboard.isKeyPressed('.') || M5Cardputer.Keyboard.isKeyPressed('>')) {
-        s_page = (uint8_t)((s_page + 1) % 3);
-        SFX::play(SFX::MENU_CLICK);
-        return;
-    }
-    if (s_page != 2) return;
+
     bool zoomOut = M5Cardputer.Keyboard.isKeyPressed('-') || M5Cardputer.Keyboard.isKeyPressed('_');
     bool zoomIn = M5Cardputer.Keyboard.isKeyPressed('=') || M5Cardputer.Keyboard.isKeyPressed('+');
-    if (zoomOut && s_zoom + 1 < (uint8_t)(sizeof(kSpanM) / sizeof(kSpanM[0]))) {
-        s_zoom++;
-        SFX::play(SFX::MENU_CLICK);
-    } else if (zoomIn && s_zoom > 0) {
-        s_zoom--;
-        SFX::play(SFX::MENU_CLICK);
+    if (s_page == 1 || s_page == 3) {
+        int dx = 0;
+        int dy = 0;
+        if (M5Cardputer.Keyboard.isKeyPressed('w') ||
+            M5Cardputer.Keyboard.isKeyPressed('W') ||
+            M5Cardputer.Keyboard.isKeyPressed(';') ||
+            M5Cardputer.Keyboard.isKeyPressed(':')) dy = -1;
+        else if (M5Cardputer.Keyboard.isKeyPressed('s') ||
+                 M5Cardputer.Keyboard.isKeyPressed('S') ||
+                 M5Cardputer.Keyboard.isKeyPressed('.') ||
+                 M5Cardputer.Keyboard.isKeyPressed('>')) dy = 1;
+        else if (M5Cardputer.Keyboard.isKeyPressed('a') ||
+                 M5Cardputer.Keyboard.isKeyPressed('A') ||
+                 M5Cardputer.Keyboard.isKeyPressed(',') ||
+                 M5Cardputer.Keyboard.isKeyPressed('<')) dx = -1;
+        else if (M5Cardputer.Keyboard.isKeyPressed('d') ||
+                 M5Cardputer.Keyboard.isKeyPressed('D') ||
+                 M5Cardputer.Keyboard.isKeyPressed('/')) dx = 1;
+
+        if (s_page == 1 && (dx || dy)) {
+            const float step = 24.0f / s_worldZoom;
+            s_worldCenterLon -= dx * step;
+            s_worldCenterLat += dy * step;
+            if (s_worldCenterLon < -180.0f) s_worldCenterLon += 360.0f;
+            if (s_worldCenterLon >= 180.0f) s_worldCenterLon -= 360.0f;
+            if (s_worldCenterLat < -85.0f) s_worldCenterLat = -85.0f;
+            if (s_worldCenterLat > 85.0f) s_worldCenterLat = 85.0f;
+            SFX::play(SFX::MENU_CLICK);
+            return;
+        }
+        if (s_page == 3 && (dx || dy) && panMap(dx, dy)) {
+            SFX::play(SFX::MENU_CLICK);
+            return;
+        }
+        if (s_page == 1) {
+            if (zoomOut && s_worldZoom > 1) {
+                s_worldZoom--;
+                SFX::play(SFX::MENU_CLICK);
+            } else if (zoomIn && s_worldZoom < 4) {
+                s_worldZoom++;
+                SFX::play(SFX::MENU_CLICK);
+            }
+        } else if (s_page == 3) {
+            if (zoomOut && s_mapZoom > kMapZoomMin) {
+                s_mapZoom--;
+                SFX::play(SFX::MENU_CLICK);
+            } else if (zoomIn && s_mapZoom < kMapZoomMax) {
+                s_mapZoom++;
+                SFX::play(SFX::MENU_CLICK);
+            }
+        }
     }
 }
 
@@ -572,10 +670,11 @@ static void drawFix(M5Canvas& canvas) {
                              Config::gps().source == GpsSource::ADV_CAP ? "ADV CAP" : "CUSTOM";
     snprintf(port, sizeof(port), "%s   %lu", sourceName, (unsigned long)activeBaud());
     canvas.drawString(port, 8, 22);
-    canvas.setTextColor(s_valid ? UiStyle::GREEN : UiStyle::GOLD);
+    const bool freshFix = hasFix();
+    canvas.setTextColor(freshFix ? UiStyle::GREEN : UiStyle::GOLD);
     const char* state = "SEARCH";
     if (s_bytes == 0) state = "NO DATA";
-    else if (s_valid) state = "FIX";
+    else if (freshFix) state = "FIX";
     else if (s_havePos && s_fixMs && millis() - s_fixMs > 8000) state = "STALE";
     canvas.drawString(state, 8, 34);
     char b[28];
@@ -615,42 +714,82 @@ static void drawFix(M5Canvas& canvas) {
     }
 }
 
-static void projectWorld(float lat, float lon, int& x, int& y) {
-    float fx = (lon + 180.0f) / 360.0f * (float)GPS_MAP_W;
-    float fy = (90.0f - lat) / 180.0f * (float)GPS_MAP_H;
-    if (fx < 0) fx = 0;
-    if (fy < 0) fy = 0;
-    if (fx > GPS_MAP_W - 1) fx = GPS_MAP_W - 1;
-    if (fy > GPS_MAP_H - 1) fy = GPS_MAP_H - 1;
-    x = (int)fx;
-    y = (int)fy;
-}
-
 static void drawWorld(M5Canvas& canvas) {
-    const int y0 = 22;
-    for (int y = 0; y < GPS_MAP_H; y++) {
-        int run = -1;
-        for (int x = 0; x <= GPS_MAP_W; x++) {
-            bool land = x < GPS_MAP_W && mapBit(x, y);
-            if (land && run < 0) run = x;
-            if (!land && run >= 0) {
-                canvas.fillRect(run * 2, y0 + y * 2, (x - run) * 2, 2, 0x2589);
-                run = -1;
+    constexpr int mapX = 8;
+    constexpr int mapY = 22;
+    constexpr int mapW = DISPLAY_W - 16;
+    constexpr int mapH = MAIN_H - mapY - 5;
+    constexpr double baseW = mapW;
+    constexpr double baseH = mapH;
+    const double worldW = baseW * s_worldZoom;
+    const double worldH = baseH * s_worldZoom;
+    const double centerX = mapX + mapW * 0.5;
+    const double centerY = mapY + mapH * 0.5;
+    const double mapLeft = centerX -
+        (s_worldCenterLon + 180.0) / 360.0 * worldW;
+    const double rowHeight = worldH / GPS_MAP_H;
+
+    canvas.fillRect(mapX, mapY, mapW, mapH, 0x000D);
+    canvas.setClipRect(mapX, mapY, mapW, mapH);
+
+    for (int y = 0; y < GPS_MAP_H; ++y) {
+        const double latitude = 90.0 - (y + 0.5) * 180.0 / GPS_MAP_H;
+        const int screenY = (int)round(
+            centerY - (latitude - s_worldCenterLat) * worldH / 180.0 - rowHeight * 0.5);
+        const uint16_t landColor = fabs(latitude) > 60.0 ? 0xB6F2 :
+                                   fabs(latitude) > 30.0 ? 0x75A8 : 0x4E65;
+        int runStart = -1;
+        for (int x = 0; x <= GPS_MAP_W; ++x) {
+            const bool land = x < GPS_MAP_W && mapBit(x, y);
+            if (land && runStart < 0) runStart = x;
+            if (!land && runStart >= 0) {
+                const double runLon = runStart * 360.0 / GPS_MAP_W - 180.0;
+                const double runEndLon = x * 360.0 / GPS_MAP_W - 180.0;
+                const double startX = mapLeft + (runLon + 180.0) / 360.0 * worldW;
+                const double endX = mapLeft + (runEndLon + 180.0) / 360.0 * worldW;
+                for (int wrap = -1; wrap <= 1; ++wrap) {
+                    const int drawX = (int)floor(startX + wrap * worldW);
+                    const int drawW = (int)ceil(endX + wrap * worldW) - drawX;
+                    canvas.fillRect(drawX, screenY, drawW, (int)ceil(rowHeight), landColor);
+                }
+                runStart = -1;
             }
         }
     }
-    if (!s_havePos) {
-        canvas.setTextColor(UiStyle::GOLD);
-        canvas.setTextDatum(top_center);
-        canvas.drawString("NO FIX", DISPLAY_W / 2, y0 + 32);
-        canvas.setTextDatum(top_left);
-        return;
+
+    for (int longitude = -150; longitude <= 180; longitude += 30) {
+        double delta = longitude - s_worldCenterLon;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        const int x = (int)round(centerX + delta * worldW / 360.0);
+        canvas.drawFastVLine(x, mapY, mapH, 0x2340);
     }
-    int mx, my;
-    projectWorld(s_lat, s_lon, mx, my);
-    int sx = mx * 2;
-    int sy = y0 + my * 2;
-    canvas.fillRect(sx - 2, sy - 2, 6, 6, s_valid ? UiStyle::PINK : UiStyle::GOLD);
+    for (int latitude = -60; latitude <= 60; latitude += 30) {
+        const int y = (int)round(
+            centerY - (latitude - s_worldCenterLat) * worldH / 180.0);
+        canvas.drawFastHLine(mapX, y, mapW, latitude == 0 ? 0x3B86 : 0x2340);
+    }
+
+    if (s_havePos) {
+        double delta = s_lon - s_worldCenterLon;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        const int markerX = (int)round(centerX + delta * worldW / 360.0);
+        const int markerY = (int)round(
+            centerY - (s_lat - s_worldCenterLat) * worldH / 180.0);
+        canvas.drawLine(markerX - 4, markerY, markerX + 4, markerY, UiStyle::BG);
+        canvas.drawLine(markerX, markerY - 4, markerX, markerY + 4, UiStyle::BG);
+        canvas.fillCircle(markerX, markerY, 2,
+                          hasFix() ? UiStyle::PINK : UiStyle::GOLD);
+    }
+    canvas.clearClipRect();
+
+    canvas.setTextColor(UiStyle::GOLD);
+    canvas.setTextDatum(top_right);
+    char zoomLabel[8];
+    snprintf(zoomLabel, sizeof(zoomLabel), "Z%u", s_worldZoom);
+    canvas.drawString(zoomLabel, DISPLAY_W - 8, 20);
+    canvas.setTextDatum(top_left);
 }
 
 static void projectLocal(float lat, float lon, float clat, float clon, float span,
@@ -696,17 +835,466 @@ static void drawTrail(M5Canvas& canvas) {
     }
 }
 
+static double mapPixelX(double lon, uint8_t zoom) {
+    const double world = 256.0 * (1UL << zoom);
+    return (lon + 180.0) / 360.0 * world;
+}
+
+static double mapPixelY(double lat, uint8_t zoom) {
+    if (lat > 85.05112878) lat = 85.05112878;
+    if (lat < -85.05112878) lat = -85.05112878;
+    const double radians = lat * 0.017453292519943295;
+    const double world = 256.0 * (1UL << zoom);
+    return (1.0 - asinh(tan(radians)) / 3.141592653589793) * 0.5 * world;
+}
+
+static double mapTileLatitude(double y, uint8_t zoom) {
+    const double n = (double)(1UL << zoom);
+    return atan(sinh(3.141592653589793 * (1.0 - 2.0 * y / n))) *
+           57.29577951308232;
+}
+
+static bool panMap(int dx, int dy) {
+    if (!s_mapManualCenter) {
+        if (s_mapCacheValid) {
+            s_mapManualCenterLat = s_mapCenterLat;
+            s_mapManualCenterLon = s_mapCenterLon;
+        } else if (s_havePos) {
+            s_mapManualCenterLat = s_lat;
+            s_mapManualCenterLon = s_lon;
+        } else if (s_nPts > 0) {
+            s_mapManualCenterLat = fromE7(s_pts[s_nPts - 1].lat);
+            s_mapManualCenterLon = fromE7(s_pts[s_nPts - 1].lon);
+        } else if (s_mapFallbackFound) {
+            s_mapManualCenterLat = s_mapFallbackLat;
+            s_mapManualCenterLon = s_mapFallbackLon;
+        } else {
+            return false;
+        }
+        s_mapManualCenter = true;
+    }
+
+    const double worldPixels = 256.0 * (1UL << s_mapZoom);
+    const double step = 72.0;
+    double x = mapPixelX(s_mapManualCenterLon, s_mapZoom) + dx * step;
+    double y = mapPixelY(s_mapManualCenterLat, s_mapZoom) + dy * step;
+    x = fmod(x, worldPixels);
+    if (x < 0) x += worldPixels;
+    if (y < 0) y = 0;
+    if (y > worldPixels) y = worldPixels;
+
+    s_mapManualCenterLon = x / worldPixels * 360.0 - 180.0;
+    s_mapManualCenterLat = mapTileLatitude(y / 256.0, s_mapZoom);
+    s_mapCacheValid = false;
+    return true;
+}
+
+static bool mapTileFileExists(uint8_t zoom, int x, int y, uint8_t style) {
+    char path[112];
+    snprintf(path, sizeof(path), "%s/%s/%u/%d/%d.jpg", kMapDir,
+             GPS_MAP_STYLE_DIRS[style], (unsigned)zoom, x, y);
+    if (SD.exists(path)) return true;
+    snprintf(path, sizeof(path), "%s/%s/%u/%d/%d.png", kMapDir,
+             GPS_MAP_STYLE_DIRS[style], (unsigned)zoom, x, y);
+    if (SD.exists(path)) return true;
+    snprintf(path, sizeof(path), "%s/%u/%d/%d.jpg", kMapDir,
+             (unsigned)zoom, x, y);
+    if (SD.exists(path)) return true;
+    snprintf(path, sizeof(path), "%s/%u/%d/%d.png", kMapDir,
+             (unsigned)zoom, x, y);
+    return SD.exists(path);
+}
+
+static bool mapTileCoordinates(float lat, float lon, uint8_t zoom,
+                               int& tileX, int& tileY) {
+    const int count = 1 << zoom;
+    tileX = (int)floor(mapPixelX(lon, zoom) / 256.0);
+    tileY = (int)floor(mapPixelY(lat, zoom) / 256.0);
+    if (tileY < 0 || tileY >= count) return false;
+    tileX = (tileX % count + count) % count;
+    return true;
+}
+
+static bool findZoomForPosition(float lat, float lon, uint8_t style,
+                                uint8_t& foundZoom) {
+    for (int distance = 0; distance <= kMapZoomMax - kMapZoomMin; distance++) {
+        int candidates[2] = {(int)s_mapZoom - distance, (int)s_mapZoom + distance};
+        for (uint8_t side = 0; side < (distance == 0 ? 1 : 2); side++) {
+            int zoom = candidates[side];
+            if (zoom < kMapZoomMin || zoom > kMapZoomMax) continue;
+            int x, y;
+            if (!mapTileCoordinates(lat, lon, (uint8_t)zoom, x, y)) continue;
+            if (mapTileFileExists((uint8_t)zoom, x, y, style)) {
+                foundZoom = (uint8_t)zoom;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool parseTileIndex(const char* name, bool image, int& value) {
+    if (!name || !name[0]) return false;
+    char number[16];
+    size_t length = strlen(name);
+    if (image) {
+        const char* dot = strrchr(name, '.');
+        if (!dot || (strcasecmp(dot, ".jpg") != 0 &&
+                     strcasecmp(dot, ".jpeg") != 0 &&
+                     strcasecmp(dot, ".png") != 0)) return false;
+        length = (size_t)(dot - name);
+    }
+    if (length == 0 || length >= sizeof(number)) return false;
+    memcpy(number, name, length);
+    number[length] = 0;
+    for (size_t i = 0; i < length; i++)
+        if (number[i] < '0' || number[i] > '9') return false;
+    char* end = nullptr;
+    long parsed = strtol(number, &end, 10);
+    if (!end || *end || parsed < 0 || parsed > INT_MAX) return false;
+    value = (int)parsed;
+    return true;
+}
+
+static bool findFirstTileInZoom(const char* root, uint8_t zoom,
+                                int& tileX, int& tileY) {
+    char zoomPath[96];
+    snprintf(zoomPath, sizeof(zoomPath), "%s/%u", root, (unsigned)zoom);
+    File zoomDir = SD.open(zoomPath);
+    if (!zoomDir || !zoomDir.isDirectory()) return false;
+
+    bool found = false;
+    File xEntry = zoomDir.openNextFile();
+    while (xEntry && !found) {
+        int x;
+        if (xEntry.isDirectory() && parseTileIndex(Storage::baseName(xEntry.name()), false, x)) {
+            char xPath[112];
+            snprintf(xPath, sizeof(xPath), "%s/%d", zoomPath, x);
+            File xDir = SD.open(xPath);
+            if (xDir && xDir.isDirectory()) {
+                File yEntry = xDir.openNextFile();
+                while (yEntry && !found) {
+                    int y;
+                    if (!yEntry.isDirectory() &&
+                        parseTileIndex(Storage::baseName(yEntry.name()), true, y)) {
+                        tileX = x;
+                        tileY = y;
+                        found = true;
+                    }
+                    yEntry.close();
+                    if (!found) yEntry = xDir.openNextFile();
+                }
+                xDir.close();
+            }
+        }
+        xEntry.close();
+        if (!found) xEntry = zoomDir.openNextFile();
+    }
+    zoomDir.close();
+    return found;
+}
+
+static bool findFirstMapTile(uint8_t style, uint8_t& zoom, int& tileX, int& tileY) {
+    char stylePath[80];
+    snprintf(stylePath, sizeof(stylePath), "%s/%s", kMapDir,
+             GPS_MAP_STYLE_DIRS[style]);
+    for (int z = s_mapZoom; z >= kMapZoomMin; z--)
+        if (findFirstTileInZoom(stylePath, (uint8_t)z, tileX, tileY)) {
+            zoom = (uint8_t)z;
+            return true;
+        }
+    for (int z = s_mapZoom + 1; z <= kMapZoomMax; z++)
+        if (findFirstTileInZoom(stylePath, (uint8_t)z, tileX, tileY)) {
+            zoom = (uint8_t)z;
+            return true;
+        }
+    for (int z = s_mapZoom; z >= kMapZoomMin; z--)
+        if (findFirstTileInZoom(kMapDir, (uint8_t)z, tileX, tileY)) {
+            zoom = (uint8_t)z;
+            return true;
+        }
+    for (int z = s_mapZoom + 1; z <= kMapZoomMax; z++)
+        if (findFirstTileInZoom(kMapDir, (uint8_t)z, tileX, tileY)) {
+            zoom = (uint8_t)z;
+            return true;
+        }
+    return false;
+}
+
+static bool loadMapFallback(uint8_t style) {
+    if (s_mapFallbackTried) return s_mapFallbackFound;
+    s_mapFallbackTried = true;
+    int tileX, tileY;
+    if (!findFirstMapTile(style, s_mapFallbackZoom, tileX, tileY)) return false;
+    const double count = (double)(1UL << s_mapFallbackZoom);
+    s_mapFallbackLon = (float)(((tileX + 0.5) / count) * 360.0 - 180.0);
+    s_mapFallbackLat = (float)mapTileLatitude(tileY + 0.5, s_mapFallbackZoom);
+    s_mapFallbackFound = true;
+    return true;
+}
+
+static void loadMapAttribution() {
+    if (s_mapAttributionLoaded) return;
+    s_mapAttributionLoaded = true;
+    File file = SD.open(kMapAttributionPath, FILE_READ);
+    if (!file) return;
+    size_t length = 0;
+    while (file.available() && length + 1 < sizeof(s_mapAttribution)) {
+        int c = file.read();
+        if (c < 0 || c == '\n' || c == '\r') break;
+        if (c >= 32 && c <= 126) s_mapAttribution[length++] = (char)c;
+    }
+    s_mapAttribution[length] = 0;
+    file.close();
+}
+
+class GpsMapImageData : public lgfx::DataWrapper {
+public:
+    GpsMapImageData() { need_transaction = true; }
+    bool open(const char* path) override {
+        file = SD.open(path, FILE_READ);
+        return (bool)file;
+    }
+    int read(uint8_t* data, uint32_t length) override {
+        return file.read(data, length);
+    }
+    void skip(int32_t offset) override { file.seek(offset, fs::SeekCur); }
+    bool seek(uint32_t offset) override { return file.seek(offset, fs::SeekSet); }
+    void close() override { file.close(); }
+    int32_t tell() override { return (int32_t)file.position(); }
+
+private:
+    File file;
+};
+
+static bool drawMapTile(M5Canvas& canvas, uint8_t zoom, int tileX, int tileY,
+                        int screenX, int screenY) {
+    const int tileCount = 1 << zoom;
+    if (tileY < 0 || tileY >= tileCount) return false;
+    tileX = (tileX % tileCount + tileCount) % tileCount;
+
+    char path[96];
+    snprintf(path, sizeof(path), "%s/%u/%d/%d.jpg", kMapDir,
+             (unsigned)zoom, tileX, tileY);
+    uint8_t style = Config::gps().mapStyle < GPS_MAP_STYLE_N
+                        ? Config::gps().mapStyle : 0;
+    char styledPath[96];
+    snprintf(styledPath, sizeof(styledPath), "%s/%s/%u/%d/%d.jpg", kMapDir,
+             GPS_MAP_STYLE_DIRS[style], (unsigned)zoom, tileX, tileY);
+    if (SD.exists(styledPath)) {
+        GpsMapImageData image;
+        return canvas.drawJpgFile(&image, styledPath, screenX, screenY, 256, 256);
+    }
+    if (SD.exists(path)) {
+        GpsMapImageData image;
+        return canvas.drawJpgFile(&image, path, screenX, screenY, 256, 256);
+    }
+
+    snprintf(path, sizeof(path), "%s/%u/%d/%d.png", kMapDir,
+             (unsigned)zoom, tileX, tileY);
+    snprintf(styledPath, sizeof(styledPath), "%s/%s/%u/%d/%d.png", kMapDir,
+             GPS_MAP_STYLE_DIRS[style], (unsigned)zoom, tileX, tileY);
+    if (SD.exists(styledPath)) {
+        GpsMapImageData image;
+        return canvas.drawPngFile(&image, styledPath, screenX, screenY, 256, 256);
+    }
+    if (SD.exists(path)) {
+        GpsMapImageData image;
+        return canvas.drawPngFile(&image, path, screenX, screenY, 256, 256);
+    }
+    return false;
+}
+
+static void drawStreetMap(M5Canvas& canvas) {
+    constexpr int mapX = 0;
+    constexpr int mapY = 0;
+    constexpr int mapW = DISPLAY_W;
+    constexpr int mapH = MAIN_H;
+    constexpr int mapCenterX = mapW / 2;
+    constexpr int mapCenterY = mapH / 2;
+    constexpr int centerX = mapX + mapCenterX;
+    constexpr int centerY = mapY + mapCenterY;
+
+    canvas.fillRect(mapX, mapY, mapW, mapH, UiStyle::BG);
+    if (s_mapAllocFailed) {
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.setTextDatum(middle_center);
+        canvas.drawString("MAP MEMORY LOW", DISPLAY_W / 2, centerY);
+        canvas.setTextDatum(top_left);
+        return;
+    }
+    if (!s_mapCanvas.getBuffer()) {
+        s_mapCanvas.setColorDepth(8);
+        if (s_mapCanvas.createSprite(mapW, mapH)) {
+            s_mapCacheValid = false;
+        } else {
+            s_mapAllocFailed = true;
+        }
+    }
+    if (s_mapAllocFailed) {
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.setTextDatum(middle_center);
+        canvas.drawString("MAP MEMORY LOW", DISPLAY_W / 2, centerY);
+        canvas.setTextDatum(top_left);
+        return;
+    }
+
+    const uint8_t selectedStyle = Config::gps().mapStyle < GPS_MAP_STYLE_N
+                                      ? Config::gps().mapStyle : 0;
+    if (s_mapCacheStyle != selectedStyle) {
+        s_mapFallbackTried = false;
+        s_mapFallbackFound = false;
+        s_mapCacheValid = false;
+    }
+
+    float viewLat = s_lat;
+    float viewLon = s_lon;
+    if (s_havePos) {
+        viewLat = s_lat;
+        viewLon = s_lon;
+    } else if (s_nPts > 0) {
+        viewLat = fromE7(s_pts[s_nPts - 1].lat);
+        viewLon = fromE7(s_pts[s_nPts - 1].lon);
+    } else {
+        const bool firstFallback = !s_mapFallbackTried;
+        if (loadMapFallback(selectedStyle)) {
+            viewLat = s_mapFallbackLat;
+            viewLon = s_mapFallbackLon;
+            if (firstFallback) s_mapZoom = s_mapFallbackZoom;
+        }
+    }
+    if (s_mapManualCenter) {
+        viewLat = (float)s_mapManualCenterLat;
+        viewLon = (float)s_mapManualCenterLon;
+    }
+
+    const bool hasMapPosition = s_havePos || s_nPts > 0;
+    if (s_mapCacheValid && s_mapCacheHasPosition != hasMapPosition)
+        s_mapCacheValid = false;
+    if (hasMapPosition && !s_mapCacheValid && !s_mapManualCenter) {
+        uint8_t availableZoom = s_mapZoom;
+        const bool positionTilesFound =
+            findZoomForPosition(viewLat, viewLon, selectedStyle, availableZoom);
+        if (positionTilesFound) {
+            s_mapZoom = availableZoom;
+        } else if (!s_havePos && s_nPts > 0) {
+            const bool firstFallback = !s_mapFallbackTried;
+            if (loadMapFallback(selectedStyle)) {
+            viewLat = s_mapFallbackLat;
+            viewLon = s_mapFallbackLon;
+                if (firstFallback) s_mapZoom = s_mapFallbackZoom;
+            }
+        }
+    }
+
+    if (!s_havePos && s_nPts == 0 && !s_mapFallbackFound) {
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.setTextDatum(middle_center);
+        canvas.drawString("NO OFFLINE MAP TILES", DISPLAY_W / 2, centerY - 5);
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.drawString("Check style folder on SD", DISPLAY_W / 2, centerY + 8);
+        canvas.setTextDatum(top_left);
+        return;
+    }
+
+    if (s_mapCacheValid && (s_mapCacheZoom != s_mapZoom ||
+                            s_mapCacheStyle != selectedStyle)) {
+        s_mapCacheValid = false;
+    }
+    if (s_mapCacheValid) {
+        const double worldPixels = 256.0 * (1UL << s_mapZoom);
+        double dx = (double)(viewLon - s_mapCenterLon) * worldPixels / 360.0;
+        if (dx > worldPixels / 2.0) dx -= worldPixels;
+        if (dx < -worldPixels / 2.0) dx += worldPixels;
+        const double dy = mapPixelY(viewLat, s_mapZoom) -
+                          mapPixelY(s_mapCenterLat, s_mapZoom);
+        if (fabs(dx) >= 6.0 || fabs(dy) >= 6.0) s_mapCacheValid = false;
+    }
+
+    if (!s_mapCacheValid) {
+        s_mapCenterLat = viewLat;
+        s_mapCenterLon = viewLon;
+        const double px = mapPixelX(s_mapCenterLon, s_mapZoom);
+        const double py = mapPixelY(s_mapCenterLat, s_mapZoom);
+        const int firstTileX = (int)floor((px - mapCenterX) / 256.0);
+        const int lastTileX = (int)floor((px + (mapW - mapCenterX)) / 256.0);
+        const int firstTileY = (int)floor((py - mapCenterY) / 256.0);
+        const int lastTileY = (int)floor((py + (mapH - mapCenterY)) / 256.0);
+        bool tileFound = false;
+
+        s_mapCanvas.fillSprite(UiStyle::BG);
+        s_mapCanvas.setClipRect(0, 0, mapW, mapH);
+        for (int tileY = firstTileY; tileY <= lastTileY; tileY++) {
+            for (int tileX = firstTileX; tileX <= lastTileX; tileX++) {
+                const int screenX = mapCenterX + tileX * 256 - (int)px;
+                const int screenY = mapCenterY + tileY * 256 - (int)py;
+                tileFound |= drawMapTile(s_mapCanvas, s_mapZoom, tileX, tileY,
+                                         screenX, screenY);
+            }
+        }
+        s_mapCanvas.clearClipRect();
+        s_mapCacheHasTiles = tileFound;
+        s_mapCacheHasPosition = hasMapPosition;
+        s_mapCacheZoom = s_mapZoom;
+        s_mapCacheStyle = selectedStyle;
+        s_mapCacheValid = true;
+    }
+    s_mapCanvas.pushSprite(&canvas, mapX, mapY);
+
+    if (!s_mapCacheHasTiles) {
+        canvas.fillRect(mapX + 8, centerY - 15, mapW - 16, 30, UiStyle::BG);
+        canvas.setTextColor(UiStyle::GOLD);
+        canvas.setTextDatum(middle_center);
+        if (s_havePos) {
+            canvas.drawString("NO TILES FOR THIS LOCATION", DISPLAY_W / 2, centerY - 5);
+            canvas.setTextColor(UiStyle::DIM);
+            canvas.drawString("Check area and style on SD", DISPLAY_W / 2, centerY + 8);
+        } else {
+            canvas.drawString("NO OFFLINE MAP TILES", DISPLAY_W / 2, centerY - 5);
+            canvas.setTextColor(UiStyle::DIM);
+            canvas.drawString("Check style folder on SD", DISPLAY_W / 2, centerY + 8);
+        }
+        canvas.setTextDatum(top_left);
+        return;
+    }
+
+    const double worldPixels = 256.0 * (1UL << s_mapZoom);
+    double markerDx = (double)(s_lon - s_mapCenterLon) * worldPixels / 360.0;
+    if (markerDx > worldPixels / 2.0) markerDx -= worldPixels;
+    if (markerDx < -worldPixels / 2.0) markerDx += worldPixels;
+    const int markerX = centerX + (int)markerDx;
+    const int markerY = centerY +
+        (int)(mapPixelY(s_lat, s_mapZoom) - mapPixelY(s_mapCenterLat, s_mapZoom));
+    canvas.setClipRect(mapX, mapY, mapW, mapH);
+    if (s_havePos) canvas.fillCircle(markerX, markerY, 4, hasFix() ? UiStyle::PINK : UiStyle::GOLD);
+    if (s_havePos && s_haveHdg) {
+        const float radians = s_course * 0.0174533f;
+        canvas.drawLine(markerX, markerY,
+                        markerX + (int)(sinf(radians) * 11.0f),
+                        markerY - (int)(cosf(radians) * 11.0f),
+                        UiStyle::PINK);
+    }
+    canvas.clearClipRect();
+    loadMapAttribution();
+}
+
 void draw(M5Canvas& canvas) {
     uiListBackground(canvas);
+    if (s_page == 3) {
+        drawStreetMap(canvas);
+        return;
+    }
+
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
     canvas.setTextColor(UiStyle::TITLE);
-    const char* title = s_page == 1 ? "WORLD" : (s_page == 2 ? "TRAIL" : "GPS");
+    const char* title = s_page == 1 ? "WORLD" :
+                        (s_page == 2 ? "TRAIL" : (s_page == 3 ? "MAP" : "GPS"));
     canvas.drawString(title, 8, 0);
     canvas.setTextSize(1);
     canvas.setTextDatum(top_right);
     char pg[8];
-    snprintf(pg, sizeof(pg), "%u/3", (unsigned)(s_page + 1));
+    snprintf(pg, sizeof(pg), "%u/4", (unsigned)(s_page + 1));
     canvas.drawString(pg, DISPLAY_W - 8, 4);
     canvas.setTextDatum(top_left);
     canvas.drawLine(8, 18, DISPLAY_W - 8, 18, UiStyle::TITLE);
@@ -717,6 +1305,18 @@ void draw(M5Canvas& canvas) {
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
+    if (s_run && s_page == 1) {
+        snprintf(out, n, "WORLD Z%u  WASD MOVE  -/+ ZOOM", s_worldZoom);
+        return;
+    }
+    if (s_run && s_page == 3) {
+        if (s_mapAttribution[0] && (millis() / 5000u) % 2u) {
+            snprintf(out, n, "MAP DATA: %s", s_mapAttribution);
+        } else {
+            snprintf(out, n, "MAP 1-4 PAGE  WASD PAN  -/+ ZOOM");
+        }
+        return;
+    }
     if (!s_run) {
         snprintf(out, n, "OFF");
     } else if (Config::gps().powerSave && !s_uartOn) {

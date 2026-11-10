@@ -208,6 +208,7 @@ static const Item GPS[] = {
     {"RX PIN",  Kind::VALUE,  5, 1, 48, 1},
     {"TX PIN",  Kind::VALUE,  6, 1, 48, 1},
     {"TZ OFFSET",Kind::VALUE,7, -12, 14, 1},
+    {"MAP STYLE",Kind::VALUE, 9, 0, GPS_MAP_STYLE_N - 1, 1},
     {"GPS VIEW",Kind::ACTION, 8, 0, 0, 0},
 };
 static const uint8_t GPS_N = sizeof(GPS) / sizeof(GPS[0]);
@@ -234,7 +235,7 @@ static uint8_t& gpsTxPin(GpsConfig& gps) {
 }
 
 static uint8_t gpsCurrentBaudIndex(const GpsConfig& gps) {
-    if (gps.source == GpsSource::GROVE) return 0;
+    if (gps.source == GpsSource::GROVE) return GPS_BAUD_N - 1;
     if (gps.source == GpsSource::ADV_CAP) return GPS_BAUD_N - 1;
     uint8_t i = Board::isAdv() ? gps.advIdx : gps.groveIdx;
     return i < GPS_BAUD_N ? i : 0;
@@ -683,6 +684,7 @@ static int getValue(const Item& it) {
             case 5: return gpsCurrentRxPin(g);
             case 6: return gpsCurrentTxPin(g);
             case 7: return g.timezoneOffset;
+            case 9: return g.mapStyle;
             default: return 0;
         }
     }
@@ -772,6 +774,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         strncpy(raw, burstName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (s_page == SettingsPage::GPS && it.id == 1) {
         strncpy(raw, gpsSourceName(getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::GPS && it.id == 9) {
+        uint8_t style = (uint8_t)getValue(it);
+        if (style >= GPS_MAP_STYLE_N) style = 0;
+        strncpy(raw, GPS_MAP_STYLE_NAMES[style], sizeof(raw) - 1);
     } else if (s_page == SettingsPage::GPS && it.id == 3) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
     } else if (s_page == SettingsPage::GPS && it.id == 4) {
@@ -1179,6 +1185,12 @@ static bool setValue(const Item& it, int v) {
             g.powerSave = v != 0;
             Config::save();
             GpsMode::updatePowerSave();
+            return true;
+        }
+        if (it.id == 9) {
+            if (v < 0 || v >= GPS_MAP_STYLE_N) return false;
+            g.mapStyle = (uint8_t)v;
+            Config::save();
             return true;
         }
         if (it.id == 3) {

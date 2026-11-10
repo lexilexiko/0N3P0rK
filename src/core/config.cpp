@@ -159,6 +159,8 @@ bool Config::init() {
     if (!gpsPinAllowed(g.advRx)) g.advRx = 15;
     if (!gpsPinAllowed(g.advTx) || g.advTx == g.advRx)
         g.advTx = g.advRx == 13 ? 15 : 13;
+    g.mapStyle = s_prefs.getUChar("gpsmap", g.mapStyle);
+    if (g.mapStyle >= GPS_MAP_STYLE_N) g.mapStyle = 0;
 
     HotkeyConfig def{};
     hotkeyConfig = def;
@@ -345,6 +347,7 @@ bool Config::save() {
     s_prefs.putUChar("gpsgtx", g.groveTx);
     s_prefs.putUChar("gpsarx", g.advRx);
     s_prefs.putUChar("gpsatx", g.advTx);
+    s_prefs.putUChar("gpsmap", g.mapStyle);
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)
