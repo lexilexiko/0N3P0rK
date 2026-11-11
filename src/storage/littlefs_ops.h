@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
+#include <SPI.h>
 
 namespace Storage {
 
@@ -14,6 +15,7 @@ bool begin();
 void end();
 bool remount();
 bool available();
+SPIClass& spiBus();
 
 uint32_t sectorSize();
 uint32_t numSectors();

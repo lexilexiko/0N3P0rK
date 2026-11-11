@@ -20,6 +20,7 @@
 #include "../board/board.h"
 #include "../build_info.h"
 #include "../modes/gpspig.h"
+#include "../modes/mesh_pig.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
 #include <string.h>
@@ -212,6 +213,44 @@ static const Item GPS[] = {
     {"GPS VIEW",Kind::ACTION, 8, 0, 0, 0},
 };
 static const uint8_t GPS_N = sizeof(GPS) / sizeof(GPS[0]);
+
+// ── MESH (Meshtastic SX1262 direct) ──────────────────────────────────────────
+// id mapping:
+//  0 = enabled toggle
+//  1 = region (index into MESH_REGION_NAMES, matches MeshRegion enum)
+//  2 = channel name  (string ACTION → keyboard)
+//  3 = shortName     (string ACTION → keyboard)
+//  4 = PSK           (string ACTION → keyboard, stored as base64)
+//  5 = MESH VIEW action (open MESH mode)
+static const char* MESH_REGION_NAMES[] = {
+    "EU868",  "US915",  "ANZ923", "EU433",
+    "JP923",  "KR921",  "TW923",  "RU868",
+    "IN865",  "NZ865",  "TH923",  "UA433",
+    "UA868",  "MY433",  "MY919",  "SG923",
+    "2.4GHz"
+};
+static const uint8_t MESH_REGION_N = 17;  // matches MESH_REGION_COUNT
+
+static const char* MESH_PRESET_NAMES[] = {
+    "LongFast", "LongSlow", "VLongSlow", "MedSlow", "MedFast",
+    "ShortSlow", "ShortFast", "LongMod", "ShortTurbo", "LongTurbo"
+};
+
+static const Item MESH_ITEMS[] = {
+    {"MESH",     Kind::TOGGLE, 0, 0, 1,                          1},
+    {"REGION",   Kind::VALUE,  1, 0, (int8_t)(MESH_REGION_N-1), 1},
+    {"MODEM",    Kind::VALUE,  7, 0, 9,                          1},
+    {"TX dBm",   Kind::VALUE,  8, 2, 22,                         1},
+    {"HOPS",     Kind::VALUE,  9, 1, 7,                          1},
+    {"SLOT",     Kind::VALUE, 10, 0, 104,                        1},
+    {"MY FREQ",  Kind::ACTION, 6, 0, 0,                          0},
+    {"CHANNEL",  Kind::ACTION, 2, 0, 0,                          0},
+    {"NAME",     Kind::ACTION, 3, 0, 0,                          0},
+    {"PSK",      Kind::ACTION, 4, 0, 0,                          0},
+    {"RX BOOST", Kind::TOGGLE, 11, 0, 1,                         1},
+    {"OPEN",     Kind::ACTION, 5, 0, 0,                          0},
+};
+static const uint8_t MESH_ITEMS_N = sizeof(MESH_ITEMS)/sizeof(MESH_ITEMS[0]);
 
 static const char* gpsSourceName(int source) {
     switch ((GpsSource)source) {
@@ -432,6 +471,7 @@ static bool s_keyWas = false;
 static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
+static int  s_textTarget = -1;  // -1 = personality name, 4 = mesh channel, 5 = mesh shortName
 static bool s_bind = false;
 static bool s_resetConfirm = false;
 static SettingsPage s_page = SettingsPage::SCENE;
@@ -469,8 +509,9 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::RADIO_EDIT) { *n = s_editN; return s_editItems; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
-    if (s_page == SettingsPage::GPS) { *n = GPS_N; return GPS; }
-    if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
+    if (s_page == SettingsPage::GPS)   { *n = GPS_N;        return GPS; }
+    if (s_page == SettingsPage::MESH)  { *n = MESH_ITEMS_N; return MESH_ITEMS; }
+    if (s_page == SettingsPage::KEYS)  { *n = KEYS_N;       return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     if (s_page == SettingsPage::STATUS) { *n = 0; return nullptr; }
     *n = SCENE_N;
@@ -688,6 +729,20 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
+    if (s_page == SettingsPage::MESH) {
+        const MeshConfig& mc = Config::mesh();
+        switch (it.id) {
+            case 0: return mc.enabled ? 1 : 0;
+            case 1: return (int)mc.region;
+            case 6: return mc.freqOverride ? 1 : 0;
+            case 7: return mc.modem;
+            case 8: return mc.txPower;
+            case 9: return mc.hopLimit;
+            case 10: return mc.freqSlot;
+            case 11: return mc.rxBoost ? 1 : 0;
+            default: return 0;
+        }
+    }
     return it.id == 0 ? b.burstMs : b.advMs;
 }
 
@@ -714,6 +769,41 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         }
         if (k >= 'a' && k <= 'z') k = (char)(k - 'a' + 'A');
         snprintf(out, len, "%c", k);
+        return;
+    }
+    if (it.kind == Kind::ACTION && s_page == SettingsPage::MESH) {
+        if (s_text) {
+            snprintf(out, len, ">%s", s_edit);
+        } else {
+            const MeshConfig& mc = Config::mesh();
+            switch (it.id) {
+                case 2:
+                    strncpy(out, mc.channel, len - 1);
+                    break;
+                case 3:
+                    strncpy(out, mc.shortName, len - 1);
+                    break;
+                case 4:
+                    strncpy(out, strcmp(mc.psk, "AQ==") == 0 ? "DEFAULT" :
+                                 strcmp(mc.psk, "AA==") == 0 ? "OPEN" : "CUSTOM",
+                            len - 1);
+                    break;
+                case 5:
+                    strncpy(out, "OPEN", len - 1);
+                    break;
+                case 6:
+                    if (mc.freqOverride) {
+                        snprintf(out, len, "%.3f*", (float)mc.freqKHz / 1000.0f);
+                    } else {
+                        strncpy(out, "AUTO", len - 1);
+                    }
+                    break;
+                default:
+                    out[0] = '\0';
+                    break;
+            }
+        }
+        out[len - 1] = '\0';
         return;
     }
     if (it.kind == Kind::ACTION) {
@@ -788,6 +878,30 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         snprintf(raw, sizeof(raw), "G%d", getValue(it));
     } else if (s_page == SettingsPage::GPS && it.id == 7) {
         snprintf(raw, sizeof(raw), "UTC%+d", getValue(it));
+    } else if (s_page == SettingsPage::MESH && it.id == 1) {
+        uint8_t ri = (uint8_t)getValue(it);
+        if (ri >= MESH_REGION_N) ri = 0;
+        snprintf(raw, sizeof(raw), "%s", MESH_REGION_NAMES[ri]);
+    } else if (s_page == SettingsPage::MESH && it.id == 7) {
+        uint8_t m = (uint8_t)getValue(it);
+        if (m > 9) m = 0;
+        snprintf(raw, sizeof(raw), "%s", MESH_PRESET_NAMES[m]);
+    } else if (s_page == SettingsPage::MESH && it.id == 8) {
+        snprintf(raw, sizeof(raw), "%ddBm", getValue(it));
+    } else if (s_page == SettingsPage::MESH && it.id == 10) {
+        int slot = getValue(it);
+        if (slot <= 0) strncpy(raw, "AUTO", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%d", slot);
+    } else if (s_page == SettingsPage::MESH && it.id == 2) {
+        strncpy(raw, Config::mesh().channel, sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::MESH && it.id == 3) {
+        strncpy(raw, Config::mesh().shortName, sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::MESH && it.id == 4) {
+        strncpy(raw, Config::mesh().psk, sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::MESH && it.id == 6) {
+        const MeshConfig& mc = Config::mesh();
+        if (mc.freqOverride) snprintf(raw, sizeof(raw), "%.3f*", (float)mc.freqKHz/1000.0f);
+        else                 snprintf(raw, sizeof(raw), "(auto)");
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -1217,6 +1331,52 @@ static bool setValue(const Item& it, int v) {
             GpsMode::reconfigure();
         return true;
     }
+    if (s_page == SettingsPage::MESH) {
+        MeshConfig& mc = Config::mesh();
+        switch (it.id) {
+            case 0:
+                mc.enabled = (v != 0);
+                Config::save();
+                if (mc.enabled && !MeshPig::isRunning())
+                    MeshPig::start();
+                else if (!mc.enabled && MeshPig::isRunning())
+                    MeshPig::stop();
+                return true;
+            case 1: {
+                uint8_t ri = (uint8_t)v;
+                if (ri >= MESH_REGION_N) ri = 0;
+                mc.region = ri;
+                Config::save();
+                if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                return true;
+            }
+            case 7:
+                mc.modem = (uint8_t)v;
+                Config::save();
+                if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                return true;
+            case 8:
+                mc.txPower = (int8_t)v;
+                Config::save();
+                if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                return true;
+            case 9:
+                mc.hopLimit = (uint8_t)v;
+                Config::save();
+                return true;
+            case 10:
+                mc.freqSlot = (uint8_t)v;
+                Config::save();
+                if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                return true;
+            case 11:
+                mc.rxBoost = (v != 0);
+                Config::save();
+                if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                return true;
+            default: return false;
+        }
+    }
     if (it.id == 0) b.burstMs = (uint16_t)v;
     else b.advMs = (uint16_t)v;
     Config::save();
@@ -1301,6 +1461,33 @@ SettingsPage page() { return s_page; }
 const char* bottomHint() {
     if (s_resetConfirm) return "ENT RESET  ESC CANCEL";
     const bool showHelp = ((millis() - s_openMs) % 7500u) < 5000u;
+    if (s_page == SettingsPage::MESH) {
+        if (s_text) return "TYPE  ENTER SAVE  BS ERASE  ESC CANCEL";
+        if (s_editing) return "UP/DN CHANGE  ENTER DONE  ESC BACK";
+        if (showHelp) {
+            static const char* const H_MESH[] = {
+                "TOGGLE THE MESH RADIO.",
+                "REGION. MUST MATCH THE OTHER NODE.",
+                "MODEM PRESET. LONGFAST IS THE DEFAULT.",
+                "TX POWER. CAPPED BY THE REGION.",
+                "HOW MANY HOPS A PACKET MAY TRAVEL.",
+                "FREQUENCY SLOT. 0 HASHES THE CHANNEL.",
+                "TYPE YOUR OWN MHZ. 0 PUTS IT BACK TO AUTO.",
+                "CHANNEL NAME. LONGFAST IS THE DEFAULT.",
+                "NAME OTHER NODES SEE. 4 LETTERS.",
+                "CHANNEL KEY. AQ== IS THE PUBLIC DEFAULT.",
+                "SX1262 RX BOOST. LOUDER, MORE CURRENT.",
+                "OPEN THE MESH NODE LIST."
+            };
+            if (s_idx < sizeof(H_MESH) / sizeof(H_MESH[0]))
+                return H_MESH[s_idx];
+        }
+        if (s_idx == 0 || s_idx == 10) return "ENTER TOGGLE  UP/DN MOVE  ESC BACK";
+        if (s_idx == 11) return "ENTER OPEN  UP/DN MOVE  ESC BACK";
+        if (s_idx >= 6 && s_idx <= 9)
+            return "ENTER EDIT  UP/DN MOVE  ESC BACK";
+        return "ENTER EDIT  UP/DN MOVE  ESC BACK";
+    }
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS)
             return showHelp ? "TYPE WIFI PASSWORD" : "TYPE  BS ERASE  ENT SAVE  ESC BACK";
@@ -1535,6 +1722,72 @@ void update() {
                 s_edit[0] = '\0';
                 return;
             }
+            if (s_textTarget == 4) {
+                // Save Meshtastic channel name
+                MeshConfig& mc = Config::mesh();
+                strncpy(mc.channel, s_edit, sizeof(mc.channel) - 1);
+                mc.channel[sizeof(mc.channel) - 1] = '\0';
+                if (!mc.channel[0]) strncpy(mc.channel, "LongFast", sizeof(mc.channel) - 1);
+                Config::save();
+                s_text = false;
+                s_textTarget = -1;
+                SFX::play(SFX::CONFIRM);
+                Display::showToast("CHANNEL SET", 900);
+                return;
+            }
+            if (s_textTarget == 5) {
+                // Save Meshtastic short name (max 4 chars)
+                MeshConfig& mc = Config::mesh();
+                strncpy(mc.shortName, s_edit, sizeof(mc.shortName) - 1);
+                mc.shortName[sizeof(mc.shortName) - 1] = '\0';
+                if (!mc.shortName[0]) strncpy(mc.shortName, "PIG", sizeof(mc.shortName) - 1);
+                Config::save();
+                s_text = false;
+                s_textTarget = -1;
+                SFX::play(SFX::CONFIRM);
+                Display::showToast("NAME SET", 900);
+                return;
+            }
+            if (s_textTarget == 6) {
+                // Save Meshtastic PSK (base64 string)
+                MeshConfig& mc = Config::mesh();
+                strncpy(mc.psk, s_edit, sizeof(mc.psk) - 1);
+                mc.psk[sizeof(mc.psk) - 1] = '\0';
+                if (!mc.psk[0]) strncpy(mc.psk, "AQ==", sizeof(mc.psk) - 1);
+                Config::save();
+                // Restart MESH if running to apply new key
+                if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                s_text = false;
+                s_textTarget = -1;
+                SFX::play(SFX::CONFIRM);
+                Display::showToast("PSK SET", 900);
+                return;
+            }
+            if (s_textTarget == 7) {
+                // Save custom frequency (e.g. "869.525" → 869525 kHz)
+                MeshConfig& mc = Config::mesh();
+                float fMHz = atof(s_edit);
+                if (fMHz >= 137.0f && fMHz <= 960.0f) {
+                    mc.freqKHz = (uint32_t)(fMHz * 1000.0f + 0.5f);
+                    mc.freqOverride = true;
+                    Config::save();
+                    if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                    SFX::play(SFX::CONFIRM);
+                    Display::showToast("FREQ SET", 900);
+                } else if (s_edit[0] == '0' || s_edit[0] == '\0') {
+                    // "0" or empty → reset to auto
+                    mc.freqOverride = false;
+                    Config::save();
+                    if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
+                    SFX::play(SFX::CONFIRM);
+                    Display::showToast("FREQ AUTO", 900);
+                } else {
+                    Display::showToast("BAD FREQ", 900);
+                }
+                s_text = false;
+                s_textTarget = -1;
+                return;
+            }
             PersonalityConfig& p = Config::personality();
             strncpy(p.name, s_edit, sizeof(p.name) - 1);
             p.name[sizeof(p.name) - 1] = '\0';
@@ -1728,6 +1981,40 @@ void update() {
             GpsMode::start();
             if (!GpsMode::isRunning()) return;
             App::setMode(AppMode::GPS);
+        } else if (s_page == SettingsPage::MESH && cur.id == 6) {
+            // Edit custom frequency (MHz as decimal string, e.g. "869.525")
+            const MeshConfig& mc = Config::mesh();
+            if (mc.freqOverride) snprintf(s_edit, sizeof(s_edit), "%.3f", (float)mc.freqKHz/1000.0f);
+            else s_edit[0] = '\0';
+            s_text = true;
+            s_textTarget = 7;  // 7 → mesh freq
+            SFX::play(SFX::MENU_CLICK);
+        } else if (s_page == SettingsPage::MESH && cur.id == 2) {
+            // Edit channel name via keyboard
+            strncpy(s_edit, Config::mesh().channel, sizeof(s_edit) - 1);
+            s_edit[sizeof(s_edit) - 1] = '\0';
+            s_text = true;
+            s_textTarget = 4;  // 4 → mesh channel
+            SFX::play(SFX::MENU_CLICK);
+        } else if (s_page == SettingsPage::MESH && cur.id == 3) {
+            // Edit short name via keyboard (max 4 chars)
+            strncpy(s_edit, Config::mesh().shortName, sizeof(s_edit) - 1);
+            s_edit[sizeof(s_edit) - 1] = '\0';
+            s_text = true;
+            s_textTarget = 5;  // 5 → mesh shortName
+            SFX::play(SFX::MENU_CLICK);
+        } else if (s_page == SettingsPage::MESH && cur.id == 4) {
+            // Edit PSK (base64) via keyboard
+            strncpy(s_edit, Config::mesh().psk, sizeof(s_edit) - 1);
+            s_edit[sizeof(s_edit) - 1] = '\0';
+            s_text = true;
+            s_textTarget = 6;  // 6 → mesh psk
+            SFX::play(SFX::MENU_CLICK);
+        } else if (s_page == SettingsPage::MESH && cur.id == 5) {
+            // Open MESH mode directly
+            if (!MeshPig::isRunning()) MeshPig::start();
+            App::setMode(AppMode::MESH);
+            SFX::play(SFX::MENU_CLICK);
         }
         return;
     }
@@ -1906,6 +2193,7 @@ void draw(M5Canvas& canvas) {
     const uint16_t UI_BG = 0x2145, UI_PANEL = 0x3A8A, UI_TITLE = 0xFFE0;
     const uint16_t UI_TEXT = 0xEF5D, UI_DIM = 0x9CD3, UI_SEL = 0xFDB6;
     canvas.fillSprite(UI_BG);
+    canvas.setFont(&fonts::Font0);
 
     const char* title = "PIG";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
@@ -1922,6 +2210,7 @@ void draw(M5Canvas& canvas) {
     }
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::GPS) title = "GPS";
+    else if (s_page == SettingsPage::MESH) title = "MESH";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
 
     canvas.setTextDatum(top_center);
@@ -1933,9 +2222,9 @@ void draw(M5Canvas& canvas) {
     uint8_t n = 0;
     const Item* list = items(&n);
     canvas.setTextDatum(top_left);
-    canvas.setTextSize(2);
+    canvas.setTextSize(s_page == SettingsPage::MESH ? 1 : 2);
     const int y0 = 24;
-    const int lh = 20;
+    const int lh = s_page == SettingsPage::MESH ? 18 : 20;
     for (uint8_t i = 0; i < VIS && (s_scroll + i) < n; i++) {
         uint8_t idx = s_scroll + i;
         int y = y0 + i * lh;

@@ -230,6 +230,52 @@ struct GpsConfig {
     uint8_t mapStyle = 0;
 };
 
+// Meshtastic region presets (matches Meshtastic firmware RegionCode).
+// Stored as uint8_t in NVS.
+enum MeshRegion : uint8_t {
+    MESH_REGION_EU_868  =  0,  // 869.525 MHz — default
+    MESH_REGION_US      =  1,  // 906.875 MHz
+    MESH_REGION_ANZ     =  2,  // 916.000 MHz
+    MESH_REGION_EU_433  =  3,  // 433.875 MHz
+    MESH_REGION_JP      =  4,  // 923.875 MHz
+    MESH_REGION_KR      =  5,  // 921.900 MHz
+    MESH_REGION_TW      =  6,  // 923.875 MHz
+    MESH_REGION_RU      =  7,  // 868.900 MHz
+    MESH_REGION_IN      =  8,  // 865.062 MHz
+    MESH_REGION_NZ_865  =  9,  // 865.062 MHz
+    MESH_REGION_TH      = 10,  // 923.875 MHz
+    MESH_REGION_UA_433  = 11,  // 433.175 MHz
+    MESH_REGION_UA_868  = 12,  // 868.000 MHz
+    MESH_REGION_MY_433  = 13,  // 433.000 MHz
+    MESH_REGION_MY_919  = 14,  // 919.875 MHz
+    MESH_REGION_SG_923  = 15,  // 923.200 MHz
+    MESH_REGION_LORA_24 = 16,  // 2.4GHz — not on SX1262
+    MESH_REGION_UNSET   = 17,
+};
+static const uint8_t MESH_REGION_COUNT = 17; // excludes UNSET
+
+// Meshtastic-compatible LoRa mesh radio config (SX1262 direct, no UART).
+// SX1262 on CAP LoRa-1262: NSS=G5, IRQ=G4, RST=G3, BUSY=G6.
+struct MeshConfig {
+    bool     enabled          = false;
+    uint8_t  region           = MESH_REGION_EU_868;
+    bool     freqOverride     = false;   // if true, use freqKHz instead of region preset
+    uint32_t freqKHz          = 869525u; // override frequency in kHz
+    char     channel[20]      = "LongFast";
+    // PSK as base64 (Meshtastic default = "AQ==").
+    // "AQ==" expands to key: d4f1bb3a202907590bc ffabcf4e6901
+    char     psk[45]          = "AQ==";
+    // Our node short name broadcast to peers (max 4 chars + null)
+    char     shortName[5]     = "PIG";
+    // Same knobs plai exposes under LoRa config. modem 0 = LongFast.
+    // freqSlot 0 = hash the channel name (Meshtastic "auto").
+    uint8_t  modem            = 0;
+    int8_t   txPower          = 22;
+    uint8_t  hopLimit         = 3;
+    uint8_t  freqSlot         = 0;
+    bool     rxBoost          = false;
+};
+
 static const uint8_t HOTKEY_COUNT = 20;
 // 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP; 18 = DESK; 19 = GPS.
 // DESK and GPS stay unbound until the user picks a key.
@@ -262,6 +308,7 @@ public:
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
     static GpsConfig& gps() { return gpsConfig; }
+    static MeshConfig& mesh() { return meshConfig; }
     static HotkeyConfig& hotkeys() { return hotkeyConfig; }
     static XferConfig& xfer() { return xferConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
@@ -277,6 +324,7 @@ private:
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
     static GpsConfig gpsConfig;
+    static MeshConfig meshConfig;
     static HotkeyConfig hotkeyConfig;
     static XferConfig xferConfig;
     static bool initialized;

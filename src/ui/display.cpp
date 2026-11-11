@@ -34,6 +34,7 @@
 #include "../modes/mp3player.h"
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
+#include "../modes/mesh_pig.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -1178,7 +1179,8 @@ void Display::update() {
          App::mode() == AppMode::PIGPASS ||
          App::mode() == AppMode::INSPECTOR ||
          App::mode() == AppMode::DESK ||
-         App::mode() == AppMode::GPS);
+         App::mode() == AppMode::GPS ||
+         App::mode() == AppMode::MESH);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
@@ -1195,7 +1197,8 @@ void Display::update() {
         else if (App::mode() == AppMode::MP3) Mp3PlayerMode::draw(mainCanvas);
         else if (App::mode() == AppMode::INSPECTOR) InspectorPig::draw(mainCanvas);
         else if (App::mode() == AppMode::DESK) DeskMode::draw(mainCanvas);
-        else if (App::mode() == AppMode::GPS) GpsMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::GPS)  GpsMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::MESH) MeshPig::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

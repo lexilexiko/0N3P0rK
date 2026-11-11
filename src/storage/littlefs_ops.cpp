@@ -188,6 +188,10 @@ bool writeSector(uint32_t lba, const uint8_t* buf) {
 }
 
 bool available() { return s_mounted; }
+SPIClass& spiBus() {
+    s_sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    return s_sdSPI;
+}
 
 bool ensureDir(const char* path) {
     if (!s_mounted || !path) return false;

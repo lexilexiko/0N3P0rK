@@ -1,0 +1,75 @@
+// mesh_pig.h — Meshtastic-compatible LoRa mesh for 0N3P0rK
+// SX1262 (CAP LoRa-1262) via RadioLib.
+// OTA protocol: 16-byte Meshtastic header + AES-128-CTR(nanopb MeshPacket payload).
+// LongFast EU868: 869.525 MHz, SF11, BW250 kHz, CR4/5, sync 0x2B
+// Default PSK: d4 f1 bb 3a 20 29 07 59 f0 bc ff ab cf 4e 69 01
+#pragma once
+
+#include <Arduino.h>
+#include <stdint.h>
+#include <M5GFX.h>
+
+// ── Node entry ───────────────────────────────────────────────────────────────
+struct MeshNode {
+    uint32_t nodeNum   = 0;
+    int32_t  lat_i     = 0;    // degrees × 1e7
+    int32_t  lon_i     = 0;
+    int16_t  alt       = 0;
+    int8_t   snr       = 0;
+    int16_t  rssi      = 0;
+    uint32_t lastSeen  = 0;
+    char     shortName[5]  = {};
+    char     longName[20]  = {};
+    bool     hasPos    = false;
+    bool     isSelf    = false;
+};
+
+// ── Message log entry ────────────────────────────────────────────────────────
+struct MeshMsg {
+    uint32_t from      = 0;
+    uint32_t time      = 0;
+    char     text[48]  = {};
+    char     fromName[8] = {};
+    bool     broadcast = true;
+};
+
+// ── MeshPig namespace ────────────────────────────────────────────────────────
+namespace MeshPig {
+
+// Lifecycle
+void start();
+void stop();
+void update();          // call every loop()
+bool isRunning();
+
+// Node table (ring, max 16)
+uint8_t   nodeCount();
+MeshNode* nodeAt(uint8_t i);    // 0-based
+
+// Message log (circular, max 32)
+uint8_t   msgCount();
+MeshMsg*  msgAt(uint8_t i);     // 0-based, oldest first
+uint8_t   newMsgCount();
+void      clearNew();
+
+// Our identity
+uint32_t    selfNodeNum();
+const char* selfShortName();
+
+// Send text message
+//   to = 0xFFFFFFFF → broadcast (channel chat)
+//   to = nodeNum    → direct message
+bool sendText(const char* text, uint32_t to = 0xFFFFFFFFu);
+
+// Draw the MESH mode screen onto canvas (full screen, 240×135)
+void draw(M5Canvas& canvas);
+
+// Handle keyboard input (compose & send messages, ESC to exit)
+void handleKeys();
+// True while the compose box is open. Backspace deletes a letter then.
+bool isComposing();
+
+// Status summary for the status bar
+const char* getStatusLine();
+
+}  // namespace MeshPig

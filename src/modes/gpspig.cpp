@@ -597,7 +597,9 @@ void update() {
         App::setMode(AppMode::MENU);
         return;
     }
-    for (uint8_t page = 0; page < 4; ++page) {
+    // Pages 1-4: FIX / WORLD / TRAIL / MAP
+    uint8_t maxPage = 4;
+    for (uint8_t page = 0; page < maxPage; ++page) {
         if (M5Cardputer.Keyboard.isKeyPressed((char)('1' + page))) {
             s_page = page;
             if (s_page != 3) releaseMapCanvas();
@@ -1278,6 +1280,7 @@ static void drawStreetMap(M5Canvas& canvas) {
     loadMapAttribution();
 }
 
+
 void draw(M5Canvas& canvas) {
     uiListBackground(canvas);
     if (s_page == 3) {
@@ -1289,7 +1292,8 @@ void draw(M5Canvas& canvas) {
     canvas.setTextSize(2);
     canvas.setTextColor(UiStyle::TITLE);
     const char* title = s_page == 1 ? "WORLD" :
-                        (s_page == 2 ? "TRAIL" : (s_page == 3 ? "MAP" : "GPS"));
+                        (s_page == 2 ? "TRAIL" :
+                        (s_page == 3 ? "MAP" : "GPS"));
     canvas.drawString(title, 8, 0);
     canvas.setTextSize(1);
     canvas.setTextDatum(top_right);

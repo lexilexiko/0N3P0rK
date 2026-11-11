@@ -115,6 +115,14 @@ static const char* const H_GPS[] = {
     "OWN POSITION. GROVE OR ADV CAP.",
     "FIX WORLD TRAIL. ^/v PAGE."
 };
+static const char* const H_MESH[] = {
+    "LORA MESH. CAP LORA-1262 ONLY.",
+    "MESHTASTIC COMPATIBLE. EU/US/ANZ."
+};
+static const char* const H_MESHSET[] = {
+    "REGION CHANNEL NAME.",
+    "CAP LORA-1262 REQUIRED."
+};
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
     "PLUG USB. EJECT THEN `."
@@ -213,6 +221,7 @@ static const Item G_SET[] = {
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
     {"GP", "GPS",     29, H_GPSSET, 2},
+    {"LR", "MESH",    31, H_MESHSET,2},
     {"**", "KEYS",    18, H_KEYS,   2},
     {"[:", "FILES",   20, H_FILEMGR,2}
 };
@@ -222,7 +231,8 @@ static const Item G_CONNECT[] = {
     {"U:", "USB SD",  17, H_USB,    2},
     {"F:", "XFER",    22, H_XFER,   2},
     {"PC", "DESK",    27, H_DESK,   2},
-    {"GP", "GPS",     28, H_GPS,    2}
+    {"GP", "GPS",     28, H_GPS,    2},
+    {"LR", "MESH",    30, H_MESH,   2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -252,8 +262,8 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 7;
-    if (g == GroupId::CONNECT) return 6;
+    if (g == GroupId::SET) return 8;
+    if (g == GroupId::CONNECT) return 7;
     return 0;
 }
 
@@ -357,6 +367,19 @@ static void doAction(uint8_t id) {
         case 28:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::GPS);
+            break;
+        case 30:
+            if (Cap::isRunning()) Cap::stop();
+            if (Config::mesh().enabled) {
+                App::setMode(AppMode::MESH);
+            } else {
+                SettingsMenu::show(SettingsPage::MESH);
+                App::setMode(AppMode::TUNE);
+            }
+            break;
+        case 31:
+            SettingsMenu::show(SettingsPage::MESH);
+            App::setMode(AppMode::TUNE);
             break;
         case 23:
             App::setMode(AppMode::TASKS);

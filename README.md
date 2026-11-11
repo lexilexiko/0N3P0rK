@@ -29,16 +29,17 @@ Secret menu codes are **not** listed here (keep them private).
 8. [BadUSB and BadBLE](#badusb-and-badble)
 9. [DESK](#desk)
 10. [GPS / location tracker](#gps--location-tracker)
-11. [LED indicator](#led-indicator)
-12. [XFER file transfer](#xfer-file-transfer)
-13. [FILES — SD File Manager](#files--sd-file-manager)
-14. [Music (MP3 player)](#music-mp3-player)
-15. [InspectorPig](#inspectorpig-inspect)
-16. [PigPass](#pigpass)
-17. [SD layout](#sd-layout)
-18. [Web site](#web-site)
-19. [Version history](#version-history)
-20. [Legal & credits](#legal--credits)
+11. [Meshtastic](#meshtastic)
+12. [LED indicator](#led-indicator)
+13. [XFER file transfer](#xfer-file-transfer)
+14. [FILES — SD File Manager](#files--sd-file-manager)
+15. [Music (MP3 player)](#music-mp3-player)
+16. [InspectorPig](#inspectorpig-inspect)
+17. [PigPass](#pigpass)
+18. [SD layout](#sd-layout)
+19. [Web site](#web-site)
+20. [Version history](#version-history)
+21. [Legal & credits](#legal--credits)
 
 ---
 
@@ -52,7 +53,7 @@ Secret menu codes are **not** listed here (keep them private).
 | Display | 240 × 135 ST7789 — top bar + farm field + bottom bar |
 | Keyboard | Original: 74HC138 matrix · ADV: TCA8418 |
 | USB | CDC serial — pick COM yourself (VID `303A`) |
-| GPS | Grove NMEA receiver on the original Cardputer; GPS UART on the ADV LoRa cap; LoRa stays off while GPS is active |
+| GPS / LoRa | Grove NMEA on the original Cardputer; GPS UART and optional SX1262 Meshtastic radio on the ADV LoRa cap |
 | SD | SPI: CS **12**, MOSI **14**, MISO **39**, SCK **40** |
 
 Same firmware `.bin` for original and ADV.  
@@ -591,8 +592,9 @@ is closed.
 
 - Original **M5Cardputer**: Grove GPS on the dedicated GPS port (UART2; default
   RX GPIO **1**, TX GPIO **2**)
-- **Cardputer ADV**: GPS UART on the LoRa cap; the LoRa radio is held inactive
-  while the GPS mode is running (default RX GPIO **15**, TX GPIO **13**)
+- **Cardputer ADV**: GPS UART on the LoRa cap (default RX GPIO **15**, TX GPIO
+  **13**). Meshtastic radio use is separate; simultaneous GPS and LoRa operation
+  has not been verified on hardware.
 - Protocol: standard NMEA `GGA` / `RMC` sentences over UART
 - The M5Stack **Unit GPS v1.1 (AT6668)** uses **115200 baud** by default on
   Grove; the ADV GPS UART preset also uses **115200 baud**. Older GPS units may
@@ -700,6 +702,27 @@ tracking continues until disabled in **SETTINGS → GPS** or stopped from
 
 This is a “quiet” utility tool: it captures position data without turning on the
 radio stack. Its UART buffer and trail memory are freed when tracking is stopped.
+
+## Meshtastic
+
+The **MESH** mode targets the **Cardputer ADV with the CAP LoRa-1262 SX1262
+module**. It uses the cap's RF-enable expander and shares the SPI bus with the
+SD card. Mesh packet buffers and the radio driver are allocated only while the
+mode is enabled and released when it is stopped. The firmware does not start
+the radio on the original Cardputer or when the CAP expander is absent.
+
+The current implementation can receive Meshtastic text, NodeInfo, and
+positions, maintain a temporary node list, and send channel text and direct
+text packets. Use the same region, modem preset, channel name, and PSK as the
+peer. The default is LongFast / EU868 with the Meshtastic default PSK.
+
+This is **not yet a complete Meshtastic node implementation**: direct messages
+do not use Meshtastic PKI, delivery ACK tracking/retries and persistent node or
+message storage are not implemented, and regional frequency/power/duty-cycle
+handling is limited to the firmware's presets. A node list only contains
+devices this radio has actually heard. Test against a real Meshtastic node
+before relying on interoperability; a successful firmware build does not
+verify the RF path or over-the-air behavior.
 
 ## LED indicator
 

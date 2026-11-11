@@ -10,6 +10,7 @@ PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
 GpsConfig Config::gpsConfig;
+MeshConfig Config::meshConfig;
 HotkeyConfig Config::hotkeyConfig;
 XferConfig Config::xferConfig;
 bool Config::initialized = false;
@@ -161,6 +162,38 @@ bool Config::init() {
         g.advTx = g.advRx == 13 ? 15 : 13;
     g.mapStyle = s_prefs.getUChar("gpsmap", g.mapStyle);
     if (g.mapStyle >= GPS_MAP_STYLE_N) g.mapStyle = 0;
+
+    // Mesh (Meshtastic SX1262 direct) config
+    MeshConfig& mc = meshConfig;
+    mc.enabled      = s_prefs.getBool ("meshen",    mc.enabled);
+    mc.region       = s_prefs.getUChar("meshrgn",   mc.region);
+    if (mc.region >= MESH_REGION_COUNT) mc.region = MESH_REGION_EU_868;
+    mc.freqOverride = s_prefs.getBool ("meshfov",   mc.freqOverride);
+    mc.freqKHz      = s_prefs.getUInt ("meshfreq",  mc.freqKHz);
+    if (mc.freqKHz < 137000u || mc.freqKHz > 960000u) mc.freqKHz = 869525u;
+    {
+        String ch = s_prefs.getString("meshch", mc.channel);
+        strncpy(mc.channel, ch.c_str(), sizeof(mc.channel) - 1);
+        mc.channel[sizeof(mc.channel) - 1] = '\0';
+    }
+    {
+        String pk = s_prefs.getString("meshpsk", mc.psk);
+        strncpy(mc.psk, pk.c_str(), sizeof(mc.psk) - 1);
+        mc.psk[sizeof(mc.psk) - 1] = '\0';
+    }
+    {
+        String sn = s_prefs.getString("meshsn", mc.shortName);
+        strncpy(mc.shortName, sn.c_str(), sizeof(mc.shortName) - 1);
+        mc.shortName[sizeof(mc.shortName) - 1] = '\0';
+    }
+    mc.modem = s_prefs.getUChar("meshmd", mc.modem);
+    if (mc.modem > 9) mc.modem = 0;
+    mc.txPower = (int8_t)s_prefs.getChar("meshtx", mc.txPower);
+    if (mc.txPower < 2 || mc.txPower > 22) mc.txPower = 22;
+    mc.hopLimit = s_prefs.getUChar("meshhop", mc.hopLimit);
+    if (mc.hopLimit < 1 || mc.hopLimit > 7) mc.hopLimit = 3;
+    mc.freqSlot = s_prefs.getUChar("meshslt", mc.freqSlot);
+    mc.rxBoost = s_prefs.getBool("meshrxb", mc.rxBoost);
 
     HotkeyConfig def{};
     hotkeyConfig = def;
@@ -348,6 +381,21 @@ bool Config::save() {
     s_prefs.putUChar("gpsarx", g.advRx);
     s_prefs.putUChar("gpsatx", g.advTx);
     s_prefs.putUChar("gpsmap", g.mapStyle);
+
+    // Mesh config save
+    const MeshConfig& mc = meshConfig;
+    s_prefs.putBool  ("meshen",   mc.enabled);
+    s_prefs.putUChar ("meshrgn",  mc.region);
+    s_prefs.putBool  ("meshfov",  mc.freqOverride);
+    s_prefs.putUInt  ("meshfreq", mc.freqKHz);
+    s_prefs.putString("meshch",   mc.channel);
+    s_prefs.putString("meshpsk",  mc.psk);
+    s_prefs.putString("meshsn",   mc.shortName);
+    s_prefs.putUChar ("meshmd",   mc.modem);
+    s_prefs.putChar  ("meshtx",   mc.txPower);
+    s_prefs.putUChar ("meshhop",  mc.hopLimit);
+    s_prefs.putUChar ("meshslt",  mc.freqSlot);
+    s_prefs.putBool  ("meshrxb",  mc.rxBoost);
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)

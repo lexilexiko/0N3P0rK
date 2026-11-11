@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>0N3P0rK mesh — Cardputer screen</title>
+<style>
+  body { margin:0; background:#111; color:#ccc; font-family: ui-monospace, "Courier New", monospace; }
+  h1 { font-size:16px; color:#7ff; margin:16px 16px 6px; }
+  p { margin:4px 16px 12px; font-size:13px; max-width:760px; line-height:1.4; }
+  .row { display:flex; gap:24px; align-items:flex-start; padding:8px 16px 24px; flex-wrap:wrap; }
+  .device { width:240px; height:135px; background:#000; position:relative; transform:scale(3); transform-origin:top left; image-rendering:pixelated; border:1px solid #333; }
+  .slot { width:760px; height:430px; }
+  .top, .bot { position:absolute; left:0; right:0; background:#001018; color:#9cf; font-size:8px; line-height:16px; padding:0 4px; height:16px; }
+  .bot { bottom:0; height:14px; line-height:14px; color:#888; background:#0a0a0a; }
+  .main { position:absolute; left:0; right:0; top:16px; bottom:14px; display:flex; }
+  .pane { box-sizing:border-box; overflow:hidden; font-size:8px; line-height:10px; white-space:pre; }
+  .on { outline:1px solid #0ff; }
+  .rail { background:#101410; color:#888; }
+  .body { background:#000; color:#ddd; }
+  .hd { background:#001028; color:#0ff; }
+  .g { color:#0f0; } .y { color:#ff0; } .d { color:#888; } .p { color:#f6f; } .r { color:#f44; } .c { color:#0ff; }
+  button { background:#222; color:#eee; border:1px solid #555; padding:6px 10px; margin-right:6px; cursor:pointer; }
+  button.onb { border-color:#0ff; color:#0ff; }
+</style>
+</head>
+<body>
+<h1>0N3P0rK mesh on Cardputer ADV — 240×135</h1>
+<p>Default is the middle tab. <b>;</b> or <b>,</b> opens people. <b>.</b> or <b>/</b> opens the radio. Press the same side again to fold it back. <b>T</b> writes, <b>Fn/Del</b> scroll, <b>`</b> closes a side tab or leaves the mesh. Enter on a person opens a direct chat.</p>
+<p>Cap LoRa-1262: NSS G5, SCK G40, MOSI G14, MISO G39, IRQ G4, BUSY G6, RST G3. Expander 0x43 on G8/G9, pin P0 powers the antenna switch. Power the Cardputer off before seating the cap. Antenna on before you transmit.</p>
+<div>
+  <button id="bL">; people</button>
+  <button id="bC" class="onb">center chat</button>
+  <button id="bR">. radio</button>
+</div>
+<div class="row"><div class="slot"><div class="device" id="dev"></div></div></div>
+<script>
+const people = [
+  ["PIG", "you", ""],
+  ["FOX", "-84", "2m"],
+  ["OWL", "-97", "11m"],
+  ["BAT", "-71", "20s"],
+];
+const chat = [
+  ["FOX", "anyone on longfast?"],
+  ["PIG", "here. eu868."],
+  ["BAT", "copy. -71"],
+  ["OWL", "rain. still up."],
+];
+let pane = "C";
+function railL() {
+  return `<div class="pane rail" style="width:34px"><div class="g">ON\n3</div>\n<div class="d">ALL\n7</div>\n\n\n\n<div class="d">;</div></div>`;
+}
+function railR() {
+  return `<div class="pane rail" style="width:42px"><div class="g">-71</div><div class="y">+6</div><div class="g">RX</div>\n\n\n<div class="d">.</div></div>`;
+}
+function peoplePane(w) {
+  let rows = people.map((p,i)=> (i===3?"<span class=c>":"<span>") + p[0].padEnd(4," ") + " " + p[1].padStart(4," ") + " " + p[2] + "</span>").join("\n");
+  return `<div class="pane body on" style="width:${w}px"><div class="hd">PEOPLE  on 3  all 7</div>${rows}</div>`;
+}
+function chatPane(w) {
+  let rows = chat.map(m=>`<span class="${m[0]==="PIG"?"g":""}">${m[0]}:${m[1]}</span>`).join("\n");
+  return `<div class="pane body on" style="width:${w}px"><div class="hd">CHAT LongFast</div>${rows}\n<div class="d">T write</div></div>`;
+}
+function radioPane(w) {
+  return `<div class="pane body on" style="width:${w}px"><div class="hd g">LORA OK</div>869.525 MHz *
+SF11 BW250 CR4/5
+22dBm  hop 3
+EU868 LongFast
+ch LongFast
+last -71 dBm +6
+rx 14  tx 3  q 0
+!a1c2 PIG
+sync 2B  ant on</div>`;
+}
+function fold(label, n, w) {
+  return `<div class="pane rail" style="width:${w}px"><div class="d">${label}\n${n}</div></div>`;
+}
+function render() {
+  const W = 240;
+  let html = `<div class="top">MESH  LongFast  !a1c2</div><div class="main">`;
+  if (pane === "L") html += peoplePane(162) + fold("CH", 4, 36) + railR();
+  else if (pane === "R") html += railL() + fold("CH", 4, 36) + radioPane(170);
+  else html += railL() + chatPane(164) + railR();
+  html += `</div><div class="bot">; left   . right   T write   \` back</div>`;
+  document.getElementById("dev").innerHTML = html;
+  for (const id of ["bL","bC","bR"]) document.getElementById(id).classList.toggle("onb", id==="b"+pane);
+}
+document.getElementById("bL").onclick = ()=>{ pane = pane==="L"?"C":"L"; render(); };
+document.getElementById("bC").onclick = ()=>{ pane = "C"; render(); };
+document.getElementById("bR").onclick = ()=>{ pane = pane==="R"?"C":"R"; render(); };
+document.addEventListener("keydown", e=>{
+  if (e.key===";"||e.key===",") { pane = pane==="L"?"C":"L"; render(); }
+  if (e.key==="."||e.key==="/") { pane = pane==="R"?"C":"R"; render(); }
+});
+render();
+</script>
+</body>
+</html>
