@@ -1,19 +1,18 @@
 // mesh_pig.cpp — Full Meshtastic-compatible LoRa mesh for 0N3P0rK
 // SX1262 (CAP LoRa-1262) via RadioLib.
 //
-// UI states (like plai):
-//   VIEW_NODES   — scrollable node list
-//   VIEW_DETAIL  — node detail (name, coords, signal)
-//   VIEW_CHAT    — broadcast channel chat   [TAB from NODES]
-//   VIEW_DM      — direct message to one node [ENTER from DETAIL]
-//   VIEW_COMPOSE — text input (from CHAT or DM)
+// One full screen at a time (240x105):
+//   CHAT     channel text. Other people on this channel show up here.
+//   PEOPLE   who has been heard. Enter opens a direct chat.
+//   RADIO    frequency, modem, channel, antenna switch.
+//   DM       one person.
+//   COMPOSE  text entry.
 //
 // Keys:
-//   NODES:  ↑↓ scroll  ENTER=detail  TAB=chat  ESC=exit
-//   DETAIL: ENTER=DM   ESC=back
-//   CHAT:   ↑↓ scroll  T=compose  ESC=back
-//   DM:     ↑↓ scroll  T=compose  ESC=back
-//   COMPOSE: type text  ENTER=send  ESC=cancel  DEL=backspace
+//   ; people   . radio   , up   / down
+//   T write    ENT send or open a DM
+//   ESC back, or leave from the chat
+//   BKSP minimizes, or erases while composing
 //
 // Custom frequency: set freqOverride=true in config, freqKHz = your freq.
 
@@ -291,9 +290,8 @@ enum Pane : uint8_t { PANE_LEFT, PANE_CENTER, PANE_RIGHT };
 static View     s_view = V_CHAT;
 static Pane     s_pane = PANE_CENTER;
 static View     s_composeFrom = V_CHAT;  // which view launched compose
-static uint8_t  s_nodeScroll=0;          // NODES view scroll offset
-static uint8_t  s_detailNode=0;          // index in s_nodes of selected node
-static uint8_t  s_chatScroll=0;          // CHAT scroll (bottom=newest)
+static uint8_t  s_nodeScroll=0;          // people cursor
+static uint8_t  s_chatScroll=0;          // CHAT window top (bottom=newest)
 static uint8_t  s_dmScroll=0;            // DM scroll
 static bool     s_chatStick=true;        // follow the newest channel line
 static bool     s_dmStick=true;
@@ -747,6 +745,77 @@ static void ageStr(uint32_t lastMs, char* out, uint8_t cap){
     else           snprintf(out,cap,"%luh",(unsigned long)(s/3600));
 }
 
+// Body lines between the header and the 10px key line.
+static int bodyRows(int h) {
+    int rows = (h - LH - 12) / LH;
+    return rows < 1 ? 1 : rows;
+}
+
+static void printClip(M5Canvas& cv, int x, int y, int w, const char* s) {
+    int maxc = (w - 4) / 6;
+    if (maxc < 1) return;
+    if (maxc > 46) maxc = 46;
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s", s ? s : "");
+    if ((int)strlen(buf) > maxc) buf[maxc] = 0;
+    cv.setCursor(x + 2, y);
+    cv.print(buf);
+}
+
+static int putLine(M5Canvas& cv, int y, int yMax, int w, const char* s, uint16_t col) {
+    if (y > yMax - 8) return y;
+    cv.setTextColor(col, (uint16_t)COL_BG);
+    printClip(cv, 0, y, w, s);
+    return y + LH;
+}
+
+static void hdrEmit(M5Canvas& cv, int& used, int maxc, const char* s, uint16_t col) {
+    if (!s || !s[0] || used >= maxc) return;
+    int n = (int)strlen(s);
+    if (used + n > maxc) n = maxc - used;
+    if (n > 40) n = 40;
+    char tmp[44];
+    memcpy(tmp, s, (size_t)n);
+    tmp[n] = 0;
+    cv.setTextColor(col, (uint16_t)COL_HDR);
+    cv.print(tmp);
+    used += n;
+}
+
+static void drawNodeRow(M5Canvas& cv, int x, int y, int w, const MeshNode& n, bool sel) {
+    uint16_t bg = COL_BG;
+    if (sel) {
+        cv.fillRect(x, y - 1, w, LH, COL_SEL);
+        cv.fillRect(x, y - 1, 2, LH, COL_CYAN);
+        bg = COL_SEL;
+    }
+    char name[8];
+    if (n.isSelf) snprintf(name, sizeof(name), "you");
+    else if (n.shortName[0]) snprintf(name, sizeof(name), "%.4s", n.shortName);
+    else snprintf(name, sizeof(name), "!%04lx", (unsigned long)(n.nodeNum & 0xFFFF));
+    char rssi[8];
+    if (n.isSelf) snprintf(rssi, sizeof(rssi), "--");
+    else snprintf(rssi, sizeof(rssi), "%d", n.rssi);
+    char age[8];
+    ageStr(n.lastSeen, age, sizeof(age));
+    bool fresh = n.isSelf || ((uint32_t)millis() - n.lastSeen < 8UL * 60UL * 1000UL);
+    uint16_t nameCol = n.isSelf ? COL_PINK : (fresh ? COL_TEXT : COL_DIM);
+    cv.setTextColor(nameCol, bg);
+    cv.setCursor(x + 2, y);
+    cv.printf("%-4.4s", name);
+    cv.setTextColor(n.isSelf ? COL_DIM : sigCol(n.rssi), bg);
+    cv.printf(" %4s", rssi);
+    cv.setTextColor(COL_DIM, bg);
+    cv.printf(" %4s  ", age);
+    int maxc = (w - 4) / 6;
+    int remain = maxc - 16;
+    if (remain < 1 || !n.longName[0]) return;
+    char ln[24];
+    snprintf(ln, sizeof(ln), "%s", n.longName);
+    if ((int)strlen(ln) > remain) ln[remain] = 0;
+    cv.print(ln);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // VIEW DRAW FUNCTIONS
 // ════════════════════════════════════════════════════════════════════════════
@@ -784,12 +853,13 @@ static void drawCompose(M5Canvas& cv, int W, int H){
     int cxPx=4+curCol*chW, cyPx=bY+2+curLine*LH;
     if(cyPx+LH<bY+bH) cv.drawFastVLine(cxPx,cyPx,LH-1,COL_CYAN);
 
-    // Char counter
-    cv.setTextColor(COL_DIM,COL_BG);
-    cv.setCursor(W-24,H-LH-1);
-    cv.printf("%d/47",s_cmpLen);
+    cv.setTextColor(COL_DIM, (uint16_t)COL_HDR);
+    char cnt[8];
+    snprintf(cnt, sizeof(cnt), "%d/47", s_cmpLen);
+    cv.setCursor(W - 6 * (int)strlen(cnt) - 2, 1);
+    cv.print(cnt);
 
-    drawHint(cv,"[ENT]send [ESC]cancel [DEL]backspace",W,H);
+    drawHint(cv, "ENT send   ESC cancel   BKSP erase", W, H);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -799,6 +869,9 @@ namespace MeshPig {
 
 void start(){
     if(s_run) return;
+    s_chatStick = true;
+    s_dmStick = true;
+    s_listenSince = (uint32_t)millis();
     s_radioError[0] = '\0';
     if (!Config::mesh().enabled) {
         snprintf(s_status,sizeof(s_status),"MESH OFF");
@@ -818,7 +891,7 @@ void start(){
     s_dmN=0; s_dmHead=0; s_dmNew=0; s_dmNode=0;
     s_txN=0; s_hHead=0; s_hCnt=0;
     s_pktId=esp_random() | 1u; s_view=V_CHAT; s_pane=PANE_CENTER; s_nodeScroll=0; s_chatScroll=0;
-    s_dmScroll=0; s_detailNode=0; s_cmpLen=0; memset(s_cmpBuf,0,sizeof(s_cmpBuf));
+    s_dmScroll=0; s_chatStick=true; s_dmStick=true; s_cmpLen=0; memset(s_cmpBuf,0,sizeof(s_cmpBuf));
     s_rs=RS_IDLE; s_rxFlag=false; s_txFlag=false;
     s_seenEver=0; s_rxPkts=0; s_txPkts=0; s_haveSig=false; s_lastRssi=0; s_lastSnr=0;
 
@@ -955,168 +1028,226 @@ static const char* meshModemName(uint8_t i) {
     return i < 10 ? names[i] : "?";
 }
 
-static void drawCollapsedLeft(M5Canvas& cv, int x, int w, int H) {
-    cv.fillRect(x, 0, w, H, COL_HDR2);
-    cv.drawFastVLine(x + w - 1, 0, H, COL_DIM);
-    cv.setTextSize(1);
-    cv.setTextColor(COL_GREEN, COL_HDR2);
-    cv.setCursor(x + 2, 6); cv.print("ON");
-    cv.setCursor(x + 2, 16); cv.printf("%u", countOnline());
-    cv.setTextColor(COL_DIM, COL_HDR2);
-    cv.setCursor(x + 2, 36); cv.print("ALL");
-    cv.setCursor(x + 2, 46); cv.printf("%u", s_seenEver);
-    cv.setCursor(x + 2, H - 10); cv.print(";");
+static bool heardOther() {
+    if (!s_nodes) return false;
+    for (uint8_t i = 0; i < s_nodeN; i++) if (!s_nodes[i].isSelf) return true;
+    return false;
 }
 
-static void drawCollapsedRight(M5Canvas& cv, int x, int w, int H) {
-    cv.fillRect(x, 0, w, H, COL_HDR2);
-    cv.drawFastVLine(x, 0, H, COL_DIM);
-    cv.setTextSize(1);
-    uint16_t col = s_haveSig ? sigCol(s_lastRssi) : COL_DIM;
-    cv.setTextColor(col, COL_HDR2);
-    cv.setCursor(x + 2, 6);
-    if (s_haveSig) cv.printf("%d", s_lastRssi);
-    else cv.print("--");
-    cv.setTextColor(COL_YELLOW, COL_HDR2);
-    cv.setCursor(x + 2, 18);
-    if (s_haveSig) cv.printf("%+d", s_lastSnr);
-    else cv.print("snr");
-    cv.setTextColor(s_rs == RS_TX ? COL_PINK : (s_radioOk ? COL_GREEN : COL_RED), COL_HDR2);
-    cv.setCursor(x + 2, 34);
-    cv.print(s_rs == RS_TX ? "TX" : (s_radioOk ? "RX" : "NO"));
-    cv.setTextColor(COL_DIM, COL_HDR2);
-    cv.setCursor(x + 2, H - 10); cv.print(".");
-}
+static void drawPeoplePage(M5Canvas& cv, int w, int h) {
+    cv.fillRect(0, 0, w, h, COL_BG);
+    char title[40];
+    if (!heardOther()) snprintf(title, sizeof(title), "PEOPLE  none yet");
+    else snprintf(title, sizeof(title), "PEOPLE  %u on  %u heard", countOnline(), s_seenEver);
+    drawHdr(cv, title, w);
 
-static void drawPeople(M5Canvas& cv, int x, int y, int w, int h) {
-    cv.fillRect(x, y, w, h, COL_BG);
-    cv.fillRect(x, y, w, LH + 1, COL_HDR);
-    cv.setTextColor(COL_CYAN, COL_HDR);
-    cv.setCursor(x + 2, y + 1);
-    cv.printf("PEOPLE  on %u  all %u", countOnline(), s_seenEver);
-    if (!s_nodes || s_nodeN == 0) {
-        cv.setTextColor(COL_DIM, COL_BG);
-        cv.setCursor(x + 2, y + LH + 6);
-        cv.print("nobody yet");
+    int y = LH + 2;
+    int yMax = h - 12;
+    if (!heardOther()) {
+        y = putLine(cv, y, yMax, w, "Nobody heard yet.", COL_DIM);
+        y = putLine(cv, y, yMax, w, "Names land here after", COL_DIM);
+        y = putLine(cv, y, yMax, w, "a packet on this channel.", COL_DIM);
+        y = putLine(cv, y, yMax, w, "Messages land in the chat.", COL_DIM);
+        if (s_nodes) {
+            for (uint8_t i = 0; i < s_nodeN; i++) {
+                if (!s_nodes[i].isSelf) continue;
+                drawNodeRow(cv, 0, y + LH, w, s_nodes[i], false);
+                break;
+            }
+        }
+        drawHint(cv, "; chat   ESC back", w, h);
         return;
     }
-    int rows = (h - LH - 2) / LH;
-    if (rows < 1) rows = 1;
+
+    cv.setTextColor(COL_DIM, (uint16_t)COL_BG);
+    cv.setCursor(2, y);
+    cv.printf("%-4s %4s %4s  %s", "name", "dBm", "age", "who");
+    int listRows = bodyRows(h) - 1;
+    if (listRows < 1) listRows = 1;
     if (s_nodeScroll >= s_nodeN) s_nodeScroll = (uint8_t)(s_nodeN - 1);
-    int top = s_nodeScroll;
-    if (top > (int)s_nodeN - rows) top = (int)s_nodeN - rows;
+    int cur = s_nodeScroll;
+    int top = cur - listRows + 1;
     if (top < 0) top = 0;
-    for (int i = 0; i < rows && top + i < s_nodeN; i++) {
-        MeshNode& n = s_nodes[top + i];
-        int yy = y + LH + 2 + i * LH;
-        bool sel = (uint8_t)(top + i) == s_nodeScroll;
-        if (sel) cv.fillRect(x, yy - 1, w, LH, COL_SEL);
-        char name[8];
-        if (n.shortName[0]) snprintf(name, sizeof(name), "%s", n.shortName);
-        else snprintf(name, sizeof(name), "!%04lx", (unsigned long)(n.nodeNum & 0xFFFF));
-        char age[8]; ageStr(n.lastSeen, age, sizeof(age));
-        cv.setTextColor(n.isSelf ? COL_PINK : COL_TEXT, sel ? COL_SEL : COL_BG);
-        cv.setCursor(x + 2, yy);
-        cv.printf("%-4s", name);
-        cv.setTextColor(sigCol(n.rssi), sel ? COL_SEL : COL_BG);
-        cv.printf(" %4d", n.rssi);
-        cv.setTextColor(COL_DIM, sel ? COL_SEL : COL_BG);
-        cv.printf(" %s", age);
+    for (int i = 0; i < listRows && top + i < s_nodeN; i++) {
+        int idx = top + i;
+        drawNodeRow(cv, 0, y + LH + i * LH, w, s_nodes[idx], idx == cur);
     }
+    const char* hint = "ENT dm  ,/ move  ; chat  ESC";
+    if (s_nodes[s_nodeScroll].isSelf) hint = ",/ move  ; chat  ESC back";
+    drawHint(cv, hint, w, h);
 }
 
-static void drawChatPane(M5Canvas& cv, int x, int y, int w, int h, bool dm) {
-    cv.fillRect(x, y, w, h, COL_BG);
-    cv.fillRect(x, y, w, LH + 1, COL_HDR);
-    cv.setTextColor(COL_CYAN, COL_HDR);
-    cv.setCursor(x + 2, y + 1);
-    if (dm) cv.printf("DM !%04lx", (unsigned long)(s_dmNode & 0xFFFF));
-    else cv.printf("CHAT %s", Config::mesh().channel);
-    uint8_t nmsg = dm ? s_dmN : s_chatN;
-    int rows = (h - LH - 12) / LH;
-    if (rows < 1) rows = 1;
-    uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
-    if (nmsg > rows && scroll + rows > nmsg) scroll = (uint8_t)(nmsg - rows);
-    for (int i = 0; i < rows; i++) {
-        uint8_t idx = (uint8_t)(scroll + i);
-        Msg* m = dm ? dmGet(idx) : chatGet(idx);
-        if (!m) break;
-        int yy = y + LH + 2 + i * LH;
-        cv.setTextColor(m->sent ? COL_GREEN : COL_TEXT, COL_BG);
-        cv.setCursor(x + 2, yy);
-        char line[42];
-        snprintf(line, sizeof(line), "%s:%s", m->fromName[0] ? m->fromName : "?", m->text);
-        int maxc = (w - 4) / 6;
-        if (maxc < 4) maxc = 4;
-        if ((int)strlen(line) > maxc) line[maxc] = 0;
-        cv.print(line);
-    }
-    if (nmsg == 0) {
-        cv.setTextColor(!dm && s_radioError[0] ? COL_RED : COL_DIM, COL_BG);
-        cv.setCursor(x + 2, y + LH + 6);
-        if (!dm && s_radioError[0]) cv.print(s_radioError);
-        else cv.print(dm ? "no direct msgs" : "channel is quiet");
-    }
-    cv.setTextColor(COL_DIM, COL_BG);
-    cv.setCursor(x + 2, y + h - 9);
-    cv.print(dm ? "T write  ,/ scroll" : "T type  ; people  . radio");
-}
+static void drawChatPage(M5Canvas& cv, int w, int h, bool dm) {
+    cv.fillRect(0, 0, w, h, COL_BG);
+    cv.fillRect(0, 0, w, LH + 1, COL_HDR);
+    cv.setTextSize(1);
+    cv.setCursor(2, 1);
+    int maxc = (w - 4) / 6;
+    if (maxc > 40) maxc = 40;
+    if (maxc < 8) maxc = 8;
+    int used = 0;
 
-static void drawRadio(M5Canvas& cv, int x, int y, int w, int h) {
-    cv.fillRect(x, y, w, h, COL_BG);
-    cv.fillRect(x, y, w, LH + 1, COL_HDR);
-    cv.setTextColor(s_radioOk ? COL_GREEN : COL_RED, COL_HDR);
-    cv.setCursor(x + 2, y + 1);
-    cv.print(s_radioOk ? "LORA OK" : "LORA ??");
-    const MeshConfig& mc = Config::mesh();
-    float freq=0, bw=0; uint8_t sf=0, cr=0; int8_t power=0;
-    bool planned = planRadio(mc, freq, bw, sf, cr, power);
-    char rows[12][28];
-    int n = 0;
-    if (!s_radioOk && s_radioError[0]) {
-        snprintf(rows[n++], 28, "%s", s_radioError);
-    }
-    if (planned) snprintf(rows[n++], 28, "%.3f MHz%s", freq, mc.freqOverride ? " *" : "");
-    snprintf(rows[n++], 28, "SF%u BW%.0f CR4/%u", sf, bw, cr);
-    snprintf(rows[n++], 28, "%ddBm  hop %u", power, mc.hopLimit);
-    snprintf(rows[n++], 28, "%s %s", meshRegionName(mc.region), meshModemName(mc.modem));
-    snprintf(rows[n++], 28, "ch %s", mc.channel);
-    if (s_haveSig) snprintf(rows[n++], 28, "last %d dBm %+d", s_lastRssi, s_lastSnr);
-    else snprintf(rows[n++], 28, "last no packet");
-    snprintf(rows[n++], 28, "rx %u  tx %u  q %u", s_rxPkts, s_txPkts, s_txN);
-    snprintf(rows[n++], 28, "!%04lx %s", (unsigned long)(s_nodeNum & 0xFFFF), mc.shortName);
-    snprintf(rows[n++], 28, "sync 2B  %s", s_rfExpanderReady ? "ant on" : "IOE mute");
-    int rowsFit = (h - LH - 2) / LH;
-    cv.setTextColor(COL_TEXT, COL_BG);
-    for (int i = 0; i < n && i < rowsFit; i++) {
-        cv.setCursor(x + 2, y + LH + 2 + i * LH);
-        cv.print(rows[i]);
-    }
-}
-
-static void drawPanes(M5Canvas& cv, int W, int H) {
-    int lw, cw, rw;
-    if (s_pane == PANE_LEFT) { lw = W - 78; cw = 36; rw = 42; }
-    else if (s_pane == PANE_RIGHT) { lw = 34; cw = 36; rw = W - 70; }
-    else { lw = 34; rw = 42; cw = W - lw - rw; }
-    if (s_view == V_DM) { lw = 34; rw = 42; cw = W - lw - rw; }
-    drawCollapsedLeft(cv, 0, lw, H);
-    if (s_pane == PANE_LEFT && s_view != V_DM) drawPeople(cv, 0, 0, lw, H);
-    int cx = lw;
-    if (s_pane == PANE_CENTER || s_view == V_DM) {
-        drawChatPane(cv, cx, 0, cw, H, s_view == V_DM);
+    char chan[16];
+    if (dm) {
+        char nm[8] = "????";
+        if (s_nodes) {
+            for (uint8_t i = 0; i < s_nodeN; i++) {
+                if (s_nodes[i].nodeNum == s_dmNode && s_nodes[i].shortName[0]) {
+                    snprintf(nm, sizeof(nm), "%.4s", s_nodes[i].shortName);
+                    break;
+                }
+            }
+        }
+        snprintf(chan, sizeof(chan), "DM %.4s", nm);
     } else {
-        cv.fillRect(cx, 0, cw, H, COL_HDR2);
-        cv.setTextColor(COL_DIM, COL_HDR2);
-        cv.setCursor(cx + 2, 6); cv.print("CH");
-        cv.setCursor(cx + 2, 16); cv.printf("%u", s_chatN);
+        const char* src = Config::mesh().channel;
+        snprintf(chan, sizeof(chan), "%.10s", (src && src[0]) ? src : "chat");
     }
-    int rx = cx + cw;
-    if (s_pane == PANE_RIGHT && s_view != V_DM) drawRadio(cv, rx, 0, rw, H);
-    else drawCollapsedRight(cv, rx, rw, H);
-    if (s_pane == PANE_LEFT) cv.drawRect(0, 0, lw, H, COL_CYAN);
-    else if (s_pane == PANE_RIGHT && s_view != V_DM) cv.drawRect(rx, 0, rw, H, COL_CYAN);
-    else cv.drawRect(cx, 0, cw, H, COL_CYAN);
+    hdrEmit(cv, used, maxc, chan, COL_CYAN);
+
+    const char* ear = " OFF";
+    uint16_t earCol = COL_RED;
+    if (s_radioOk && s_rs == RS_TX) { ear = " TX"; earCol = COL_PINK; }
+    else if (s_radioOk) { ear = " RX"; earCol = COL_GREEN; }
+    hdrEmit(cv, used, maxc, ear, earCol);
+
+    char mid[24];
+    if (s_haveSig) snprintf(mid, sizeof(mid), " %d", s_lastRssi);
+    else {
+        char age[8] = "--";
+        if (s_listenSince) ageStr(s_listenSince, age, sizeof(age));
+        snprintf(mid, sizeof(mid), " %s", age);
+    }
+    hdrEmit(cv, used, maxc, mid, s_haveSig ? sigCol(s_lastRssi) : COL_DIM);
+
+    bool& stick = dm ? s_dmStick : s_chatStick;
+    uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
+    uint8_t nmsg = dm ? s_dmN : s_chatN;
+    int rows = bodyRows(h);
+    uint8_t maxTop = (nmsg > (uint8_t)rows) ? (uint8_t)(nmsg - (uint8_t)rows) : 0;
+    if (stick || scroll >= maxTop) {
+        scroll = maxTop;
+        stick = true;
+    } else if (scroll > maxTop) {
+        scroll = maxTop;
+    }
+    char tail[16];
+    snprintf(tail, sizeof(tail), " %uppl%s", countOnline(), stick ? "" : " +");
+    hdrEmit(cv, used, maxc, tail, stick ? COL_DIM : COL_YELLOW);
+
+    if (nmsg == 0) {
+        int y = LH + 2;
+        int yMax = h - 12;
+        if (!Config::mesh().enabled) {
+            y = putLine(cv, y, yMax, w, "Mesh is off.", COL_RED);
+            putLine(cv, y, yMax, w, "Turn it on in SET.", COL_DIM);
+        } else if (!dm && s_radioError[0]) {
+            y = putLine(cv, y, yMax, w, s_radioError, COL_RED);
+            const MeshConfig& mc = Config::mesh();
+            char match[40];
+            snprintf(match, sizeof(match), "%s  %s  same key",
+                     meshRegionName(mc.region), meshModemName(mc.modem));
+            putLine(cv, y, yMax, w, match, COL_DIM);
+        } else if (dm) {
+            y = putLine(cv, y, yMax, w, "No direct messages yet.", COL_DIM);
+            putLine(cv, y, yMax, w, "T writes to this person.", COL_DIM);
+        } else {
+            y = putLine(cv, y, yMax, w, "Listening for this channel.", COL_TEXT);
+            y = putLine(cv, y, yMax, w, "Other people's messages", COL_DIM);
+            y = putLine(cv, y, yMax, w, "show up in this chat.", COL_DIM);
+            const MeshConfig& mc = Config::mesh();
+            char match[40];
+            snprintf(match, sizeof(match), "%s  %s  same key",
+                     meshRegionName(mc.region), meshModemName(mc.modem));
+            y = putLine(cv, y, yMax, w, match, COL_CYAN);
+            if (s_radioOk && !s_rfExpanderReady)
+                putLine(cv, y, yMax, w, "Antenna switch is off.", COL_YELLOW);
+        }
+    } else {
+        for (int i = 0; i < rows; i++) {
+            Msg* m = dm ? dmGet((uint8_t)(scroll + i)) : chatGet((uint8_t)(scroll + i));
+            if (!m) break;
+            int yy = LH + 2 + i * LH;
+            cv.setTextColor(m->sent ? COL_GREEN : COL_TEXT, (uint16_t)COL_BG);
+            char who[8];
+            snprintf(who, sizeof(who), "%.6s", m->fromName[0] ? m->fromName : "?");
+            char line[56];
+            snprintf(line, sizeof(line), "%s%c%s", who,
+                     (m->to == BROADCAST_ID) ? ':' : '>', m->text);
+            printClip(cv, 0, yy, w, line);
+        }
+    }
+
+    if (dm) drawHint(cv, "T write  ,/ move  ESC back", w, h);
+    else if (nmsg) drawHint(cv, "; ppl  . radio  ,/ move  T  ESC", w, h);
+    else drawHint(cv, "; ppl  . radio  T write  ESC", w, h);
+}
+
+static void drawRadioPage(M5Canvas& cv, int w, int h) {
+    cv.fillRect(0, 0, w, h, COL_BG);
+    cv.fillRect(0, 0, w, LH + 1, COL_HDR);
+    cv.setTextSize(1);
+    cv.setCursor(2, 1);
+    if (!Config::mesh().enabled) {
+        cv.setTextColor(COL_RED, (uint16_t)COL_HDR);
+        cv.print("MESH OFF");
+    } else if (!s_radioOk && s_radioError[0]) {
+        cv.setTextColor(COL_RED, (uint16_t)COL_HDR);
+        printClip(cv, 0, 1, w, s_radioError);
+    } else if (s_radioOk && s_rs == RS_TX) {
+        cv.setTextColor(COL_PINK, (uint16_t)COL_HDR);
+        cv.print("LORA TX");
+    } else if (s_radioOk) {
+        cv.setTextColor(COL_GREEN, (uint16_t)COL_HDR);
+        cv.print("LORA OK");
+    } else {
+        cv.setTextColor(COL_RED, (uint16_t)COL_HDR);
+        cv.print("LORA ??");
+    }
+
+    const MeshConfig& mc = Config::mesh();
+    float freq = 0, bw = 0;
+    uint8_t sf = 0, cr = 0;
+    int8_t power = 0;
+    bool planned = planRadio(mc, freq, bw, sf, cr, power);
+    (void)cr;
+    char line[44];
+    int y = LH + 2;
+    int yMax = h - 12;
+    if (planned) {
+        snprintf(line, sizeof(line), "%.3f MHz%s", freq, mc.freqOverride ? "  set" : "");
+        y = putLine(cv, y, yMax, w, line, COL_TEXT);
+    } else {
+        y = putLine(cv, y, yMax, w, "Frequency not set", COL_RED);
+    }
+    snprintf(line, sizeof(line), "%s   %s", meshRegionName(mc.region), meshModemName(mc.modem));
+    y = putLine(cv, y, yMax, w, line, COL_CYAN);
+    if (planned)
+        snprintf(line, sizeof(line), "SF%u  BW%.0f  %ddBm  hop %u", sf, bw, power, mc.hopLimit);
+    else
+        snprintf(line, sizeof(line), "hop %u", mc.hopLimit);
+    y = putLine(cv, y, yMax, w, line, COL_TEXT);
+    snprintf(line, sizeof(line), "channel  %s", mc.channel[0] ? mc.channel : "-");
+    y = putLine(cv, y, yMax, w, line, COL_TEXT);
+    snprintf(line, sizeof(line), "you  !%04lx  %s",
+             (unsigned long)(s_nodeNum & 0xFFFF), mc.shortName);
+    y = putLine(cv, y, yMax, w, line, COL_PINK);
+    snprintf(line, sizeof(line), "rx %u   tx %u   queue %u", s_rxPkts, s_txPkts, s_txN);
+    y = putLine(cv, y, yMax, w, line, COL_TEXT);
+    if (s_haveSig) {
+        snprintf(line, sizeof(line), "last  %d dBm  snr %+d", s_lastRssi, s_lastSnr);
+        y = putLine(cv, y, yMax, w, line, sigCol(s_lastRssi));
+    } else {
+        char age[8] = "--";
+        if (s_listenSince) ageStr(s_listenSince, age, sizeof(age));
+        snprintf(line, sizeof(line), "last  none yet   %s", age);
+        y = putLine(cv, y, yMax, w, line, COL_DIM);
+    }
+    if (s_rfExpanderReady) putLine(cv, y, yMax, w, "switch on", COL_GREEN);
+    else if (s_radioOk) putLine(cv, y, yMax, w, "switch off  short range", COL_YELLOW);
+    else putLine(cv, y, yMax, w, "switch off", COL_DIM);
+
+    drawHint(cv, ". chat   ESC back", w, h);
 }
 
 void draw(M5Canvas& canvas){
@@ -1130,7 +1261,10 @@ void draw(M5Canvas& canvas){
     canvas.setTextSize(1);
 
     if (s_view == V_COMPOSE) { drawCompose(canvas, W, H); return; }
-    drawPanes(canvas, W, H);
+    if (s_view == V_DM) { drawChatPage(canvas, W, H, true); return; }
+    if (s_pane == PANE_LEFT) { drawPeoplePage(canvas, W, H); return; }
+    if (s_pane == PANE_RIGHT) { drawRadioPage(canvas, W, H); return; }
+    drawChatPage(canvas, W, H, false);
 }
 
 static bool keyHas(char a, char b = 0) {
@@ -1165,8 +1299,8 @@ void handleKeys(){
                 s_cmpBuf[s_cmpLen]=0;
                 uint32_t dest=(s_composeFrom==V_DM)?s_dmNode:BROADCAST_ID;
                 sendText(s_cmpBuf,dest);
-                if(s_composeFrom==V_DM){ if(s_dmN>1) s_dmScroll=(uint8_t)(s_dmN-1); }
-                else if(s_chatN>1) s_chatScroll=(uint8_t)(s_chatN-1);
+                if(s_composeFrom==V_DM) s_dmStick=true;
+                else s_chatStick=true;
             }
             s_view=s_composeFrom; s_cmpLen=0; memset(s_cmpBuf,0,sizeof(s_cmpBuf));
         } else if(ks.del && s_cmpLen>0){
@@ -1183,12 +1317,18 @@ void handleKeys(){
 
     if(s_view==V_DM){
         if(esc){ s_view=V_CHAT; s_pane=PANE_LEFT; return; }
-        if(keyUp() && s_dmScroll>0) s_dmScroll--;
-        if(keyDown() && s_dmN && s_dmScroll+1<s_dmN) s_dmScroll++;
-        for(char c:ks.word) if(c=='t'||c=='T'){
-            s_composeFrom=V_DM; s_view=V_COMPOSE;
-            s_cmpLen=0; memset(s_cmpBuf,0,sizeof(s_cmpBuf));
-            return;
+        int rows = bodyRows(105);
+        uint8_t maxTop = (s_dmN > rows) ? (uint8_t)(s_dmN - rows) : 0;
+        if(keyUp() && s_dmScroll>0) { s_dmScroll--; s_dmStick=false; }
+        else if(keyDown() && s_dmScroll < maxTop) {
+            s_dmScroll++;
+            if (s_dmScroll >= maxTop) s_dmStick = true;
+        } else {
+            for(char c:ks.word) if(c=='t'||c=='T'){
+                s_composeFrom=V_DM; s_view=V_COMPOSE;
+                s_cmpLen=0; memset(s_cmpBuf,0,sizeof(s_cmpBuf));
+                return;
+            }
         }
         return;
     }
@@ -1212,14 +1352,18 @@ void handleKeys(){
         else if(keyDown() && s_nodeScroll+1<s_nodeN) s_nodeScroll++;
         else if(ks.enter && !s_nodes[s_nodeScroll].isSelf && s_radioOk){
             dmLoad(s_nodes[s_nodeScroll].nodeNum);
-            s_dmScroll=0; s_view=V_DM; s_dmNew=0;
+            s_dmScroll=0; s_dmStick=true; s_view=V_DM; s_dmNew=0;
         }
         return;
     }
     if(s_pane==PANE_CENTER){
-        if(keyUp() && s_chatScroll>0) s_chatScroll--;
-        else if(keyDown() && s_chatN && s_chatScroll+1<s_chatN) s_chatScroll++;
-        else {
+        int rows = bodyRows(105);
+        uint8_t maxTop = (s_chatN > rows) ? (uint8_t)(s_chatN - rows) : 0;
+        if(keyUp() && s_chatScroll>0) { s_chatScroll--; s_chatStick=false; }
+        else if(keyDown() && s_chatScroll < maxTop) {
+            s_chatScroll++;
+            if (s_chatScroll >= maxTop) s_chatStick = true;
+        } else {
             for(char c:ks.word) if(c=='t'||c=='T'){
                 s_composeFrom=V_CHAT; s_view=V_COMPOSE;
                 s_cmpLen=0; memset(s_cmpBuf,0,sizeof(s_cmpBuf));
