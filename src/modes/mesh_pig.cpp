@@ -18,8 +18,10 @@
 
 #include "mesh_pig.h"
 #include "../board/board.h"
+#include "../core/app.h"
 #include "../core/config.h"
 #include "../storage/littlefs_ops.h"
+#include "../ui/display.h"
 #include "../ui/keys.h"
 
 #include <RadioLib.h>
@@ -867,24 +869,52 @@ static void drawCompose(M5Canvas& cv, int W, int H){
 // ════════════════════════════════════════════════════════════════════════════
 namespace MeshPig {
 
+size_t heapHeld() {
+    size_t n = 0;
+    if (s_nodes) n += 16 * sizeof(MeshNode);
+    if (s_chat) n += (size_t)MAX_CHAT * sizeof(Msg);
+    if (s_dm) n += (size_t)MAX_DM * sizeof(Msg);
+    if (s_hist) n += (size_t)PACKET_HISTORY_SIZE * sizeof(PktRecord);
+    if (s_txQ) n += 16 * sizeof(TxPkt);
+    if (s_radioModule) n += sizeof(Module);
+    if (s_radio) n += sizeof(SX1262);
+    return n;
+}
+
+static void meshOffScreen(const char* status) {
+    s_view = V_CHAT;
+    s_pane = PANE_CENTER;
+    snprintf(s_status, sizeof(s_status), "%s", status);
+}
+
 void start(){
     if(s_run) return;
     s_chatStick = true;
     s_dmStick = true;
     s_listenSince = (uint32_t)millis();
     s_radioError[0] = '\0';
+    // Off in SET: no buffers, no SPI, no GPIO. The original Cardputer
+    // has neither the cap nor a free GPIO5.
     if (!Config::mesh().enabled) {
-        snprintf(s_status,sizeof(s_status),"MESH OFF");
-        s_view=V_CHAT; s_pane=PANE_CENTER;
-        s_run=true;
+        meshOffScreen("MESH OFF");
+        return;
+    }
+    if (!Board::isAdv()) {
+        Config::mesh().enabled = false;
+        Config::save();
+        snprintf(s_radioError, sizeof(s_radioError), "ADV CAP ONLY");
+        meshOffScreen("MESH: ADV CAP ONLY");
+        Display::showToast("ADV CAP ONLY", 1100);
+        Serial.println("[MESH] original board, heap not taken");
         return;
     }
     if (!allocateMeshResources()) {
+        Config::mesh().enabled = false;
+        Config::save();
         snprintf(s_radioError,sizeof(s_radioError),"Mesh buffers allocation failed");
-        snprintf(s_status,sizeof(s_status),"MESH: OUT OF MEMORY");
-        Serial.println("[MESH] buffer allocation failed");
-        s_view=V_CHAT; s_pane=PANE_CENTER;
-        s_run=true;
+        meshOffScreen("MESH: OUT OF MEMORY");
+        Serial.printf("[MESH] buffer allocation failed heap=%u\n", (unsigned)ESP.getFreeHeap());
+        Display::showToast("LOW MEM", 1200);
         return;
     }
     s_nodeN=0; s_chatN=0; s_chatHead=0; s_chatNew=0;
@@ -899,10 +929,8 @@ void start(){
     if (!expandPsk(Config::mesh().psk,s_aesKey,s_aesKeyLen)) {
         freeMeshResources();
         snprintf(s_radioError,sizeof(s_radioError),"Invalid channel PSK");
-        snprintf(s_status,sizeof(s_status),"MESH: INVALID PSK");
+        meshOffScreen("MESH: INVALID PSK");
         Serial.println("[MESH] invalid PSK");
-        s_view=V_CHAT; s_pane=PANE_CENTER;
-        s_run=true;
         return;
     }
     s_chanHash=channelHash(Config::mesh().channel,s_aesKey,s_aesKeyLen);
@@ -928,23 +956,31 @@ void start(){
         snprintf(s_status,sizeof(s_status),"MESH: %.52s",
                  s_radioError[0] ? s_radioError : "RADIO ERROR");
         s_view=V_CHAT; s_pane=PANE_CENTER;
-        s_run=true;
         return;
     }
     s_lastNodeBcast=0; s_run=true;
     snprintf(s_status,sizeof(s_status),"MESH %s !%08lx",
              s_radioOk?"OK":"NO RADIO",(unsigned long)s_nodeNum);
+    Serial.printf("[MESH] took %u heap=%u\n",
+                  (unsigned)heapHeld(), (unsigned)ESP.getFreeHeap());
 }
 
 void stop(){
+    if (!s_run && !s_nodes && !s_chat && !s_dm && !s_hist && !s_txQ && !s_radio) return;
+    size_t held = heapHeld();
     s_run=false; s_radioOk=false; s_rs=RS_IDLE;
     freeMeshResources();
+    if (held)
+        Serial.printf("[MESH] returned %u heap=%u\n",
+                      (unsigned)held, (unsigned)ESP.getFreeHeap());
 }
 
 bool isRunning(){ return s_run; }
 
 void update(){
     if(!s_run||!s_radioOk) return;
+    // SD shares this SPI bus. Keep its CS high for the LoRa transfer.
+    digitalWrite(12, HIGH);
     uint32_t now=(uint32_t)millis();
 
     // NodeInfo broadcast every 15 min
@@ -1281,7 +1317,12 @@ static bool keyUp()        { return M5Cardputer.Keyboard.keysState().fn || keyHa
 static bool keyDown()      { return keyHas('/'); }
 
 void handleKeys(){
-    if(!s_run) return;
+    if (App::windowHidden()) return;
+    if(!s_run) {
+        static bool offWas = false;
+        if (keyNewPress(offWas) && keyEsc()) App::setMode(AppMode::MENU);
+        return;
+    }
     // App::loop already reads isChange() for the dimmer and for
     // Backspace-minimize. A second isChange() here is always false,
     // so the mesh keys never ran. keyNewPress keeps its own latch.
@@ -1343,7 +1384,8 @@ void handleKeys(){
     }
     if(esc){
         if(s_pane!=PANE_CENTER){ s_pane=PANE_CENTER; return; }
-        MeshPig::stop();
+        // The screen closes. Heap stays until SET or TASKS turns MESH off.
+        App::setMode(AppMode::MENU);
         return;
     }
 

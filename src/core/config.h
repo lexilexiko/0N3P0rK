@@ -276,13 +276,13 @@ struct MeshConfig {
     bool     rxBoost          = false;
 };
 
-static const uint8_t HOTKEY_COUNT = 20;
-// 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP; 18 = DESK; 19 = GPS.
-// DESK and GPS stay unbound until the user picks a key.
+static const uint8_t HOTKEY_COUNT = 21;
+// 0-9 old binds; 10-16 empty (user assigns); 17 = SNAP; 18 = DESK; 19 = GPS; 20 = MESH.
+// DESK, GPS, and MESH stay unbound until the user picks a key.
 struct HotkeyConfig {
     char key[HOTKEY_COUNT] = {
         'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f',
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
 };
 static const uint8_t HOTKEY_RADIO = 8;

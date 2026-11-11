@@ -39,8 +39,10 @@ namespace MeshPig {
 // Lifecycle
 void start();
 void stop();
-void update();          // call every loop()
+void update();          // call every loop(), including while another screen is open
 bool isRunning();
+// Bytes held in heap. Zero unless MESH is enabled and the radio came up.
+size_t heapHeld();
 
 // Node table (ring, max 16)
 uint8_t   nodeCount();

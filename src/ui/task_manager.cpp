@@ -17,6 +17,8 @@
 #include "../modes/mp3player.h"
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
+#include "../modes/mesh_pig.h"
+#include "../core/config.h"
 #include "../storage/littlefs_ops.h"
 #include "../sync/pwncrack.h"
 #include "../sync/wpasec.h"
@@ -30,7 +32,7 @@ namespace {
 
 enum Row : uint8_t {
     RADIO, WIFI, BLE, IR, EVILPIG, PIGPASS, SPECTRUM, USBSD, FILEMGR, XFER,
-    BADUSB, WPA_SYNC, PWN_SYNC, LOOT, MP3, INSPECTOR, DESK, GPS, STOP_ALL, ROW_COUNT
+    BADUSB, WPA_SYNC, PWN_SYNC, LOOT, MP3, INSPECTOR, DESK, GPS, MESH, STOP_ALL, ROW_COUNT
 };
 
 static constexpr uint8_t VISIBLE_ROWS = 5;
@@ -50,7 +52,7 @@ const char* rowName(Row row) {
     static const char* const names[] = {
         "RADIO", "WIFI", "BLE", "IR", "EVILPIG", "PIGPASS", "SPECTRUM",
         "USB SD", "FILES", "XFER", "BADUSB", "WPA-SEC", "PWNCRACK",
-        "LOOT", "MP3", "INSPECT", "DESK", "GPS", "STOP ALL"
+        "LOOT", "MP3", "INSPECT", "DESK", "GPS", "MESH", "STOP ALL"
     };
     return names[row];
 }
@@ -76,6 +78,7 @@ bool rowActive(Row row) {
         case INSPECTOR: return InspectorPig::isRunning();
         case DESK: return DeskMode::isRunning();
         case GPS: return GpsMode::isRunning();
+        case MESH: return MeshPig::isRunning();
         case ROW_COUNT: return false;
     }
     return false;
@@ -173,6 +176,14 @@ void rowInfo(Row row, char* out, size_t n) {
                 snprintf(out, n, "%s", status);
             break;
         }
+        case MESH: {
+            size_t held = MeshPig::heapHeld();
+            if (held)
+                snprintf(out, n, "HEAP %uK", (unsigned)((held + 1023) / 1024));
+            else
+                snprintf(out, n, "ON");
+            break;
+        }
         case STOP_ALL:
             snprintf(out, n, "ACTION");
             break;
@@ -206,6 +217,13 @@ void stopRow(Row row) {
         case INSPECTOR: if (InspectorPig::isRunning()) InspectorPig::stop(); break;
         case DESK: if (DeskMode::isRunning()) DeskMode::stop(); break;
         case GPS: if (GpsMode::isRunning()) GpsMode::stop(); break;
+        case MESH:
+            if (MeshPig::isRunning()) {
+                Config::mesh().enabled = false;
+                Config::save();
+                MeshPig::stop();
+            }
+            break;
         case STOP_ALL:
             Cap::stop();
             if (BlePigMode::isRunning()) BlePigMode::stop();
@@ -221,6 +239,11 @@ void stopRow(Row row) {
             if (InspectorPig::isRunning()) InspectorPig::stop();
             if (DeskMode::isRunning()) DeskMode::stop();
             if (GpsMode::isRunning()) GpsMode::stop();
+            if (MeshPig::isRunning()) {
+                Config::mesh().enabled = false;
+                Config::save();
+                MeshPig::stop();
+            }
             if (LootMenu::isActive()) LootMenu::hide();
             if (!networkSyncActive()) {
                 WiFi.disconnect(true, false);

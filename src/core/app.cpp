@@ -75,6 +75,8 @@ void begin() {
     pinMode(0, INPUT_PULLUP);
     s_g0Was = digitalRead(0) == LOW;
     if (Config::gps().enabled) GpsMode::start();
+    // MESH heap is taken only while the SET toggle is on, and only on ADV.
+    if (Config::mesh().enabled) MeshPig::start();
 }
 
 AppMode mode() { return s_mode; }
@@ -125,7 +127,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::INSPECTOR && InspectorPig::isRunning()) InspectorPig::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     if (s_mode == AppMode::DESK && DeskMode::isRunning()) DeskMode::stop();
-    if (s_mode == AppMode::MESH && MeshPig::isRunning()) MeshPig::stop();
+    // MESH keeps its heap when the screen closes. SET or TASKS releases it.
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -318,6 +320,7 @@ void loop() {
     if (g0 && !s_g0Was) Display::toggleScreenPower();
     s_g0Was = g0;
     GpsMode::update();
+    MeshPig::update();
     if (Display::isScreenForcedOff()) return;
 
     // Any key wakes the dimmed backlight (not only isChange, not only FARM).
@@ -399,9 +402,7 @@ void loop() {
     } else if (s_mode == AppMode::GPS) {
         if (!GpsMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::MESH) {
-        MeshPig::update();
         MeshPig::handleKeys();
-        if (!MeshPig::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();

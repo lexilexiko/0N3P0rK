@@ -326,6 +326,7 @@ static const Item KEYS[] = {
     {"SNAP",     Kind::BIND, 17, 0, 0, 0},
     {"DESK",     Kind::BIND, 18, 0, 0, 0},
     {"GPS",      Kind::BIND, 19, 0, 0, 0},
+    {"MESH",     Kind::BIND, 20, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -457,7 +458,8 @@ static const char* const H_KEYS[] = {
     "OPEN TASK MANAGER.",
     "SCREENSHOT.",
     "OPEN DESK.",
-    "OPEN GPS."
+    "OPEN GPS.",
+    "OPEN MESH."
 };
 
 struct NetRow {
@@ -1335,13 +1337,17 @@ static bool setValue(const Item& it, int v) {
         MeshConfig& mc = Config::mesh();
         switch (it.id) {
             case 0:
-                mc.enabled = (v != 0);
+                if (!v) {
+                    mc.enabled = false;
+                    Config::save();
+                    if (MeshPig::isRunning()) MeshPig::stop();
+                    return true;
+                }
+                mc.enabled = true;
                 Config::save();
-                if (mc.enabled && !MeshPig::isRunning())
-                    MeshPig::start();
-                else if (!mc.enabled && MeshPig::isRunning())
-                    MeshPig::stop();
-                return true;
+                if (!MeshPig::isRunning()) MeshPig::start();
+                // Non-ADV and out-of-memory roll the flag back off.
+                return Config::mesh().enabled;
             case 1: {
                 uint8_t ri = (uint8_t)v;
                 if (ri >= MESH_REGION_N) ri = 0;
@@ -1466,7 +1472,7 @@ const char* bottomHint() {
         if (s_editing) return "UP/DN CHANGE  ENTER DONE  ESC BACK";
         if (showHelp) {
             static const char* const H_MESH[] = {
-                "TOGGLE THE MESH RADIO.",
+                "ON TAKES HEAP. OFF GIVES IT BACK.",
                 "REGION. MUST MATCH THE OTHER NODE.",
                 "MODEM PRESET. LONGFAST IS THE DEFAULT.",
                 "TX POWER. CAPPED BY THE REGION.",
@@ -2011,8 +2017,10 @@ void update() {
             s_textTarget = 6;  // 6 → mesh psk
             SFX::play(SFX::MENU_CLICK);
         } else if (s_page == SettingsPage::MESH && cur.id == 5) {
-            // Open MESH mode directly
-            if (!MeshPig::isRunning()) MeshPig::start();
+            if (!Config::mesh().enabled) {
+                Display::showToast("TURN MESH ON", 900);
+                return;
+            }
             App::setMode(AppMode::MESH);
             SFX::play(SFX::MENU_CLICK);
         }
