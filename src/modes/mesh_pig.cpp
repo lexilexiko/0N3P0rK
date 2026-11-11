@@ -291,6 +291,7 @@ static uint8_t  s_field = 0;
 static bool     s_fieldAscii = false;
 static uint8_t  s_fieldMax = 47;
 static bool     s_holdUi = false;        // radio restart keeps the open tab
+static bool     s_swallowEnter = false;  // Enter that opened MESH must not enter a tab
 static uint8_t  s_lang = 0;              // 0 EN, 1 RU, 2 UA. This session only.
 static uint8_t  s_nodeScroll=0;
 static uint8_t  s_chatScroll=0;
@@ -922,6 +923,9 @@ static void meshOffScreen(const char* status) {
 }
 
 void start(){
+    // setMode calls start on every open. Already-running returns below,
+    // so the opener's Enter is dropped here, not only on a fresh radio.
+    s_swallowEnter = true;
     if(s_run) return;
     s_chatStick = true;
     s_dmStick = true;
@@ -1118,6 +1122,13 @@ static bool keyHas(char a) {
         if (c == a) return true;
     }
     return false;
+}
+
+// Comma and slash move the tab from the strip and from inside a page.
+// A DM closes onto the new tab. Text boxes keep those keys for letters.
+static void moveTab(int dir) {
+    s_tab = (uint8_t)((s_tab + (dir < 0 ? 3 : 1)) % 4);
+    if (s_layer == LY_DM) s_layer = LY_PAGE;
 }
 
 static void radioRestart() {
@@ -1724,8 +1735,8 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
         }
     }
     int dir = 0;
-    if (keyHas(';') || keyHas(',')) dir = -1;
-    else if (keyHas('.') || keyHas('/')) dir = 1;
+    if (keyHas(';')) dir = -1;
+    else if (keyHas('.')) dir = 1;
     if (!dir) return;
     uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
@@ -1742,9 +1753,9 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
 static void peopleKeys(const Keyboard_Class::KeysState& ks) {
     if (!s_nodes || !s_nodeN) return;
     if (s_nodeScroll >= s_nodeN) s_nodeScroll = (uint8_t)(s_nodeN - 1);
-    if (keyHas(';') || keyHas(',')) {
+    if (keyHas(';')) {
         if (s_nodeScroll > 0) s_nodeScroll--;
-    } else if (keyHas('.') || keyHas('/')) {
+    } else if (keyHas('.')) {
         if (s_nodeScroll + 1 < s_nodeN) s_nodeScroll++;
     } else if (ks.enter && !s_nodes[s_nodeScroll].isSelf) {
         if (!s_run || !s_radioOk) {
@@ -1769,8 +1780,9 @@ static void setKeys(const Keyboard_Class::KeysState& ks) {
         if (s_setRow + 1 < SET_N) s_setRow++;
         return;
     }
-    if (keyHas(',')) { bumpSet(-1); return; }
-    if (keyHas('/')) { bumpSet(1); return; }
+    // Shift+, and Shift+.  Plain comma and slash already moved the tab.
+    if (keyHas('<')) { bumpSet(-1); return; }
+    if (keyHas('>')) { bumpSet(1); return; }
     if (!ks.enter) return;
     if (s_setRow == 0 || s_setRow == 10) {
         bool on = (s_setRow == 0) ? Config::mesh().enabled : Config::mesh().rxBoost;
@@ -1782,6 +1794,12 @@ static void setKeys(const Keyboard_Class::KeysState& ks) {
 
 void handleKeys() {
     if (App::windowHidden()) return;
+    // Menu Enter is still down on the next frame. keyNewPress would treat
+    // that held key as a fresh press and fall straight into CHAT.
+    if (s_swallowEnter) {
+        if (M5Cardputer.Keyboard.keysState().enter) return;
+        s_swallowEnter = false;
+    }
     static bool keyWas = false;
     if (!keyNewPress(keyWas)) return;
     auto ks = M5Cardputer.Keyboard.keysState();
@@ -1804,10 +1822,10 @@ void handleKeys() {
         App::setMode(AppMode::MENU);
         return;
     }
+    if (keyHas(',')) { moveTab(-1); return; }
+    if (keyHas('/')) { moveTab(1); return; }
     if (s_layer == LY_STRIP) {
-        if (keyHas(',')) s_tab = (uint8_t)((s_tab + 3) % 4);
-        else if (keyHas('/')) s_tab = (uint8_t)((s_tab + 1) % 4);
-        else if (ks.enter) s_layer = LY_PAGE;
+        if (ks.enter) s_layer = LY_PAGE;
         return;
     }
     if (s_layer == LY_DM || s_tab == 0) { chatKeys(ks, s_layer == LY_DM); return; }
@@ -1822,13 +1840,13 @@ const char* bottomHint() {
     if (s_layer == LY_WRITE) rest = "FN LANG  ENT SEND  BKSP  ESC";
     else if (s_layer == LY_FIELD)
         rest = s_fieldAscii ? "ENT SAVE  BKSP  ESC" : "FN LANG  ENT SAVE  BKSP  ESC";
-    else if (s_layer == LY_DM) rest = "T WRITE  ;/. MOVE  ESC BACK";
-    else if (s_layer == LY_PAGE && s_tab == 0) rest = "T WRITE  ;/. MOVE  ESC BACK";
+    else if (s_layer == LY_DM) rest = ",/ TAB  T WRITE  ;/. MOVE  ESC";
+    else if (s_layer == LY_PAGE && s_tab == 0) rest = ",/ TAB  T WRITE  ;/. MOVE  ESC";
     else if (s_layer == LY_PAGE && s_tab == 1) {
         bool self = s_nodes && s_nodeN && s_nodeScroll < s_nodeN && s_nodes[s_nodeScroll].isSelf;
-        rest = self ? ";/. MOVE  ESC BACK" : "ENT CHAT  ;/. MOVE  ESC BACK";
-    } else if (s_layer == LY_PAGE && s_tab == 2) rest = "ESC BACK";
-    else if (s_layer == LY_PAGE) rest = "ENT EDIT  ,/ CHG  ;/. MOVE  ESC";
+        rest = self ? ",/ TAB  ;/. MOVE  ESC BACK" : ",/ TAB  ENT CHAT  ;/. MOVE  ESC";
+    } else if (s_layer == LY_PAGE && s_tab == 2) rest = ",/ TAB  ESC BACK";
+    else if (s_layer == LY_PAGE) rest = ",/ TAB  <> CHG  ;/. MOVE  ENT";
     snprintf(b, sizeof(b), "%s  %s", langName(), rest);
     return b;
 }
