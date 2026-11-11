@@ -1027,6 +1027,9 @@ void Display::drawBottomBar() {
             case AppMode::GPS:
                 GpsMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::MESH:
+                strncpy(left, MeshPig::bottomHint(), sizeof(left) - 1);
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -1063,6 +1066,9 @@ void Display::drawBottomBar() {
                 break;
             case AppMode::TASKS:
                 strncpy(left, "^/v SELECT  ENT STOP  ESC BACK", sizeof(left) - 1);
+                break;
+            case AppMode::MESH:
+                strncpy(left, MeshPig::bottomHint(), sizeof(left) - 1);
                 break;
             default:
                 break;

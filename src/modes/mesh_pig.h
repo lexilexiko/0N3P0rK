@@ -63,13 +63,15 @@ const char* selfShortName();
 //   to = nodeNum    → direct message
 bool sendText(const char* text, uint32_t to = 0xFFFFFFFFu);
 
-// Draw the MESH mode screen onto canvas (full screen, 240×135)
+// Draw the MESH screen onto the 240x105 main canvas.
 void draw(M5Canvas& canvas);
 
-// Handle keyboard input (compose & send messages, ESC to exit)
+// Handle keyboard input. Esc on the tab strip leaves the screen.
 void handleKeys();
-// True while the compose box is open. Backspace deletes a letter then.
+// True while a text box is open. Backspace deletes one letter then.
 bool isComposing();
+// ASCII hint for the real bottom bar.
+const char* bottomHint();
 
 // Status summary for the status bar
 const char* getStatusLine();
