@@ -1,4 +1,5 @@
 // mesh_pig.h — Meshtastic-compatible LoRa mesh for 0N3P0rK
+// Modem: mesh_pig.cpp. Messages and keymap: mesh_text.cpp. Screen: mesh_ui.cpp.
 // SX1262 (CAP LoRa-1262) via RadioLib.
 // OTA protocol: 16-byte Meshtastic header + AES-128-CTR(nanopb MeshPacket payload).
 // LongFast EU868: 869.525 MHz, SF11, BW250 kHz, CR4/5, sync 0x2B
