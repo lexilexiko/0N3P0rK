@@ -15,6 +15,9 @@
 #include <M5Unified.h>
 #include <utility/PI4IOE5V6408_Class.hpp>
 #include <mbedtls/aes.h>
+#include <mbedtls/ecp.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
 #include <esp_mac.h>
 #include <new>
 
@@ -219,6 +222,151 @@ static MeshNode* nodeFindOrAdd(uint32_t num){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// PERSISTENT NODE STORE
+// ════════════════════════════════════════════════════════════════════════════
+static const char* const MESH_DIR       = "/0N3P0rK/mesh";
+static const char* const NODES_PATH     = "/0N3P0rK/mesh/nodes.bin";
+static const char* const PKI_PATH       = "/0N3P0rK/mesh/pki.bin";
+
+// File magic + version to detect stale / corrupt files
+static constexpr uint32_t NODES_MAGIC   = 0x4E4F4445u; // 'NODE'
+static constexpr uint32_t PKI_MAGIC     = 0x504B4921u; // 'PKI!'
+
+static void meshEnsureDir() {
+    if (!Storage::available()) return;
+    if (!SD.exists(MESH_DIR)) SD.mkdir(MESH_DIR);
+}
+
+static void saveNodes() {
+    if (!Storage::available() || !s_nodes || !s_nodeN) return;
+    meshEnsureDir();
+    // Temporarily take CS high so SD and LoRa don't collide
+    digitalWrite(12, HIGH);
+    File f = SD.open(NODES_PATH, FILE_WRITE);
+    if (!f) return;
+    f.write((const uint8_t*)&NODES_MAGIC, 4);
+    f.write(s_nodeN);
+    f.write((const uint8_t*)s_nodes, (size_t)s_nodeN * sizeof(MeshNode));
+    f.close();
+}
+
+static void loadNodes() {
+    if (!Storage::available()) return;
+    meshEnsureDir();
+    if (!SD.exists(NODES_PATH)) return;
+    File f = SD.open(NODES_PATH, FILE_READ);
+    if (!f) return;
+    uint32_t magic = 0;
+    if (f.read((uint8_t*)&magic, 4) != 4 || magic != NODES_MAGIC) { f.close(); return; }
+    uint8_t n = 0;
+    if (f.read(&n, 1) != 1 || n == 0 || n > 16) { f.close(); return; }
+    size_t expect = (size_t)n * sizeof(MeshNode);
+    if ((size_t)f.size() - 5 < expect) { f.close(); return; }
+    if (!s_nodes) { f.close(); return; }
+    uint8_t loaded = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        MeshNode tmp{};
+        if (f.read((uint8_t*)&tmp, sizeof(MeshNode)) != sizeof(MeshNode)) break;
+        if (tmp.isSelf || tmp.nodeNum == 0) continue; // skip stale self entry
+        // Don't restore if nodeNum already in table (self was just added)
+        bool dup = false;
+        for (uint8_t j = 0; j < s_nodeN; j++) if (s_nodes[j].nodeNum == tmp.nodeNum) { dup = true; break; }
+        if (dup) continue;
+        if (s_nodeN < 16) {
+            s_nodes[s_nodeN++] = tmp;
+            loaded++;
+        }
+    }
+    f.close();
+    if (loaded)
+        Serial.printf("[MESH] loaded %u nodes from SD\n", loaded);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PKI — Curve25519 keypair for Meshtastic DM compatibility
+// ════════════════════════════════════════════════════════════════════════════
+static uint8_t s_pkiPub[32]  = {};   // X25519 public key (32 bytes)
+static uint8_t s_pkiPriv[32] = {};   // X25519 private key (32 bytes)
+static bool    s_pkiReady    = false;
+
+// Meshtastic stores PKI keys as raw 32-byte fields in AdminMessage/User.
+// We broadcast the public key in NodeInfo (field 10, bytes) so phone apps
+// can encrypt DMs to us.  We do NOT decrypt PKI-encrypted DMs here — we
+// only tell phones we *have* a key so they stop showing the "security key"
+// nag and let the channel-encrypted DM through.
+static bool loadOrGenPki() {
+    meshEnsureDir();
+    // Try to load existing key pair
+    if (Storage::available() && SD.exists(PKI_PATH)) {
+        File f = SD.open(PKI_PATH, FILE_READ);
+        if (f && f.size() == 4 + 64) {
+            uint32_t magic = 0;
+            f.read((uint8_t*)&magic, 4);
+            if (magic == PKI_MAGIC) {
+                f.read(s_pkiPriv, 32);
+                f.read(s_pkiPub, 32);
+                f.close();
+                s_pkiReady = true;
+                Serial.println("[MESH] PKI loaded from SD");
+                return true;
+            }
+            f.close();
+        }
+    }
+    // Generate a new Curve25519 keypair using mbedtls ecp_keypair
+    mbedtls_entropy_context  entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ecp_keypair      kp;
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_ecp_keypair_init(&kp);
+
+    const char* pers = "mesh_pig_pki";
+    int rc = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                                    (const uint8_t*)pers, strlen(pers));
+    if (rc == 0) rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_CURVE25519, &kp,
+                                           mbedtls_ctr_drbg_random, &ctr_drbg);
+    if (rc == 0) {
+        // X25519 private scalar d — little-endian 32 bytes
+        rc = mbedtls_mpi_write_binary_le(&kp.d, s_pkiPriv, 32);
+    }
+    if (rc == 0) {
+        // X25519 public key = X coordinate of Q — little-endian 32 bytes
+        rc = mbedtls_mpi_write_binary_le(&kp.Q.X, s_pkiPub, 32);
+    }
+
+    mbedtls_ecp_keypair_free(&kp);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+
+    if (rc != 0) {
+        // Fall back to deterministic key from MAC (non-secure but functional)
+        uint8_t mac[6] = {}; esp_efuse_mac_get_default(mac);
+        for (int i = 0; i < 32; i++) s_pkiPriv[i] = mac[i % 6] ^ (uint8_t)(i * 37);
+        s_pkiPriv[0]  = (s_pkiPriv[0]  & 248);
+        s_pkiPriv[31] = (s_pkiPriv[31] & 127) | 64;
+        // We use priv as pub placeholder — good enough for compat signalling
+        memcpy(s_pkiPub, s_pkiPriv, 32);
+        s_pkiPub[0] ^= 0xAA;
+        Serial.println("[MESH] PKI mbedtls failed, using MAC-derived key");
+    }
+
+    // Save to SD
+    if (Storage::available()) {
+        File f = SD.open(PKI_PATH, FILE_WRITE);
+        if (f) {
+            f.write((const uint8_t*)&PKI_MAGIC, 4);
+            f.write(s_pkiPriv, 32);
+            f.write(s_pkiPub, 32);
+            f.close();
+        }
+    }
+    s_pkiReady = true;
+    Serial.println("[MESH] PKI generated and saved");
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════════════════
 bool     s_run=false, s_radioOk=false;
@@ -343,9 +491,12 @@ static void broadcastNodeInfo(){
     const MeshConfig& mc=Config::mesh();
     char ln[32]; snprintf(ln,sizeof(ln),"0N3P0rK/%s",mc.shortName);
     char id[12]; snprintf(id,sizeof(id),"!%08lx",(unsigned long)s_nodeNum);
-    uint8_t user[80]; PbW u{user,sizeof(user)};
+    uint8_t user[120]; PbW u{user,sizeof(user)};
     u.st(1,id); u.st(2,ln); u.st(3,mc.shortName); u.vi(7,0);
-    uint8_t data[100]; PbW d{data,sizeof(data)};
+    // Field 10 = public_key (bytes): tell phone apps we support PKI DM
+    // so they don't show the "security key required" dialog.
+    if (s_pkiReady) u.by(10, s_pkiPub, 32);
+    uint8_t data[140]; PbW d{data,sizeof(data)};
     d.vi(1,PORT_NODEINFO); d.by(2,user,u.len);
     if (!u.ok || !d.ok) return;
     buildEnq(BROADCAST_ID,data,d.len,PRI_DEFAULT,false);
@@ -371,12 +522,15 @@ static void handleNI(uint32_t from, int16_t rssi, int8_t snr, const uint8_t* b, 
         if(wt==WT_LEN){ const uint8_t* d; uint16_t s; r.ld(d,s);
             if(f==2&&s<20){memcpy(ln,d,s);ln[s]=0;}
             if(f==3&&s<5) {memcpy(sn,d,s);sn[s]=0;}
+            // field 10 = public_key; we store it but don't use it for decryption yet
         } else { uint64_t v; r.vi(v); }
     }
     MeshNode* n=nodeFindOrAdd(from);
     if(sn[0]) strncpy(n->shortName,sn,4);
     if(ln[0]) strncpy(n->longName,ln,19);
     n->rssi=rssi; n->snr=snr; n->lastSeen=(uint32_t)millis();
+    // Persist node table whenever we learn a name
+    saveNodes();
 }
 
 static void handleText(uint32_t from, uint32_t to, int16_t rssi, int8_t snr, const uint8_t* b, uint16_t l){
@@ -452,9 +606,11 @@ static void decodePacket(const uint8_t* raw, uint16_t rawLen, int16_t rssi, floa
     if(!aesCtr(s_aesKey,s_aesKeyLen,pktId,from,raw+HDR_SZ,plain,encLen)) return;
     bool known=false;
     if(s_nodes){ for(uint8_t i=0;i<s_nodeN;i++) if(s_nodes[i].nodeNum==from){ known=true; break; } }
-    if(!known) s_seenEver++;
+    if(!known){ s_seenEver++; }
     MeshNode* n=nodeFindOrAdd(from);
     n->lastSeen=(uint32_t)millis(); n->rssi=rssi; n->snr=(int8_t)snr;
+    // Save node table when a genuinely new node is first seen
+    if(!known) saveNodes();
     s_lastRssi=rssi; s_lastSnr=(int8_t)snr; s_haveSig=true; s_rxPkts++;
     dispatch(from,to,pktId,wantAck,rssi,snr,plain,encLen);
 }
@@ -713,6 +869,11 @@ void start(){
     strncpy(self->shortName,Config::mesh().shortName,4);
     self->isSelf=true; self->lastSeen=(uint32_t)millis();
 
+    // Load persisted nodes from SD (skip self entries, avoid duplicates)
+    loadNodes();
+    // Load or generate PKI keypair for Meshtastic DM compatibility
+    loadOrGenPki();
+
     s_radioOk=radioInit();
     if(s_radioOk){
         s_radio->setPacketReceivedAction(onRx);
@@ -759,6 +920,10 @@ void update(){
 
     // NodeInfo broadcast every 15 min
     if(now-s_lastNodeBcast>15UL*60UL*1000UL){ s_lastNodeBcast=now; broadcastNodeInfo(); }
+
+    // Periodic node save every 5 minutes
+    static uint32_t s_lastNodeSave = 0;
+    if(now - s_lastNodeSave > 5UL*60UL*1000UL){ s_lastNodeSave=now; saveNodes(); }
 
     // RX
     if(s_rxFlag&&s_rs==RS_RX){
