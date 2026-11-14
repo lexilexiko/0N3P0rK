@@ -13,8 +13,9 @@ For the chronological list of changes, see the
 Secret menu codes are **not** listed here (keep them private).
 
 > **Release note:** version **1.4.3b(Mesh)** adds Meshtastic on the Cardputer
-> ADV LoRa cap: channel chat, direct messages with a public key, and SD
-> storage under `/PigMesh`.
+> ADV LoRa cap. Channel chat and direct messages stay separate, the mesh
+> screen uses the same keys and menu style as the rest of the pig, and
+> settings plus conversations live on the SD card under `/PigMesh`.
 
 ---
 
@@ -713,42 +714,65 @@ Packet buffers and the radio driver are allocated only while mesh is enabled.
 **TASKS** or the MESH toggle stops the radio and returns that memory. Leaving
 the mesh screen with `ESC` does not stop it.
 
-Open **CONNECT → MESH**. The other node must use the same region, modem
-preset, channel name, and PSK. The default is one channel: **LongFast**,
-**EU868**, the Meshtastic default PSK, and short name **PIG**. An empty
-channel becomes LongFast, an empty name becomes PIG, and an empty PSK becomes
-the default. Frequency is chosen from the region unless a value from 137 to
-960 MHz is set.
+**SET → MESH** is the mesh setup page. It uses the same large rows, title, and
+font as RADIO and the other settings pages. **OPEN** there, or
+**CONNECT → MESH**, opens the mesh screen. The other node must use the same
+region, modem preset, channel name, and PSK. The default is one channel:
+**LongFast**, **EU868**, the Meshtastic default PSK, and short name **PIG**.
+An empty channel becomes LongFast, an empty name becomes PIG, and an empty PSK
+becomes the default. Frequency is chosen from the region unless a value from
+137 to 960 MHz is set. These settings are also copied to `/PigMesh/cfg.bin`,
+so a flash that clears NVS brings the same channel back.
 
 | Tab | What it shows |
 | --- | --- |
-| **CHAT** | Channel messages, plus direct messages sent to this pig |
-| **PEOPLE** | Nodes this radio has heard. `ENT` opens a direct chat |
+| **CHAT** | The channel. Turns yellow when a channel message is waiting |
+| **PEOPLE** | Nodes this radio has heard. A waiting direct message turns the tab yellow, draws an envelope, and marks that row `SMS` |
 | **RADIO** | This node. The `you` line ends with `KEY` or `NO KEY` |
-| **SET** | MESH, region, modem, power, hops, slot, frequency, channel, name, PSK, RX boost |
+| **SET** | The same knobs as **SET → MESH**, including chat letter size |
 
-| Key | Action |
-| --- | --- |
-| `,` / `/` | Previous / next tab, including inside a page |
-| `ENT` | Open the highlighted tab. On SET, toggle MESH or RX BOOST, or open a text field |
-| `ESC` | Back one level. From the tab strip, return to the menu |
-| `;` / `.` | Move up / down |
-| Shift+`,` / Shift+`.` | Change the selected SET value |
-| `T` | Write a channel message, or a direct message when a person is open |
-| `FN` | Cycle **EN / RU / UA** for this session while composing |
-| `BKSP` | Delete one character while composing. Otherwise minimize |
+A direct message to this pig stays in that person's chat. It is not copied
+into the channel. Other people's direct messages are ignored. Opening the
+channel or that person's chat clears its unread mark. A short ring plays when
+a message arrives while mesh is running in the background, including on the
+farm. The ring stays quiet when that conversation is already on screen.
+
+| Bar | Key | Action |
+| --- | --- | --- |
+| `</>` | `,` / `/` | Previous / next tab, on the strip and inside a page |
+| `^/v` | `;` / `.` | Move up / down |
+| `<>` | Shift+`,` / Shift+`.` | Change the selected SET value |
+| `ENT` | Enter | Open the tab. Inside CHAT or a person's chat, write. Enter again sends |
+| `ESC` | Esc | Back one level. From the tab strip, return to the menu. The radio keeps running |
+| `BKSP` | Backspace | Delete one letter while writing. On PEOPLE, delete the selected person. Otherwise minimize |
+| `FN` | Fn | Cycle **EN / RU / UA** for this session |
+
+The writer keeps a large key map on the bottom. Small letters are shown until
+Shift or Caps Lock is held, then the capitals. Typed text stays above the map.
+Frequency and PSK editors stay ASCII. The bottom bar is prefixed with
+**EN**, **RU**, or **UA**.
+
+**FONT** is **S**, **M**, or **L**. **S** draws each message on one small
+line. **M** keeps the name small and the message double size, about three
+messages on screen. **L** is the largest, about two messages. The screen
+scrolls. The log itself holds 32 channel lines, 16 direct messages per
+person, and 16 people. When a list is full, the oldest entry drops. On
+PEOPLE, Backspace deletes someone else and that person's direct-message file.
+You cannot delete yourself.
 
 Direct messages use the other node's public key. Channel chat stays on the
 channel PSK. This pig sends its own public key in NodeInfo, answers a NodeInfo
 request addressed to it, and repeats that announcement after start. When
 **RADIO** shows `KEY`, the other node can store the key and a direct message
 can be sent. `NO KEY` means this pig has no key yet, so the other node will
-refuse the direct message.
+refuse the direct message. A yellow `switch off  short range` line means the
+antenna-switch supply did not answer. LoRa can still be up.
 
-Heard nodes, the channel conversation, direct messages, and the key are saved
-on the SD card under `/PigMesh` and restored on the next boot when the
-channel, region, and modem still match. Files under `/0N3P0rK` are not mesh
-data.
+Heard nodes, settings, the channel conversation, direct messages, and the key
+are saved under `/PigMesh`. The channel log is its own file for that channel,
+region, and modem, so switching channel does not wipe the previous one. An
+older `/PigMesh/chat.bin` is still read when those same settings match. Files
+under `/0N3P0rK` are not mesh data.
 
 This is one Meshtastic channel on the firmware's region and modem presets.
 The people list contains nodes this radio has heard. It is not a full
@@ -1023,9 +1047,11 @@ Mesh storage is a separate SD folder, not inside `/0N3P0rK`:
 
 ```text
 /PigMesh/
+  cfg.bin         mesh settings, restored after a flash clears NVS
   pki.bin         this node's public and private key
   nodes.bin       nodes this radio has heard
-  chat.bin        channel conversation for the saved channel
+  cHHRRMM.bin     channel log: hash, region, and modem, two hex digits each
+  chat.bin        older channel log, read when the same stamp still matches
   dm/             one direct-message file per node
 ```
 

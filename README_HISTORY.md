@@ -458,21 +458,34 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Added **MESH** for the Cardputer ADV with the CAP LoRa-1262 (SX1262). It
   stays off on the original Cardputer, and its packet buffers and radio driver
   are allocated only while the SET mesh toggle is on.
-- **CONNECT → MESH** opens the radio screen. **SET → MESH** and the SET tab
-  hold region, modem, channel, PSK, short name, frequency, power, hops, slot,
-  and RX boost. The default is one channel: LongFast, EU868, the Meshtastic
-  default PSK, and short name PIG.
-- **CHAT** shows channel text and direct messages addressed to this node.
-  **PEOPLE** lists nodes this radio has heard and opens a direct chat.
-  **RADIO** shows this node, with `KEY` or `NO KEY` on the `you` line.
+- **SET → MESH** uses the same large-row menu as the other settings pages.
+  **OPEN** there, or **CONNECT → MESH**, opens the radio screen. The SET tab
+  holds the same knobs: region, modem, channel, PSK, short name, frequency,
+  power, hops, slot, RX boost, and chat letter size. The default is one
+  channel: LongFast, EU868, the Meshtastic default PSK, and short name PIG.
+- **CHAT** is the channel only and turns yellow for an unread channel message.
+  **PEOPLE** lists heard nodes, turns yellow with an envelope for a waiting
+  direct message, and marks that row `SMS`. Enter opens that person's chat.
+  Direct messages are not copied into the channel. **RADIO** shows this node,
+  with `KEY` or `NO KEY` on the `you` line.
+- Enter writes, and Enter sends. The bottom bar uses the same hints as the
+  other menus: `</>` `^/v` `<>`, plus ENT, ESC, BKSP, and FN. Fn cycles
+  EN / RU / UA. The writer keeps a large key map on the bottom that follows
+  Shift and Caps Lock. Backspace on someone else in PEOPLE deletes that
+  person and their direct-message file.
+- Chat letters are **S**, **M**, or **L**. The screen scrolls. Storage holds
+  32 channel lines, 16 direct messages per person, and 16 people.
 - Direct messages use the other node's X25519 public key. Channel text stays
   on the channel PSK. The pig includes its public key in NodeInfo, answers a
-  NodeInfo request addressed to it, and announces again after start.
-- Heard nodes, the channel conversation, direct messages, and the key are
-  stored under `/PigMesh` and restored when the channel, region, and modem
-  still match. Other `/0N3P0rK` folders are left untouched.
-- Composing accepts EN, RU, and UA for the session. `ESC` leaves the screen
-  without stopping the radio. **TASKS** or the MESH toggle stops it and
-  returns the heap.
+  NodeInfo request addressed to it, and announces again after start. A short
+  ring plays when a message arrives unless that conversation is already on
+  screen.
+- Settings are saved in `/PigMesh/cfg.bin` and come back after a flash clears
+  NVS. Each channel log is its own file, so another channel does not wipe it.
+  An older `/PigMesh/chat.bin` is still read when the channel stamp matches.
+  Heard nodes, direct messages, and the key stay under `/PigMesh`. Other
+  `/0N3P0rK` folders are left untouched.
+- `ESC` leaves the screen without stopping the radio. **TASKS** or the MESH
+  toggle stops it and returns the heap.
 
 ---
