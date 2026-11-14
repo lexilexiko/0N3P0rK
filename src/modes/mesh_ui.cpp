@@ -4,6 +4,7 @@
 #include "mesh_pig.h"
 #include "mesh_priv.h"
 #include "mesh_glyph.h"
+#include "../audio/sfx.h"
 #include "../core/app.h"
 #include "../core/config.h"
 #include "../ui/display.h"
@@ -93,6 +94,9 @@ static bool     s_dmStick = true;
 static char     s_cmpBuf[48] = {};
 static uint8_t  s_cmpLen = 0;
 static uint32_t s_lastDraw = 0;
+static bool     s_chatAlert = false;
+static uint32_t s_dmUnread[16] = {};
+static uint8_t  s_dmUnreadN = 0;
 
 static const char* langName() {
     return s_lang == 1 ? "RU" : s_lang == 2 ? "UA" : "EN";
@@ -144,6 +148,67 @@ static int putLine(M5Canvas& cv, int y, int yMax, int w, const char* s, uint16_t
     return y + LH;
 }
 
+static bool dmIsUnread(uint32_t node) {
+    for (uint8_t i = 0; i < s_dmUnreadN; i++)
+        if (s_dmUnread[i] == node) return true;
+    return false;
+}
+
+static bool anyDmUnread() {
+    if (!s_nodes) return false;
+    for (uint8_t i = 0; i < s_dmUnreadN; i++) {
+        for (uint8_t j = 0; j < s_nodeN; j++) {
+            if (s_nodes[j].nodeNum == s_dmUnread[i] && !s_nodes[j].isSelf) return true;
+        }
+    }
+    return false;
+}
+
+static void markDmUnread(uint32_t node) {
+    if (!node || node == BROADCAST_ID || dmIsUnread(node)) return;
+    if (s_dmUnreadN >= 16) return;
+    s_dmUnread[s_dmUnreadN++] = node;
+}
+
+static void clearDmUnread(uint32_t node) {
+    for (uint8_t i = 0; i < s_dmUnreadN; i++) {
+        if (s_dmUnread[i] != node) continue;
+        s_dmUnread[i] = s_dmUnread[s_dmUnreadN - 1];
+        s_dmUnreadN--;
+        return;
+    }
+}
+
+static bool meshScreenUp() {
+    return App::mode() == AppMode::MESH && !App::windowHidden();
+}
+
+static bool viewingChat() {
+    if (!meshScreenUp()) return false;
+    if (s_layer == LY_PAGE && s_tab == 0) return true;
+    return s_layer == LY_WRITE && s_writeFrom != LY_DM && s_tab == 0;
+}
+
+static bool viewingDm(uint32_t peer) {
+    if (!meshScreenUp() || s_dmNode != peer) return false;
+    if (s_layer == LY_DM) return true;
+    return s_layer == LY_WRITE && s_writeFrom == LY_DM;
+}
+
+static void drawSmsMark(M5Canvas& cv, int x, int y, uint16_t fg) {
+    cv.drawRect(x, y, 7, 5, fg);
+    cv.drawLine(x, y, x + 3, y + 2, fg);
+    cv.drawLine(x + 6, y, x + 3, y + 2, fg);
+}
+
+void meshIncoming(bool dm, uint32_t peer) {
+    bool seen = dm ? viewingDm(peer) : viewingChat();
+    if (seen) return;
+    if (dm) markDmUnread(peer);
+    else s_chatAlert = true;
+    SFX::play(SFX::CALL_RING);
+}
+
 namespace MeshPig {
 
 void uiArmOpen() { s_swallowEnter = true; }
@@ -155,6 +220,8 @@ void uiReset() {
     s_layer = LY_STRIP;
     s_setRow = 0;
     s_setScroll = 0;
+    s_chatAlert = false;
+    s_dmUnreadN = 0;
 }
 
 void uiClearNav() {
@@ -218,6 +285,7 @@ static bool keyHas(char a) {
 static void moveTab(int dir) {
     s_tab = (uint8_t)((s_tab + (dir < 0 ? 3 : 1)) % 4);
     if (s_layer == LY_DM) s_layer = LY_PAGE;
+    if (s_layer == LY_PAGE && s_tab == 0) s_chatAlert = false;
 }
 
 static void radioRestart() {
@@ -236,7 +304,8 @@ static void drawTabs(M5Canvas& cv, int w) {
         bool on = (i == (int)s_tab);
         uint16_t bg = on ? (uint16_t)COL_HDR : (uint16_t)COL_HDR2;
         cv.fillRect(x, 0, tw, TAB_H, bg);
-        uint16_t fg = on ? (uint16_t)COL_CYAN : (uint16_t)COL_DIM;
+        bool alert = (i == 0 && s_chatAlert) || (i == 1 && anyDmUnread());
+        uint16_t fg = alert ? (uint16_t)COL_YELLOW : (on ? (uint16_t)COL_CYAN : (uint16_t)COL_DIM);
         cv.setTextColor(fg, bg);
         int lw = (int)strlen(tabs[i]) * 6;
         cv.setCursor(x + (tw - lw) / 2, 1);
@@ -248,6 +317,7 @@ static void drawTabs(M5Canvas& cv, int w) {
             cv.setCursor(x + 2, 1);
             cv.print("+");
         }
+        if (i == 1 && anyDmUnread()) drawSmsMark(cv, x + tw - 9, 3, COL_YELLOW);
     }
     uint16_t pip = COL_RED;
     if (s_radioOk && s_rs == RS_TX) pip = COL_PINK;
@@ -280,7 +350,14 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
     cv.setTextColor(COL_DIM, bg);
     cv.setCursor(72, y);
     cv.printf("%4s", age);
-    if (n.longName[0]) drawUtf8(cv, 104, y, w - 2, n.longName, nameCol, bg);
+    bool sms = !n.isSelf && dmIsUnread(n.nodeNum);
+    int nameMax = sms ? w - 22 : w - 2;
+    if (n.longName[0]) drawUtf8(cv, 104, y, nameMax, n.longName, nameCol, bg);
+    if (sms) {
+        cv.setTextColor(COL_YELLOW, bg);
+        cv.setCursor(w - 20, y);
+        cv.print("SMS");
+    }
 }
 
 static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
@@ -307,11 +384,12 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
             putLine(cv, y, yMax, w, match, COL_DIM);
         } else if (dm) {
             y = putLine(cv, y, yMax, w, "No direct messages yet.", COL_DIM);
-            putLine(cv, y, yMax, w, "T writes to this person.", COL_DIM);
+            putLine(cv, y, yMax, w, "ENT writes to this person.", COL_DIM);
         } else {
             y = putLine(cv, y, yMax, w, "Listening for this channel.", COL_TEXT);
             y = putLine(cv, y, yMax, w, "Other people's messages", COL_DIM);
             y = putLine(cv, y, yMax, w, "show up in this chat.", COL_DIM);
+            y = putLine(cv, y, yMax, w, "DMs light SMS on PEOPLE.", COL_DIM);
             const MeshConfig& mc = Config::mesh();
             char match[40];
             snprintf(match, sizeof(match), "%s  %s  same key",
@@ -561,6 +639,8 @@ static void drawDmHdr(M5Canvas& cv, int w) {
 }
 
 void draw(M5Canvas& canvas) {
+    if (viewingChat()) s_chatAlert = false;
+    if (meshScreenUp() && s_layer == LY_DM && s_dmNode) clearDmUnread(s_dmNode);
     uint32_t now = (uint32_t)millis();
     bool typing = (s_layer == LY_WRITE || s_layer == LY_FIELD);
     if (!typing && now - s_lastDraw < 120) return;
@@ -819,6 +899,7 @@ static void typingKeys(const Keyboard_Class::KeysState& ks, bool esc) {
 }
 
 static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
+    if (ks.enter) { openWrite(); return; }
     if (!ks.fn) {
         for (char c : ks.word) {
             if (c == 't' || c == 'T') { openWrite(); return; }
@@ -852,6 +933,7 @@ static void peopleKeys(const Keyboard_Class::KeysState& ks) {
             Display::showToast(Config::mesh().enabled ? "NO RADIO" : "MESH OFF", 800);
             return;
         }
+        clearDmUnread(s_nodes[s_nodeScroll].nodeNum);
         dmLoad(s_nodes[s_nodeScroll].nodeNum);
         s_dmScroll = 0;
         s_dmStick = true;
@@ -915,10 +997,17 @@ void handleKeys() {
     if (keyHas(',')) { moveTab(-1); return; }
     if (keyHas('/')) { moveTab(1); return; }
     if (s_layer == LY_STRIP) {
-        if (ks.enter) s_layer = LY_PAGE;
+        if (ks.enter) {
+            s_layer = LY_PAGE;
+            if (s_tab == 0) s_chatAlert = false;
+        }
         return;
     }
-    if (s_layer == LY_DM || s_tab == 0) { chatKeys(ks, s_layer == LY_DM); return; }
+    if (s_layer == LY_DM || s_tab == 0) {
+        if (s_tab == 0 && s_layer == LY_PAGE) s_chatAlert = false;
+        chatKeys(ks, s_layer == LY_DM);
+        return;
+    }
     if (s_tab == 1) { peopleKeys(ks); return; }
     if (s_tab == 2) return;
     setKeys(ks);
@@ -930,8 +1019,8 @@ const char* bottomHint() {
     if (s_layer == LY_WRITE) rest = "FN LANG  ENT SEND  BKSP  ESC";
     else if (s_layer == LY_FIELD)
         rest = s_fieldAscii ? "ENT SAVE  BKSP  ESC" : "FN LANG  ENT SAVE  BKSP  ESC";
-    else if (s_layer == LY_DM) rest = ",/ TAB  T WRITE  ;/. MOVE  ESC";
-    else if (s_layer == LY_PAGE && s_tab == 0) rest = ",/ TAB  T WRITE  ;/. MOVE  ESC";
+    else if (s_layer == LY_DM) rest = ",/ TAB  ENT WRITE  ;/. MOVE  ESC";
+    else if (s_layer == LY_PAGE && s_tab == 0) rest = ",/ TAB  ENT WRITE  ;/. MOVE  ESC";
     else if (s_layer == LY_PAGE && s_tab == 1) {
         bool self = s_nodes && s_nodeN && s_nodeScroll < s_nodeN && s_nodes[s_nodeScroll].isSelf;
         rest = self ? ",/ TAB  ;/. MOVE  ESC BACK" : ",/ TAB  ENT CHAT  ;/. MOVE  ESC";

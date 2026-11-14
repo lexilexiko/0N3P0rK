@@ -51,6 +51,8 @@ void dmLoad(uint32_t node);
 // Modem: write the open DM ring before it is swapped, then fill it from SD.
 void meshFlushDm();
 void meshReloadDm(uint32_t node);
+// Incoming text that is not ours. dm marks that person on PEOPLE.
+void meshIncoming(bool dm, uint32_t peer);
 
 int utf8Next(const char* s, uint32_t& cp);
 int utf8Fit(const char* s, int cap);

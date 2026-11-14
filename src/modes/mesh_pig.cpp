@@ -986,11 +986,15 @@ static void noteMessage(const Msg& m){
     if(m.to==BROADCAST_ID){
         chatAdd(m);
         s_chatDirty=true;
+        if(!m.sent) meshIncoming(false, 0);
         return;
     }
+    // A direct message stays in that person's chat. It does not join CHAT.
     noteDm(m);
-    chatAdd(m);
-    s_chatDirty=true;
+    if(!m.sent){
+        uint32_t peer=(m.from==s_nodeNum)?m.to:m.from;
+        meshIncoming(true, peer);
+    }
 }
 
 static void handleText(uint32_t from, uint32_t to, int16_t rssi, int8_t snr, const uint8_t* b, uint16_t l){
