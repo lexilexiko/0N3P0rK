@@ -544,6 +544,117 @@ static void drawSet(M5Canvas& cv, int w, int h) {
 
 static const char* KEY_ROWS[] = { "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./" };
 
+// Second mark on a Cardputer key: the letter Shift prints.
+static char shiftAscii(char c) {
+    if (c >= 'a' && c <= 'z') return (char)(c - 32);
+    switch (c) {
+    case ',': return '<';
+    case '.': return '>';
+    case '/': return '?';
+    case ';': return ':';
+    case '\'': return '"';
+    case '[': return '{';
+    case ']': return '}';
+    case '\\': return '|';
+    default: return c;
+    }
+}
+
+static void blitGlyphScale(M5Canvas& cv, int x, int y, const uint8_t* col,
+                           uint16_t fg, int s) {
+    for (int c = 0; c < 5; c++) {
+        uint8_t bits = col[c];
+        for (int r = 0; r < 7; r++) {
+            if (bits & (uint8_t)(1u << (6 - r)))
+                cv.fillRect(x + c * s, y + r * s, s, s, fg);
+        }
+    }
+}
+
+// Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
+static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
+                         uint16_t fg, int scale) {
+    if (scale < 1) scale = 1;
+    if (cp < 0x80) {
+        cv.setTextSize((uint8_t)scale);
+        cv.setTextColor(fg, (uint16_t)COL_BG);
+        cv.setCursor(x, y);
+        char ch[2] = { (char)cp, 0 };
+        cv.print(ch);
+        cv.setTextSize(1);
+        return;
+    }
+    const uint8_t* g = meshGlyph((uint16_t)cp);
+    if (g) {
+        blitGlyphScale(cv, x, y + (scale > 1 ? 1 : 0), g, fg, scale);
+        return;
+    }
+    cv.setTextSize((uint8_t)scale);
+    cv.setTextColor(fg, (uint16_t)COL_BG);
+    cv.setCursor(x, y);
+    cv.print("?");
+    cv.setTextSize(1);
+}
+
+// Yellow Shift letters pinned to the bottom. Text is drawn only above this.
+static void drawShiftLegend(M5Canvas& cv, int w, int h) {
+    const int pitch = 12;
+    const int rowH = 16;
+    const int keyTop = h - 3 * rowH;
+    cv.setTextSize(1);
+    cv.setTextColor(COL_YELLOW, (uint16_t)COL_BG);
+    cv.setCursor(4, keyTop - 9);
+    cv.print("SHIFT");
+    for (int r = 0; r < 3; r++) {
+        int n = (int)strlen(KEY_ROWS[r]);
+        int kx = (w - n * pitch) / 2;
+        if (kx < 2) kx = 2;
+        int ky = keyTop + r * rowH;
+        for (const char* p = KEY_ROWS[r]; *p; p++) {
+            drawCpScaled(cv, kx, ky, mapLay(shiftAscii(*p), s_lang), COL_YELLOW, 2);
+            kx += pitch;
+        }
+    }
+}
+
+static void drawWriterBody(M5Canvas& cv, int w, int y0, int pitch, int lineH,
+                           int yMax) {
+    int x0 = 4;
+    int xMax = w - 4;
+    int maxC = (xMax - x0) / pitch;
+    if (maxC < 1) maxC = 1;
+    int vis = (yMax - y0) / lineH;
+    if (vis < 1) vis = 1;
+    int nch = utf8Cols(s_cmpBuf, s_cmpLen);
+    int curLine = nch / maxC;
+    int startLine = curLine - (vis - 1);
+    if (startLine < 0) startLine = 0;
+    int col = 0;
+    int line = 0;
+    for (int i = 0; i < s_cmpLen && s_cmpBuf[i];) {
+        uint32_t cp;
+        int n = utf8Next(s_cmpBuf + i, cp);
+        if (n <= 0) break;
+        i += n;
+        if (col >= maxC) { col = 0; line++; }
+        if (line >= startLine) {
+            int dy = y0 + (line - startLine) * lineH;
+            if (dy + lineH <= yMax)
+                drawCpScaled(cv, x0 + col * pitch, dy, cp, COL_TEXT, pitch >= 12 ? 2 : 1);
+        }
+        col++;
+    }
+    if (((uint32_t)millis() / 400u) & 1u) {
+        int ccol = nch % maxC;
+        int cline = nch / maxC;
+        if (cline >= startLine) {
+            int cy = y0 + (cline - startLine) * lineH;
+            if (cy + lineH <= yMax)
+                cv.drawFastVLine(x0 + ccol * pitch, cy, lineH > 8 ? lineH - 2 : 8, COL_CYAN);
+        }
+    }
+}
+
 static void drawWriter(M5Canvas& cv, int w, int h, const char* title) {
     cv.fillRect(0, 0, w, TAB_H, COL_HDR);
     cv.setTextColor(COL_CYAN, (uint16_t)COL_HDR);
@@ -557,68 +668,19 @@ static void drawWriter(M5Canvas& cv, int w, int h, const char* title) {
     cv.setCursor(w - 6 * (int)strlen(cnt) - 2, 1);
     cv.print(cnt);
 
-    cv.drawRect(1, TAB_H + 1, w - 2, h - TAB_H - 3, COL_CYAN);
-    int x0 = 4;
-    int y0 = TAB_H + 4;
-    int xMax = w - 4;
-    int yMax = h - 4;
-    int maxC = (xMax - x0) / 6;
-    if (maxC < 1) maxC = 1;
-    int col = 0;
-    int x = x0;
-    int y = y0;
-    for (int i = 0; i < s_cmpLen && s_cmpBuf[i];) {
-        uint32_t cp;
-        int n = utf8Next(s_cmpBuf + i, cp);
-        if (n <= 0) break;
-        i += n;
-        if (col >= maxC) { col = 0; x = x0; y += LH; }
-        if (y + 8 > yMax) break;
-        if (cp < 0x80) {
-            cv.setTextColor(COL_TEXT, (uint16_t)COL_BG);
-            cv.setCursor(x, y);
-            char ch[2] = { (char)cp, 0 };
-            cv.print(ch);
-        } else {
-            const uint8_t* g = meshGlyph((uint16_t)cp);
-            if (g) blitGlyph(cv, x, y, g, COL_TEXT);
-            else {
-                cv.setTextColor(COL_TEXT, (uint16_t)COL_BG);
-                cv.setCursor(x, y);
-                cv.print("?");
-            }
-        }
-        x += 6;
-        col++;
+    // Frequency and PSK stay one size and ASCII. No Shift map.
+    if (s_fieldAscii) {
+        cv.drawRect(1, TAB_H + 1, w - 2, h - TAB_H - 3, COL_CYAN);
+        drawWriterBody(cv, w, TAB_H + 4, 6, LH, h - 4);
+        return;
     }
-    if (((uint32_t)millis() / 400u) & 1u) {
-        int cx, cy, ccol;
-        int nch = utf8Cols(s_cmpBuf, s_cmpLen);
-        ccol = maxC ? (nch % maxC) : 0;
-        cx = x0 + ccol * 6;
-        cy = y0 + (maxC ? (nch / maxC) : 0) * LH;
-        if (cy + 8 <= yMax) cv.drawFastVLine(cx, cy, 8, COL_CYAN);
-    }
-    if (s_cmpLen || s_fieldAscii) return;
-    int ky = y0 + LH * 2;
-    uint8_t lang = s_lang;
-    for (int r = 0; r < 3 && ky + 8 < yMax; r++) {
-        int kx = x0;
-        for (const char* p = KEY_ROWS[r]; *p && kx + 6 <= xMax; p++) {
-            uint32_t cp = mapLay(*p, lang);
-            if (cp < 0x80) {
-                cv.setTextColor(COL_DIM, (uint16_t)COL_BG);
-                cv.setCursor(kx, ky);
-                char ch[2] = { (char)cp, 0 };
-                cv.print(ch);
-            } else {
-                const uint8_t* g = meshGlyph((uint16_t)cp);
-                if (g) blitGlyph(cv, kx, ky, g, COL_DIM);
-            }
-            kx += 6;
-        }
-        ky += LH;
-    }
+
+    // Two bigger text lines sit above the Shift map, so the map never covers them.
+    const int keyTop = h - 3 * 16;
+    const int boxBottom = keyTop - 11;
+    cv.drawRect(1, TAB_H + 1, w - 2, boxBottom - (TAB_H + 1) + 1, COL_CYAN);
+    drawWriterBody(cv, w, TAB_H + 3, 12, 16, boxBottom);
+    drawShiftLegend(cv, w, h);
 }
 
 static void drawDmHdr(M5Canvas& cv, int w) {
