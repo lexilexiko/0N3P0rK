@@ -900,11 +900,6 @@ static void typingKeys(const Keyboard_Class::KeysState& ks, bool esc) {
 
 static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
     if (ks.enter) { openWrite(); return; }
-    if (!ks.fn) {
-        for (char c : ks.word) {
-            if (c == 't' || c == 'T') { openWrite(); return; }
-        }
-    }
     int dir = 0;
     if (keyHas(';')) dir = -1;
     else if (keyHas('.')) dir = 1;
@@ -1015,17 +1010,17 @@ void handleKeys() {
 
 const char* bottomHint() {
     static char b[48];
-    const char* rest = ",/ TAB  ENT OPEN  ESC CLOSE";
+    const char* rest = "</> TAB  ENT OPEN  ESC BACK";
     if (s_layer == LY_WRITE) rest = "FN LANG  ENT SEND  BKSP  ESC";
     else if (s_layer == LY_FIELD)
         rest = s_fieldAscii ? "ENT SAVE  BKSP  ESC" : "FN LANG  ENT SAVE  BKSP  ESC";
-    else if (s_layer == LY_DM) rest = ",/ TAB  ENT WRITE  ;/. MOVE  ESC";
-    else if (s_layer == LY_PAGE && s_tab == 0) rest = ",/ TAB  ENT WRITE  ;/. MOVE  ESC";
+    else if (s_layer == LY_DM || (s_layer == LY_PAGE && s_tab == 0))
+        rest = "</> TAB  ^/v MOVE  ENT WRITE  ESC";
     else if (s_layer == LY_PAGE && s_tab == 1) {
         bool self = s_nodes && s_nodeN && s_nodeScroll < s_nodeN && s_nodes[s_nodeScroll].isSelf;
-        rest = self ? ",/ TAB  ;/. MOVE  ESC BACK" : ",/ TAB  ENT CHAT  ;/. MOVE  ESC";
-    } else if (s_layer == LY_PAGE && s_tab == 2) rest = ",/ TAB  ESC BACK";
-    else if (s_layer == LY_PAGE) rest = ",/ TAB  <> CHG  ;/. MOVE  ENT";
+        rest = self ? "</> TAB  ^/v MOVE  ESC BACK" : "</> TAB  ^/v MOVE  ENT CHAT  ESC";
+    } else if (s_layer == LY_PAGE && s_tab == 2) rest = "</> TAB  ESC BACK";
+    else if (s_layer == LY_PAGE) rest = "</> TAB  ^/v MOVE  <> CHG  ENT";
     snprintf(b, sizeof(b), "%s  %s", langName(), rest);
     return b;
 }

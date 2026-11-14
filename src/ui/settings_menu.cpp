@@ -1468,8 +1468,8 @@ const char* bottomHint() {
     if (s_resetConfirm) return "ENT RESET  ESC CANCEL";
     const bool showHelp = ((millis() - s_openMs) % 7500u) < 5000u;
     if (s_page == SettingsPage::MESH) {
-        if (s_text) return "TYPE  ENTER SAVE  BS ERASE  ESC CANCEL";
-        if (s_editing) return "UP/DN CHANGE  ENTER DONE  ESC BACK";
+        if (s_text) return "TYPE  ENT SAVE  BKSP  ESC CANCEL";
+        if (s_editing) return "^/v CHANGE  ENT DONE  ESC BACK";
         if (showHelp) {
             static const char* const H_MESH[] = {
                 "ON TAKES HEAP. OFF GIVES IT BACK.",
@@ -1488,11 +1488,11 @@ const char* bottomHint() {
             if (s_idx < sizeof(H_MESH) / sizeof(H_MESH[0]))
                 return H_MESH[s_idx];
         }
-        if (s_idx == 0 || s_idx == 10) return "ENTER TOGGLE  UP/DN MOVE  ESC BACK";
-        if (s_idx == 11) return "ENTER OPEN  UP/DN MOVE  ESC BACK";
+        if (s_idx == 0 || s_idx == 10) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
+        if (s_idx == 11) return "ENT OPEN  ^/v MOVE  ESC BACK";
         if (s_idx >= 6 && s_idx <= 9)
-            return "ENTER EDIT  UP/DN MOVE  ESC BACK";
-        return "ENTER EDIT  UP/DN MOVE  ESC BACK";
+            return "ENT EDIT  ^/v MOVE  ESC BACK";
+        return "ENT EDIT  ^/v MOVE  ESC BACK";
     }
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS)
