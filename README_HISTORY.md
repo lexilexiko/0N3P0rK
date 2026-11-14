@@ -451,7 +451,7 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Draw the farm's GPS antenna behind the pig, consistent with the scene's
   background-to-foreground order.
 
-### 1.4.3b(Mesh)
+### 1.4.3(Mesh)
 
 #### Meshtastic on the ADV LoRa cap
 

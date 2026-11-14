@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.4.3b(Mesh)**
+**Current version: 1.4.3(Mesh)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -12,7 +12,7 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Release note:** version **1.4.3b(Mesh)** adds Meshtastic on the Cardputer
+> **Release note:** version **1.4.3(Mesh)** adds Meshtastic on the Cardputer
 > ADV LoRa cap. Channel chat and direct messages stay separate, the mesh
 > screen uses the same keys and menu style as the rest of the pig, and
 > settings plus conversations live on the SD card under `/PigMesh`.
@@ -70,7 +70,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.3b(Mesh)_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.3(Mesh)_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -100,7 +100,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.4.3b(Mesh)`.
+   `1.4.3(Mesh)`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -1074,7 +1074,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.4.3b(Mesh), see
+For the chronological release notes from the early builds through 1.4.3(Mesh), see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---
