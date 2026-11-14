@@ -248,6 +248,7 @@ static const Item MESH_ITEMS[] = {
     {"NAME",     Kind::ACTION, 3, 0, 0,                          0},
     {"PSK",      Kind::ACTION, 4, 0, 0,                          0},
     {"RX BOOST", Kind::TOGGLE, 11, 0, 1,                         1},
+    {"FONT",     Kind::VALUE,  12, 1, 3,                         1},
     {"OPEN",     Kind::ACTION, 5, 0, 0,                          0},
 };
 static const uint8_t MESH_ITEMS_N = sizeof(MESH_ITEMS)/sizeof(MESH_ITEMS[0]);
@@ -742,6 +743,7 @@ static int getValue(const Item& it) {
             case 9: return mc.hopLimit;
             case 10: return mc.freqSlot;
             case 11: return mc.rxBoost ? 1 : 0;
+            case 12: return mc.chatSize < 1 ? 2 : mc.chatSize;
             default: return 0;
         }
     }
@@ -904,6 +906,9 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         const MeshConfig& mc = Config::mesh();
         if (mc.freqOverride) snprintf(raw, sizeof(raw), "%.3f*", (float)mc.freqKHz/1000.0f);
         else                 snprintf(raw, sizeof(raw), "(auto)");
+    } else if (s_page == SettingsPage::MESH && it.id == 12) {
+        int s = getValue(it);
+        strncpy(raw, s <= 1 ? "S" : s >= 3 ? "L" : "M", sizeof(raw) - 1);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -1380,6 +1385,12 @@ static bool setValue(const Item& it, int v) {
                 Config::save();
                 if (MeshPig::isRunning()) { MeshPig::stop(); MeshPig::start(); }
                 return true;
+            case 12:
+                if (v < 1) v = 1;
+                if (v > 3) v = 3;
+                mc.chatSize = (uint8_t)v;
+                Config::save();
+                return true;
             default: return false;
         }
     }
@@ -1483,13 +1494,14 @@ const char* bottomHint() {
                 "NAME OTHER NODES SEE. 4 LETTERS.",
                 "CHANNEL KEY. AQ== IS THE PUBLIC DEFAULT.",
                 "SX1262 RX BOOST. LOUDER, MORE CURRENT.",
+                "CHAT LETTERS. S SMALL  M MEDIUM  L BIG.",
                 "OPEN THE MESH NODE LIST."
             };
             if (s_idx < sizeof(H_MESH) / sizeof(H_MESH[0]))
                 return H_MESH[s_idx];
         }
         if (s_idx == 0 || s_idx == 10) return "ENT TOGGLE  ^/v MOVE  ESC BACK";
-        if (s_idx == 11) return "ENT OPEN  ^/v MOVE  ESC BACK";
+        if (s_idx == 12) return "ENT OPEN  ^/v MOVE  ESC BACK";
         if (s_idx >= 6 && s_idx <= 9)
             return "ENT EDIT  ^/v MOVE  ESC BACK";
         return "ENT EDIT  ^/v MOVE  ESC BACK";
@@ -2230,9 +2242,9 @@ void draw(M5Canvas& canvas) {
     uint8_t n = 0;
     const Item* list = items(&n);
     canvas.setTextDatum(top_left);
-    canvas.setTextSize(s_page == SettingsPage::MESH ? 1 : 2);
+    canvas.setTextSize(2);
     const int y0 = 24;
-    const int lh = s_page == SettingsPage::MESH ? 18 : 20;
+    const int lh = 20;
     for (uint8_t i = 0; i < VIS && (s_scroll + i) < n; i++) {
         uint8_t idx = s_scroll + i;
         int y = y0 + i * lh;
@@ -2248,6 +2260,9 @@ void draw(M5Canvas& canvas) {
         canvas.drawString(list[idx].label, 12, y);
         char val[22];
         formatValue(list[idx], val, sizeof(val), sel && (s_editing || s_bind));
+        int maxCh = ((DISPLAY_W - 10) - (12 + (int)strlen(list[idx].label) * 12) - 8) / 12;
+        if (maxCh < 1) maxCh = 1;
+        if ((int)strlen(val) > maxCh) val[maxCh] = 0;
         canvas.setTextDatum(top_right);
         canvas.drawString(val, DISPLAY_W - 10, y);
         canvas.setTextDatum(top_left);

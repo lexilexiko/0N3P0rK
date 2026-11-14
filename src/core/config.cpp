@@ -195,6 +195,8 @@ bool Config::init() {
     if (mc.hopLimit < 1 || mc.hopLimit > 7) mc.hopLimit = 3;
     mc.freqSlot = s_prefs.getUChar("meshslt", mc.freqSlot);
     mc.rxBoost = s_prefs.getBool("meshrxb", mc.rxBoost);
+    mc.chatSize = s_prefs.getUChar("meshcsz", mc.chatSize);
+    if (mc.chatSize < 1 || mc.chatSize > 3) mc.chatSize = 2;
 
     HotkeyConfig def{};
     hotkeyConfig = def;
@@ -397,6 +399,7 @@ bool Config::save() {
     s_prefs.putUChar ("meshhop",  mc.hopLimit);
     s_prefs.putUChar ("meshslt",  mc.freqSlot);
     s_prefs.putBool  ("meshrxb",  mc.rxBoost);
+    s_prefs.putUChar ("meshcsz",  mc.chatSize);
     MeshPig::persistCfg();
 
     char raw[HOTKEY_COUNT];

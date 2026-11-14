@@ -29,7 +29,6 @@
 #define COL_RED     TFT_RED
 #define COL_ORANGE  0xFD20
 #define LH          10
-#define CHAT_LH     26
 #define TAB_H       11
 #define MESH_H      105
 
@@ -39,9 +38,28 @@ static int meshRows() {
     return rows < 1 ? 1 : rows;
 }
 
+// Chat letters: 1 small, 2 medium, 3 large. Medium is the usual size.
+static int chatScale() {
+    uint8_t s = Config::mesh().chatSize;
+    if (s < 1 || s > 3) s = 2;
+    return (int)s;
+}
+
+static int chatBlockH() {
+    int s = chatScale();
+    if (s <= 1) return LH;
+    return 10 + s * 8;
+}
+
 static int chatRows() {
-    int rows = (MESH_H - TAB_H - 2) / CHAT_LH;
+    int rows = (MESH_H - TAB_H - 2) / chatBlockH();
     return rows < 1 ? 1 : rows;
+}
+
+static const char* chatSizeName(uint8_t s) {
+    if (s <= 1) return "S";
+    if (s >= 3) return "L";
+    return "M";
 }
 
 static void blitGlyph(M5Canvas& cv, int x, int y, const uint8_t* col, uint16_t fg) {
@@ -93,7 +111,7 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
                     uint16_t fg, uint16_t bg, int scale = 1) {
     if (!s) return x;
     if (scale < 1) scale = 1;
-    int pitch = scale >= 2 ? 12 : 6;
+    int pitch = 6 * scale;
     while (*s && x + pitch <= xMax) {
         uint32_t cp;
         int n = utf8Next(s, cp);
@@ -313,9 +331,9 @@ static bool heardOther() {
 
 static const char* SET_LBL[] = {
     "MESH", "REGION", "MODEM", "TX dBm", "HOPS", "SLOT",
-    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST"
+    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "FONT"
 };
-static const uint8_t SET_N = 11;
+static const uint8_t SET_N = 12;
 
 static bool keyHas(char a) {
     if (M5Cardputer.Keyboard.isKeyPressed(a)) return true;
@@ -445,18 +463,28 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
         }
         return;
     }
+    int scale = chatScale();
+    int block = chatBlockH();
     for (int i = 0; i < rows; i++) {
         Msg* m = dm ? dmGet((uint8_t)(scroll + i)) : chatGet((uint8_t)(scroll + i));
         if (!m) break;
-        int yy = y + i * CHAT_LH;
-        if (yy + CHAT_LH > yMax) break;
+        int yy = y + i * block;
+        if (yy + block > yMax) break;
         uint16_t col = m->sent ? (uint16_t)COL_GREEN : (uint16_t)COL_TEXT;
         const char* who = m->fromName[0] ? m->fromName : "?";
-        int x = drawUtf8(cv, 2, yy, 80, who, col, COL_BG);
-        cv.setTextColor(col, (uint16_t)COL_BG);
-        cv.setCursor(x, yy);
-        cv.print(m->to == BROADCAST_ID ? ":" : ">");
-        drawUtf8(cv, 2, yy + 9, w - 2, m->text, col, COL_BG, 2);
+        if (scale <= 1) {
+            int x = drawUtf8(cv, 2, yy, 56, who, col, COL_BG);
+            cv.setTextColor(col, (uint16_t)COL_BG);
+            cv.setCursor(x, yy);
+            cv.print(m->to == BROADCAST_ID ? ":" : ">");
+            drawUtf8(cv, x + 8, yy, w - 2, m->text, col, COL_BG);
+        } else {
+            int x = drawUtf8(cv, 2, yy, 80, who, col, COL_BG);
+            cv.setTextColor(col, (uint16_t)COL_BG);
+            cv.setCursor(x, yy);
+            cv.print(m->to == BROADCAST_ID ? ":" : ">");
+            drawUtf8(cv, 2, yy + 9, w - 2, m->text, col, COL_BG, scale);
+        }
     }
 }
 
@@ -557,7 +585,8 @@ static void setValue(uint8_t row, char* out, int cap) {
                      strcmp(mc.psk, "AQ==") == 0 ? "DEFAULT" :
                      strcmp(mc.psk, "AA==") == 0 ? "OPEN" : "CUSTOM");
             break;
-        default: snprintf(out, cap, "%s", mc.rxBoost ? "ON" : "OFF"); break;
+        case 10: snprintf(out, cap, "%s", mc.rxBoost ? "ON" : "OFF"); break;
+        default: snprintf(out, cap, "%s", chatSizeName(mc.chatSize)); break;
     }
 }
 
@@ -945,6 +974,15 @@ static void bumpSet(int dir) {
             if (dir > 0 && !mc.rxBoost) { mc.rxBoost = true; Config::save(); radioRestart(); }
             else if (dir < 0 && mc.rxBoost) { mc.rxBoost = false; Config::save(); radioRestart(); }
             break;
+        case 11: {
+            int v = (int)mc.chatSize + dir;
+            if (v < 1) v = 1;
+            if (v > 3) v = 3;
+            if (v == (int)mc.chatSize) break;
+            mc.chatSize = (uint8_t)v;
+            Config::save();
+            break;
+        }
         default:
             break;
     }
