@@ -480,10 +480,10 @@ Patch numbers may match tags you used in git; the **story** is what matters.
   NodeInfo request addressed to it, and announces again after start. A short
   ring plays when a message arrives unless that conversation is already on
   screen.
-- Settings are saved in `/PigMesh/cfg.bin` and come back after a flash clears
+- Settings are saved in `/0N3P0rK/PigMesh/cfg.bin` and come back after a flash clears
   NVS. Each channel log is its own file, so another channel does not wipe it.
-  An older `/PigMesh/chat.bin` is still read when the channel stamp matches.
-  Heard nodes, direct messages, and the key stay under `/PigMesh`. Other
+  An older `/0N3P0rK/PigMesh/chat.bin` is still read when the channel stamp matches.
+  Heard nodes, direct messages, and the key stay under `/0N3P0rK/PigMesh`. Other
   `/0N3P0rK` folders are left untouched.
 - `ESC` leaves the screen without stopping the radio. **TASKS** or the MESH
   toggle stops it and returns the heap.

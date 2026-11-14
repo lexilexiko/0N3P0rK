@@ -15,7 +15,7 @@ Secret menu codes are **not** listed here (keep them private).
 > **Release note:** version **1.4.3(Mesh)** adds Meshtastic on the Cardputer
 > ADV LoRa cap. Channel chat and direct messages stay separate, the mesh
 > screen uses the same keys and menu style as the rest of the pig, and
-> settings plus conversations live on the SD card under `/PigMesh`.
+> settings plus conversations live on the SD card under `/0N3P0rK/PigMesh`.
 
 ---
 
@@ -721,7 +721,7 @@ region, modem preset, channel name, and PSK. The default is one channel:
 **LongFast**, **EU868**, the Meshtastic default PSK, and short name **PIG**.
 An empty channel becomes LongFast, an empty name becomes PIG, and an empty PSK
 becomes the default. Frequency is chosen from the region unless a value from
-137 to 960 MHz is set. These settings are also copied to `/PigMesh/cfg.bin`,
+137 to 960 MHz is set. These settings are also copied to `/0N3P0rK/PigMesh/cfg.bin`,
 so a flash that clears NVS brings the same channel back.
 
 | Tab | What it shows |
@@ -769,10 +769,9 @@ refuse the direct message. A yellow `switch off  short range` line means the
 antenna-switch supply did not answer. LoRa can still be up.
 
 Heard nodes, settings, the channel conversation, direct messages, and the key
-are saved under `/PigMesh`. The channel log is its own file for that channel,
+are saved under `/0N3P0rK/PigMesh`. The channel log is its own file for that channel,
 region, and modem, so switching channel does not wipe the previous one. An
-older `/PigMesh/chat.bin` is still read when those same settings match. Files
-under `/0N3P0rK` are not mesh data.
+older `/0N3P0rK/PigMesh/chat.bin` is still read when those same settings match.
 
 This is one Meshtastic channel on the firmware's region and modem presets.
 The people list contains nodes this radio has heard. It is not a full
@@ -1040,19 +1039,14 @@ Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
   music/          MP3 player tracks (SD music)
   evilpig/        portal-related files
   wolf/           wolf loot stash (if used)
+  PigMesh/        mesh key, nodes, chats, and settings
+    cfg.bin       mesh settings, restored after a flash clears NVS
+    pki.bin       this node's public and private key
+    nodes.bin     nodes this radio has heard
+    cHHRRMM.bin   channel log: hash, region, and modem, two hex digits each
+    chat.bin      older channel log, read when the same stamp still matches
+    dm/           one direct-message file per node
   …
-```
-
-Mesh storage is a separate SD folder, not inside `/0N3P0rK`:
-
-```text
-/PigMesh/
-  cfg.bin         mesh settings, restored after a flash clears NVS
-  pki.bin         this node's public and private key
-  nodes.bin       nodes this radio has heard
-  cHHRRMM.bin     channel log: hash, region, and modem, two hex digits each
-  chat.bin        older channel log, read when the same stamp still matches
-  dm/             one direct-message file per node
 ```
 
 Exact `/0N3P0rK` folder names follow `src/core/sd_layout.h`.

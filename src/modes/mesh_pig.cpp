@@ -230,20 +230,14 @@ static MeshNode* nodeFindOrAdd(uint32_t num){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SD — /PigMesh holds the key, the node list, the channel chat, and DMs
+// SD — /0N3P0rK/PigMesh holds the key, the node list, the channel chat, and DMs.
 // ════════════════════════════════════════════════════════════════════════════
-static const char* const PKI_PATH       = "/PigMesh/pki.bin";
-static const char* const PKI_PATH_OLD   = "/0N3P0rK/mesh/pki.bin";
-static const char* const NODES_PATH     = "/PigMesh/nodes.bin";
-static const char* const NODES_PATH_OLD = "/0N3P0rK/mesh/nodes.bin";
-static const char* const CHAT_PATH      = "/PigMesh/chat.bin";
-static const char* const CFG_PATH       = "/PigMesh/cfg.bin";
+static const char* const PKI_PATH   = "/0N3P0rK/PigMesh/pki.bin";
+static const char* const NODES_PATH = "/0N3P0rK/PigMesh/nodes.bin";
+static const char* const CHAT_PATH  = "/0N3P0rK/PigMesh/chat.bin";
+static const char* const CFG_PATH   = "/0N3P0rK/PigMesh/cfg.bin";
 
-// Live files are only under /PigMesh. The old /0N3P0rK/mesh copies are read
-// once when the new file is missing, then left alone. GPS, handshakes, and
-// the other /0N3P0rK folders are not mesh data.
-static constexpr uint32_t NODES_MAGIC    = 0x50494731u; // 'PIG1'
-static constexpr uint32_t NODES_MAGIC_V0 = 0x4E4F4445u; // 'NODE'
+static constexpr uint32_t NODES_MAGIC = 0x50494731u; // 'PIG1'
 static constexpr uint32_t PKI_MAGIC   = 0x504B4921u; // 'PKI!'
 static constexpr uint32_t CHAT_MAGIC  = 0x43484131u; // 'CHA1'
 static constexpr uint32_t DM_MAGIC    = 0x444D4731u; // 'DMG1'
@@ -262,8 +256,9 @@ static void sdIdle() { digitalWrite(12, HIGH); }
 static void meshEnsureDir() {
     if (!Storage::available()) return;
     sdIdle();
-    if (!SD.exists("/PigMesh")) SD.mkdir("/PigMesh");
-    if (!SD.exists("/PigMesh/dm")) SD.mkdir("/PigMesh/dm");
+    if (!SD.exists("/0N3P0rK")) SD.mkdir("/0N3P0rK");
+    if (!SD.exists("/0N3P0rK/PigMesh")) SD.mkdir("/0N3P0rK/PigMesh");
+    if (!SD.exists("/0N3P0rK/PigMesh/dm")) SD.mkdir("/0N3P0rK/PigMesh/dm");
     sdIdle();
 }
 
@@ -281,21 +276,6 @@ static void saveNodes() {
     sdIdle();
 }
 
-// Previous node record, before pubKey. Same layout the old file was written with.
-struct MeshNodeV0 {
-    uint32_t nodeNum;
-    int32_t  lat_i;
-    int32_t  lon_i;
-    int16_t  alt;
-    int8_t   snr;
-    int16_t  rssi;
-    uint32_t lastSeen;
-    char     shortName[5];
-    char     longName[20];
-    bool     hasPos;
-    bool     isSelf;
-};
-
 static bool keepNode(const MeshNode& in) {
     if (in.isSelf || in.nodeNum == 0 || s_nodeN >= 16) return false;
     for (uint8_t j = 0; j < s_nodeN; j++)
@@ -308,41 +288,24 @@ static bool keepNode(const MeshNode& in) {
     return true;
 }
 
-// Reads one file. A matching magic returns true even when every row is self,
-// so the caller does not also import the other copy.
-static bool loadNodesFile(const char* path, uint32_t magic, bool v0, uint8_t& loaded) {
+static bool loadNodesFile(const char* path, uint8_t& loaded) {
     loaded = 0;
     if (!SD.exists(path)) return false;
     sdIdle();
     File f = SD.open(path, FILE_READ);
     if (!f) return false;
     uint32_t got = 0;
-    if (f.read((uint8_t*)&got, 4) != 4 || got != magic) { f.close(); sdIdle(); return false; }
+    if (f.read((uint8_t*)&got, 4) != 4 || got != NODES_MAGIC) { f.close(); sdIdle(); return false; }
     uint8_t n = 0;
-    const size_t rec = v0 ? sizeof(MeshNodeV0) : sizeof(MeshNode);
-    if (f.read(&n, 1) != 1 || n == 0 || n > 16 || (size_t)f.size() < 5u + (size_t)n * rec) {
+    if (f.read(&n, 1) != 1 || n == 0 || n > 16 ||
+        (size_t)f.size() < 5u + (size_t)n * sizeof(MeshNode)) {
         f.close();
         sdIdle();
         return false;
     }
     for (uint8_t i = 0; i < n; i++) {
         MeshNode cur{};
-        if (v0) {
-            MeshNodeV0 old{};
-            if (f.read((uint8_t*)&old, sizeof(old)) != (int)sizeof(old)) break;
-            cur.nodeNum = old.nodeNum;
-            cur.lat_i = old.lat_i;
-            cur.lon_i = old.lon_i;
-            cur.alt = old.alt;
-            cur.snr = old.snr;
-            cur.rssi = old.rssi;
-            cur.hasPos = old.hasPos;
-            cur.isSelf = old.isSelf;
-            memcpy(cur.shortName, old.shortName, 4);
-            memcpy(cur.longName, old.longName, 19);
-        } else if (f.read((uint8_t*)&cur, sizeof(cur)) != (int)sizeof(cur)) {
-            break;
-        }
+        if (f.read((uint8_t*)&cur, sizeof(cur)) != (int)sizeof(cur)) break;
         if (keepNode(cur)) loaded++;
     }
     f.close();
@@ -354,16 +317,8 @@ static void loadNodes() {
     if (!Storage::available() || !s_nodes) return;
     meshEnsureDir();
     uint8_t loaded = 0;
-    if (loadNodesFile(NODES_PATH, NODES_MAGIC, false, loaded)) {
-        if (loaded) Serial.printf("[MESH] loaded %u nodes from SD\n", loaded);
-        return;
-    }
-    // One import. The old file stays where it is and is not written again.
-    if (!loadNodesFile(NODES_PATH_OLD, NODES_MAGIC_V0, true, loaded)) return;
-    if (loaded) {
-        saveNodes();
-        Serial.printf("[MESH] imported %u nodes into /PigMesh\n", loaded);
-    }
+    if (!loadNodesFile(NODES_PATH, loaded)) return;
+    if (loaded) Serial.printf("[MESH] loaded %u nodes from SD\n", loaded);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -500,10 +455,8 @@ static bool loadOrGenPki() {
     s_pkiReady = false;
     memset(s_pkiPriv, 0, sizeof(s_pkiPriv));
     memset(s_pkiPub, 0, sizeof(s_pkiPub));
-    bool fromNew = readPkiFile(PKI_PATH);
-    if (fromNew || readPkiFile(PKI_PATH_OLD)) {
+    if (readPkiFile(PKI_PATH)) {
         s_pkiReady = true;
-        if (!fromNew) writePkiFile();
         Serial.println("[MESH] PKI loaded");
         return true;
     }
@@ -553,7 +506,7 @@ static MeshNode* nodeByNum(uint32_t num) {
 
 // One file per channel. A different channel must not truncate this log.
 static void chatStampPath(char* out, size_t cap) {
-    snprintf(out, cap, "/PigMesh/c%02x%02x%02x.bin",
+    snprintf(out, cap, "/0N3P0rK/PigMesh/c%02x%02x%02x.bin",
              s_storeHash, s_storeRegion, s_storeModem);
 }
 
@@ -592,7 +545,7 @@ static void saveChat() {
     if (!s_chatDirty) return;
     if (!Storage::available() || !s_chat) return;
     meshEnsureDir();
-    char path[32];
+    char path[48];
     chatStampPath(path, sizeof(path));
     sdIdle();
     File f = SD.open(path, FILE_WRITE);
@@ -619,7 +572,7 @@ static void saveChat() {
 
 static void loadChat() {
     if (!Storage::available() || !s_chat) return;
-    char path[32];
+    char path[48];
     chatStampPath(path, sizeof(path));
     if (readChatFile(path)) return;
     // Older builds kept every channel in one file. Leave it in place.
@@ -627,11 +580,11 @@ static void loadChat() {
 }
 
 static void dmPath(uint32_t peer, char* out, size_t cap) {
-    snprintf(out, cap, "/PigMesh/dm/%08lx.bin", (unsigned long)peer);
+    snprintf(out, cap, "/0N3P0rK/PigMesh/dm/%08lx.bin", (unsigned long)peer);
 }
 
 static uint8_t readDmFile(uint32_t peer, Msg* buf, uint8_t cap) {
-    char path[32];
+    char path[48];
     dmPath(peer, path, sizeof(path));
     sdIdle();
     if (!Storage::available() || !SD.exists(path)) return 0;
@@ -659,7 +612,7 @@ static void writeDmFile(uint32_t peer, const Msg* buf, uint8_t n) {
     if (!Storage::available() || !peer || peer == BROADCAST_ID) return;
     if (n > MAX_DM) n = MAX_DM;
     meshEnsureDir();
-    char path[32];
+    char path[48];
     dmPath(peer, path, sizeof(path));
     sdIdle();
     File f = SD.open(path, FILE_WRITE);
@@ -726,7 +679,7 @@ static void rememberDm(uint32_t peer, const Msg& m) {
 
 static void removeForgottenDm() {
     if (!s_forgetNode || !Storage::available()) return;
-    char path[32];
+    char path[48];
     dmPath(s_forgetNode, path, sizeof(path));
     sdIdle();
     if (SD.exists(path)) SD.remove(path);
