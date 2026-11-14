@@ -154,6 +154,10 @@ struct PbW {
     void vi(uint8_t f, uint64_t v){ wr((f<<3)|WT_VARINT); while(v>=0x80){wr((v&0x7F)|0x80);v>>=7;} wr((uint8_t)v); }
     void by(uint8_t f, const uint8_t* d, uint8_t s){ wr((f<<3)|WT_LEN); wv(s); for(uint8_t i=0;i<s;i++) wr(d[i]); }
     void st(uint8_t f, const char* s){ by(f,(const uint8_t*)s,(uint8_t)strlen(s)); }
+    void f32(uint8_t f, uint32_t v){
+        wr((f<<3)|5);
+        wr((uint8_t)v); wr((uint8_t)(v>>8)); wr((uint8_t)(v>>16)); wr((uint8_t)(v>>24));
+    }
 private:
     void wr(uint8_t v){ if(len<cap) b[len++]=v; else ok=false; }
     void wv(uint32_t v){ while(v>=0x80){wr((v&0x7F)|0x80);v>>=7;} wr((uint8_t)v); }
@@ -365,7 +369,21 @@ static void loadNodes() {
 // ════════════════════════════════════════════════════════════════════════════
 static uint8_t s_pkiPub[32]  = {};
 static uint8_t s_pkiPriv[32] = {};
-static bool    s_pkiReady    = false;
+bool           s_pkiReady    = false;
+
+static bool pubNonZero(const uint8_t pub[32]) {
+    for (int i = 0; i < 32; i++) if (pub[i]) return true;
+    return false;
+}
+
+// The old stand-in copied the private bytes and flipped the first one.
+// That is not an X25519 public key, so it must not be loaded or advertised.
+static bool macFakeKey(const uint8_t priv[32], const uint8_t pub[32]) {
+    uint8_t guess[32];
+    memcpy(guess, priv, 32);
+    guess[0] ^= 0xAA;
+    return memcmp(guess, pub, 32) == 0;
+}
 
 static int meshRng(void*, unsigned char* buf, size_t len) {
     size_t i = 0;
@@ -441,16 +459,21 @@ static bool readPkiFile(const char* path) {
     bool ok = false;
     if (f.size() == 4 + 64) {
         uint32_t magic = 0;
-        uint8_t priv[32], pub[32], check[32];
+        uint8_t priv[32], pub[32];
         if (f.read((uint8_t*)&magic, 4) == 4 && magic == PKI_MAGIC &&
             f.read(priv, 32) == 32 && f.read(pub, 32) == 32 &&
-            x25519Public(priv, check) && memcmp(check, pub, 32) == 0) {
-            memcpy(s_pkiPriv, priv, 32);
-            memcpy(s_pkiPub, pub, 32);
-            ok = true;
+            pubNonZero(pub) && !macFakeKey(priv, pub)) {
+            uint8_t check[32];
+            // A failed recompute still keeps the stored key. A successful
+            // recompute that disagrees means the file is not this private key.
+            if (!x25519Public(priv, check) || memcmp(check, pub, 32) == 0) {
+                memcpy(s_pkiPriv, priv, 32);
+                memcpy(s_pkiPub, pub, 32);
+                ok = true;
+            }
+            memset(check, 0, sizeof(check));
         }
         memset(priv, 0, sizeof(priv));
-        memset(check, 0, sizeof(check));
     }
     f.close();
     sdIdle();
@@ -493,16 +516,21 @@ static bool loadOrGenPki() {
                                     (const uint8_t*)pers, strlen(pers));
     if (rc == 0) rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_CURVE25519, &kp,
                                            mbedtls_ctr_drbg_random, &ctr);
+    uint8_t pubGen[32] = {};
     if (rc == 0) rc = mbedtls_mpi_write_binary_le(&kp.d, s_pkiPriv, 32);
+    if (rc == 0) rc = mbedtls_mpi_write_binary_le(&kp.Q.X, pubGen, 32);
     mbedtls_ecp_keypair_free(&kp);
     mbedtls_ctr_drbg_free(&ctr);
     mbedtls_entropy_free(&entropy);
-    if (rc != 0 || !x25519Public(s_pkiPriv, s_pkiPub)) {
+    if (rc != 0 || !pubNonZero(pubGen)) {
         memset(s_pkiPriv, 0, sizeof(s_pkiPriv));
         memset(s_pkiPub, 0, sizeof(s_pkiPub));
         Serial.println("[MESH] PKI generate failed");
         return false;
     }
+    memcpy(s_pkiPub, pubGen, 32);
+    uint8_t check[32];
+    if (x25519Public(s_pkiPriv, check)) memcpy(s_pkiPub, check, 32);
     s_pkiReady = true;
     writePkiFile();
     Serial.println("[MESH] PKI generated");
@@ -713,6 +741,7 @@ static volatile bool s_rxFlag=false, s_txFlag=false;
 uint32_t s_listenSince=0;
 
 static uint32_t s_lastNodeBcast=0;
+static uint8_t  s_niSoon=0;
 static char     s_status[64]="";
 char     s_radioError[48]="";
 int16_t  s_lastRssi = 0;
@@ -889,19 +918,22 @@ static void sendAck(uint32_t to, uint32_t reqId, bool pki){
     buildEnq(to,data,d.len,PRI_ACK,false,0);
 }
 
-static void broadcastNodeInfo(){
+static void sendNodeInfo(uint32_t to, uint32_t replyId){
     const MeshConfig& mc=Config::mesh();
     char ln[32]; snprintf(ln,sizeof(ln),"0N3P0rK/%s",mc.shortName);
     char id[12]; snprintf(id,sizeof(id),"!%08lx",(unsigned long)s_nodeNum);
     uint8_t user[160]; PbW u{user,sizeof(user)};
     u.st(1,id); u.st(2,ln); u.st(3,mc.shortName); u.vi(7,0);
-    // User.public_key is field 8. Field 10 is not the key, so phones ignored it.
+    // User.public_key is field 8. Phones refuse a DM when this is missing.
     if (s_pkiReady) u.by(8, s_pkiPub, 32);
     uint8_t data[192]; PbW d{data,sizeof(data)};
     d.vi(1,PORT_NODEINFO); d.by(2,user,u.len);
+    if (replyId) d.f32(7, replyId);
     if (!u.ok || !d.ok) return;
-    buildEnq(BROADCAST_ID,data,d.len,PRI_DEFAULT,false);
+    buildEnq(to,data,d.len,PRI_DEFAULT,false);
 }
+
+static void broadcastNodeInfo(){ sendNodeInfo(BROADCAST_ID, 0); }
 
 // ════════════════════════════════════════════════════════════════════════════
 // PACKET DECODE
@@ -975,12 +1007,19 @@ static void dispatch(uint32_t from, uint32_t to, uint32_t pktId,
 {
     PbR r{pb,pbLen}; uint8_t port=0;
     const uint8_t* payload=nullptr; uint16_t payLen=0;
+    bool wantResp=false;
     while(!r.done()){ uint8_t f,wt; if(!r.tag(f,wt)) break;
         if(f==1&&wt==WT_VARINT){uint64_t v;r.vi(v);port=(uint8_t)v;}
         else if(f==2&&wt==WT_LEN){r.ld(payload,payLen);}
+        else if(f==3&&wt==WT_VARINT){uint64_t v; if(!r.vi(v)) break; wantResp=(v!=0);}
         else r.skip(wt);
     }
     if(wantAck && from!=BROADCAST_ID && from!=s_nodeNum) sendAck(from,pktId,pki);
+    // A node-info request (want_response, often with an empty body) is how
+    // the phone asks for the public key. Reply to that sender, not to everyone.
+    if(wantResp && port==PORT_NODEINFO && to==s_nodeNum &&
+       from!=BROADCAST_ID && from!=s_nodeNum)
+        sendNodeInfo(from, pktId);
     if(!payload) return;
     int8_t snr=(int8_t)snrF;
     switch(port){
@@ -1336,6 +1375,7 @@ void start(){
     }
     s_run=true;
     s_lastNodeBcast=(uint32_t)millis();
+    s_niSoon=2;
     broadcastNodeInfo();
     snprintf(s_status,sizeof(s_status),"MESH %s !%08lx",
              s_radioOk?"OK":"NO RADIO",(unsigned long)s_nodeNum);
@@ -1375,8 +1415,14 @@ void update(){
         else s_rs = RS_IDLE;
     }
 
-    // NodeInfo broadcast every 15 min. start() already sent the first one.
-    if(now-s_lastNodeBcast>15UL*60UL*1000UL){ s_lastNodeBcast=now; broadcastNodeInfo(); }
+    // Two extra announcements after start, then every 15 min.
+    // The phone only learns the public key from these, or from a direct reply.
+    uint32_t niGap = s_niSoon ? 20000UL : 15UL*60UL*1000UL;
+    if(now-s_lastNodeBcast>niGap){
+        s_lastNodeBcast=now;
+        if(s_niSoon) s_niSoon--;
+        broadcastNodeInfo();
+    }
 
     // Periodic node save every 5 minutes
     static uint32_t s_lastNodeSave = 0;

@@ -390,9 +390,10 @@ static void drawRadio(M5Canvas& cv, int w, int h) {
     y = putLine(cv, y, yMax, w, line, COL_TEXT);
     snprintf(line, sizeof(line), "channel  %s", mc.channel[0] ? mc.channel : "-");
     y = putLine(cv, y, yMax, w, line, COL_TEXT);
-    snprintf(line, sizeof(line), "you  !%04lx  %s",
-             (unsigned long)(s_nodeNum & 0xFFFF), mc.shortName);
-    y = putLine(cv, y, yMax, w, line, COL_PINK);
+    snprintf(line, sizeof(line), "you  !%04lx  %s  %s",
+             (unsigned long)(s_nodeNum & 0xFFFF), mc.shortName,
+             s_pkiReady ? "KEY" : "NO KEY");
+    y = putLine(cv, y, yMax, w, line, s_pkiReady ? COL_PINK : COL_RED);
     snprintf(line, sizeof(line), "rx %u   tx %u   queue %u", s_rxPkts, s_txPkts, s_txN);
     y = putLine(cv, y, yMax, w, line, COL_TEXT);
     if (s_haveSig) {

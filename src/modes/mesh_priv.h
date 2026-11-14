@@ -22,6 +22,7 @@ enum RadioSt : uint8_t { RS_IDLE, RS_RX, RS_TX };
 
 extern bool     s_run;
 extern bool     s_radioOk;
+extern bool     s_pkiReady;
 extern bool     s_rfExpanderReady;
 extern uint32_t s_nodeNum;
 extern uint32_t s_listenSince;
