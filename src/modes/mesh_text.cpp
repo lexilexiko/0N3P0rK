@@ -22,7 +22,11 @@ Msg* chatGet(uint8_t i){
     uint8_t idx=(s_chatHead+MAX_CHAT-s_chatN+i)%MAX_CHAT;
     return &s_chat[idx];
 }
-void dmLoad(uint32_t node){ s_dmNode=node; s_dmN=0; s_dmHead=0; }
+void dmLoad(uint32_t node){
+    meshFlushDm();
+    s_dmNode=node; s_dmN=0; s_dmHead=0; s_dmNew=0;
+    meshReloadDm(node);
+}
 void dmAdd(const Msg& m){
     s_dm[s_dmHead]=m; s_dmHead=(s_dmHead+1)%MAX_DM;
     if(s_dmN<MAX_DM) s_dmN++; s_dmNew++;

@@ -47,6 +47,9 @@ void dmAdd(const Msg& m);
 Msg* chatGet(uint8_t i);
 Msg* dmGet(uint8_t i);
 void dmLoad(uint32_t node);
+// Modem: write the open DM ring before it is swapped, then fill it from SD.
+void meshFlushDm();
+void meshReloadDm(uint32_t node);
 
 int utf8Next(const char* s, uint32_t& cp);
 int utf8Fit(const char* s, int cap);

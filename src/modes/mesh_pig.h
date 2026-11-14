@@ -23,6 +23,8 @@ struct MeshNode {
     char     longName[20]  = {};
     bool     hasPos    = false;
     bool     isSelf    = false;
+    uint8_t  pubKey[32] = {};  // peer X25519 public key, when hasKey
+    bool     hasKey    = false;
 };
 
 // ── Message log entry ────────────────────────────────────────────────────────

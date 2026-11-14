@@ -15,9 +15,13 @@
 #include <M5Unified.h>
 #include <utility/PI4IOE5V6408_Class.hpp>
 #include <mbedtls/aes.h>
+#include <mbedtls/ccm.h>
+#include <mbedtls/cipher.h>
+#include <mbedtls/ecdh.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
+#include <mbedtls/sha256.h>
 #include <esp_mac.h>
 #include <new>
 
@@ -222,148 +226,474 @@ static MeshNode* nodeFindOrAdd(uint32_t num){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PERSISTENT NODE STORE
+// SD — /PigMesh holds the key, the node list, the channel chat, and DMs
 // ════════════════════════════════════════════════════════════════════════════
-static const char* const MESH_DIR       = "/0N3P0rK/mesh";
-static const char* const NODES_PATH     = "/0N3P0rK/mesh/nodes.bin";
-static const char* const PKI_PATH       = "/0N3P0rK/mesh/pki.bin";
+static const char* const PKI_PATH       = "/PigMesh/pki.bin";
+static const char* const PKI_PATH_OLD   = "/0N3P0rK/mesh/pki.bin";
+static const char* const NODES_PATH     = "/PigMesh/nodes.bin";
+static const char* const NODES_PATH_OLD = "/0N3P0rK/mesh/nodes.bin";
+static const char* const CHAT_PATH      = "/PigMesh/chat.bin";
 
-// File magic + version to detect stale / corrupt files
-static constexpr uint32_t NODES_MAGIC   = 0x4E4F4445u; // 'NODE'
-static constexpr uint32_t PKI_MAGIC     = 0x504B4921u; // 'PKI!'
+// Live files are only under /PigMesh. The old /0N3P0rK/mesh copies are read
+// once when the new file is missing, then left alone. GPS, handshakes, and
+// the other /0N3P0rK folders are not mesh data.
+static constexpr uint32_t NODES_MAGIC    = 0x50494731u; // 'PIG1'
+static constexpr uint32_t NODES_MAGIC_V0 = 0x4E4F4445u; // 'NODE'
+static constexpr uint32_t PKI_MAGIC   = 0x504B4921u; // 'PKI!'
+static constexpr uint32_t CHAT_MAGIC  = 0x43484131u; // 'CHA1'
+static constexpr uint32_t DM_MAGIC    = 0x444D4731u; // 'DMG1'
+
+static bool     s_chatDirty = false;
+static bool     s_dmDirty   = false;
+static bool     s_nodesDirty = false;
+static uint8_t  s_storeHash = 0;
+static uint8_t  s_storeRegion = 0;
+static uint8_t  s_storeModem = 0;
+static char     s_storeChannel[20] = {};
+
+static void sdIdle() { digitalWrite(12, HIGH); }
 
 static void meshEnsureDir() {
     if (!Storage::available()) return;
-    if (!SD.exists(MESH_DIR)) SD.mkdir(MESH_DIR);
+    sdIdle();
+    if (!SD.exists("/PigMesh")) SD.mkdir("/PigMesh");
+    if (!SD.exists("/PigMesh/dm")) SD.mkdir("/PigMesh/dm");
+    sdIdle();
 }
 
 static void saveNodes() {
+    s_nodesDirty = false;
     if (!Storage::available() || !s_nodes || !s_nodeN) return;
     meshEnsureDir();
-    // Temporarily take CS high so SD and LoRa don't collide
-    digitalWrite(12, HIGH);
+    sdIdle();
     File f = SD.open(NODES_PATH, FILE_WRITE);
-    if (!f) return;
+    if (!f) { sdIdle(); return; }
     f.write((const uint8_t*)&NODES_MAGIC, 4);
     f.write(s_nodeN);
     f.write((const uint8_t*)s_nodes, (size_t)s_nodeN * sizeof(MeshNode));
     f.close();
+    sdIdle();
+}
+
+// Previous node record, before pubKey. Same layout the old file was written with.
+struct MeshNodeV0 {
+    uint32_t nodeNum;
+    int32_t  lat_i;
+    int32_t  lon_i;
+    int16_t  alt;
+    int8_t   snr;
+    int16_t  rssi;
+    uint32_t lastSeen;
+    char     shortName[5];
+    char     longName[20];
+    bool     hasPos;
+    bool     isSelf;
+};
+
+static bool keepNode(const MeshNode& in) {
+    if (in.isSelf || in.nodeNum == 0 || s_nodeN >= 16) return false;
+    for (uint8_t j = 0; j < s_nodeN; j++)
+        if (s_nodes[j].nodeNum == in.nodeNum) return false;
+    MeshNode tmp = in;
+    tmp.shortName[4] = 0;
+    tmp.longName[19] = 0;
+    tmp.lastSeen = 0;
+    s_nodes[s_nodeN++] = tmp;
+    return true;
+}
+
+// Reads one file. A matching magic returns true even when every row is self,
+// so the caller does not also import the other copy.
+static bool loadNodesFile(const char* path, uint32_t magic, bool v0, uint8_t& loaded) {
+    loaded = 0;
+    if (!SD.exists(path)) return false;
+    sdIdle();
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+    uint32_t got = 0;
+    if (f.read((uint8_t*)&got, 4) != 4 || got != magic) { f.close(); sdIdle(); return false; }
+    uint8_t n = 0;
+    const size_t rec = v0 ? sizeof(MeshNodeV0) : sizeof(MeshNode);
+    if (f.read(&n, 1) != 1 || n == 0 || n > 16 || (size_t)f.size() < 5u + (size_t)n * rec) {
+        f.close();
+        sdIdle();
+        return false;
+    }
+    for (uint8_t i = 0; i < n; i++) {
+        MeshNode cur{};
+        if (v0) {
+            MeshNodeV0 old{};
+            if (f.read((uint8_t*)&old, sizeof(old)) != (int)sizeof(old)) break;
+            cur.nodeNum = old.nodeNum;
+            cur.lat_i = old.lat_i;
+            cur.lon_i = old.lon_i;
+            cur.alt = old.alt;
+            cur.snr = old.snr;
+            cur.rssi = old.rssi;
+            cur.hasPos = old.hasPos;
+            cur.isSelf = old.isSelf;
+            memcpy(cur.shortName, old.shortName, 4);
+            memcpy(cur.longName, old.longName, 19);
+        } else if (f.read((uint8_t*)&cur, sizeof(cur)) != (int)sizeof(cur)) {
+            break;
+        }
+        if (keepNode(cur)) loaded++;
+    }
+    f.close();
+    sdIdle();
+    return true;
 }
 
 static void loadNodes() {
-    if (!Storage::available()) return;
+    if (!Storage::available() || !s_nodes) return;
     meshEnsureDir();
-    if (!SD.exists(NODES_PATH)) return;
-    File f = SD.open(NODES_PATH, FILE_READ);
-    if (!f) return;
-    uint32_t magic = 0;
-    if (f.read((uint8_t*)&magic, 4) != 4 || magic != NODES_MAGIC) { f.close(); return; }
-    uint8_t n = 0;
-    if (f.read(&n, 1) != 1 || n == 0 || n > 16) { f.close(); return; }
-    size_t expect = (size_t)n * sizeof(MeshNode);
-    if ((size_t)f.size() - 5 < expect) { f.close(); return; }
-    if (!s_nodes) { f.close(); return; }
     uint8_t loaded = 0;
-    for (uint8_t i = 0; i < n; i++) {
-        MeshNode tmp{};
-        if (f.read((uint8_t*)&tmp, sizeof(MeshNode)) != sizeof(MeshNode)) break;
-        if (tmp.isSelf || tmp.nodeNum == 0) continue; // skip stale self entry
-        // Don't restore if nodeNum already in table (self was just added)
-        bool dup = false;
-        for (uint8_t j = 0; j < s_nodeN; j++) if (s_nodes[j].nodeNum == tmp.nodeNum) { dup = true; break; }
-        if (dup) continue;
-        if (s_nodeN < 16) {
-            s_nodes[s_nodeN++] = tmp;
-            loaded++;
-        }
+    if (loadNodesFile(NODES_PATH, NODES_MAGIC, false, loaded)) {
+        if (loaded) Serial.printf("[MESH] loaded %u nodes from SD\n", loaded);
+        return;
     }
-    f.close();
-    if (loaded)
-        Serial.printf("[MESH] loaded %u nodes from SD\n", loaded);
+    // One import. The old file stays where it is and is not written again.
+    if (!loadNodesFile(NODES_PATH_OLD, NODES_MAGIC_V0, true, loaded)) return;
+    if (loaded) {
+        saveNodes();
+        Serial.printf("[MESH] imported %u nodes into /PigMesh\n", loaded);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PKI — Curve25519 keypair for Meshtastic DM compatibility
+// PKI — X25519 key pair. Phone apps read User.public_key (protobuf field 8).
 // ════════════════════════════════════════════════════════════════════════════
-static uint8_t s_pkiPub[32]  = {};   // X25519 public key (32 bytes)
-static uint8_t s_pkiPriv[32] = {};   // X25519 private key (32 bytes)
+static uint8_t s_pkiPub[32]  = {};
+static uint8_t s_pkiPriv[32] = {};
 static bool    s_pkiReady    = false;
 
-// Meshtastic stores PKI keys as raw 32-byte fields in AdminMessage/User.
-// We broadcast the public key in NodeInfo (field 10, bytes) so phone apps
-// can encrypt DMs to us.  We do NOT decrypt PKI-encrypted DMs here — we
-// only tell phones we *have* a key so they stop showing the "security key"
-// nag and let the channel-encrypted DM through.
-static bool loadOrGenPki() {
-    meshEnsureDir();
-    // Try to load existing key pair
-    if (Storage::available() && SD.exists(PKI_PATH)) {
-        File f = SD.open(PKI_PATH, FILE_READ);
-        if (f && f.size() == 4 + 64) {
-            uint32_t magic = 0;
-            f.read((uint8_t*)&magic, 4);
-            if (magic == PKI_MAGIC) {
-                f.read(s_pkiPriv, 32);
-                f.read(s_pkiPub, 32);
-                f.close();
-                s_pkiReady = true;
-                Serial.println("[MESH] PKI loaded from SD");
-                return true;
-            }
-            f.close();
-        }
+static int meshRng(void*, unsigned char* buf, size_t len) {
+    size_t i = 0;
+    while (i < len) {
+        uint32_t r = esp_random();
+        size_t n = len - i;
+        if (n > 4) n = 4;
+        memcpy(buf + i, &r, n);
+        i += n;
     }
-    // Generate a new Curve25519 keypair using mbedtls ecp_keypair
+    return 0;
+}
+
+// Public key is the little-endian X25519 u-coordinate. A MAC-derived
+// stand-in does not match this and must not be advertised.
+static bool x25519Public(const uint8_t priv[32], uint8_t pub[32]) {
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d;
+    mbedtls_ecp_point Q;
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_ecp_point_init(&Q);
+    int rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (rc == 0) rc = mbedtls_mpi_read_binary_le(&d, priv, 32);
+    if (rc == 0) rc = mbedtls_ecp_mul(&grp, &Q, &d, &grp.G, meshRng, nullptr);
+    if (rc == 0) rc = mbedtls_mpi_write_binary_le(&Q.X, pub, 32);
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
+    return rc == 0;
+}
+
+static bool pkiAesKey(const uint8_t theirPub[32], uint8_t aes[32]) {
+    if (!s_pkiReady) return false;
+    uint8_t masked[32];
+    memcpy(masked, theirPub, 32);
+    masked[31] &= 0x7F;
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d, z;
+    mbedtls_ecp_point Q;
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_mpi_init(&z);
+    mbedtls_ecp_point_init(&Q);
+    int rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (rc == 0) rc = mbedtls_mpi_read_binary_le(&d, s_pkiPriv, 32);
+    if (rc == 0) rc = mbedtls_ecp_point_read_binary(&grp, &Q, masked, 32);
+    if (rc == 0) rc = mbedtls_ecdh_compute_shared(&grp, &z, &Q, &d, meshRng, nullptr);
+    uint8_t secret[32] = {};
+    if (rc == 0) rc = mbedtls_mpi_write_binary_le(&z, secret, 32);
+    if (rc == 0) rc = mbedtls_sha256_ret(secret, 32, aes, 0);
+    memset(secret, 0, sizeof(secret));
+    memset(masked, 0, sizeof(masked));
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&z);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
+    return rc == 0;
+}
+
+static void pkiNonce(uint8_t nonce[16], uint32_t pktId, uint32_t extra, uint32_t from) {
+    memset(nonce, 0, 16);
+    memcpy(nonce + 0, &pktId, 4);
+    memcpy(nonce + 4, &extra, 4);
+    memcpy(nonce + 8, &from, 4);
+}
+
+static bool readPkiFile(const char* path) {
+    if (!Storage::available() || !SD.exists(path)) return false;
+    sdIdle();
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+    bool ok = false;
+    if (f.size() == 4 + 64) {
+        uint32_t magic = 0;
+        uint8_t priv[32], pub[32], check[32];
+        if (f.read((uint8_t*)&magic, 4) == 4 && magic == PKI_MAGIC &&
+            f.read(priv, 32) == 32 && f.read(pub, 32) == 32 &&
+            x25519Public(priv, check) && memcmp(check, pub, 32) == 0) {
+            memcpy(s_pkiPriv, priv, 32);
+            memcpy(s_pkiPub, pub, 32);
+            ok = true;
+        }
+        memset(priv, 0, sizeof(priv));
+        memset(check, 0, sizeof(check));
+    }
+    f.close();
+    sdIdle();
+    return ok;
+}
+
+static bool writePkiFile() {
+    if (!Storage::available()) return false;
+    meshEnsureDir();
+    sdIdle();
+    File f = SD.open(PKI_PATH, FILE_WRITE);
+    if (!f) { sdIdle(); return false; }
+    f.write((const uint8_t*)&PKI_MAGIC, 4);
+    f.write(s_pkiPriv, 32);
+    f.write(s_pkiPub, 32);
+    f.close();
+    sdIdle();
+    return true;
+}
+
+static bool loadOrGenPki() {
+    s_pkiReady = false;
+    memset(s_pkiPriv, 0, sizeof(s_pkiPriv));
+    memset(s_pkiPub, 0, sizeof(s_pkiPub));
+    bool fromNew = readPkiFile(PKI_PATH);
+    if (fromNew || readPkiFile(PKI_PATH_OLD)) {
+        s_pkiReady = true;
+        if (!fromNew) writePkiFile();
+        Serial.println("[MESH] PKI loaded");
+        return true;
+    }
     mbedtls_entropy_context  entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ctr_drbg_context ctr;
     mbedtls_ecp_keypair      kp;
     mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_ctr_drbg_init(&ctr);
     mbedtls_ecp_keypair_init(&kp);
-
     const char* pers = "mesh_pig_pki";
-    int rc = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+    int rc = mbedtls_ctr_drbg_seed(&ctr, mbedtls_entropy_func, &entropy,
                                     (const uint8_t*)pers, strlen(pers));
     if (rc == 0) rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_CURVE25519, &kp,
-                                           mbedtls_ctr_drbg_random, &ctr_drbg);
-    if (rc == 0) {
-        // X25519 private scalar d — little-endian 32 bytes
-        rc = mbedtls_mpi_write_binary_le(&kp.d, s_pkiPriv, 32);
-    }
-    if (rc == 0) {
-        // X25519 public key = X coordinate of Q — little-endian 32 bytes
-        rc = mbedtls_mpi_write_binary_le(&kp.Q.X, s_pkiPub, 32);
-    }
-
+                                           mbedtls_ctr_drbg_random, &ctr);
+    if (rc == 0) rc = mbedtls_mpi_write_binary_le(&kp.d, s_pkiPriv, 32);
     mbedtls_ecp_keypair_free(&kp);
-    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_ctr_drbg_free(&ctr);
     mbedtls_entropy_free(&entropy);
-
-    if (rc != 0) {
-        // Fall back to deterministic key from MAC (non-secure but functional)
-        uint8_t mac[6] = {}; esp_efuse_mac_get_default(mac);
-        for (int i = 0; i < 32; i++) s_pkiPriv[i] = mac[i % 6] ^ (uint8_t)(i * 37);
-        s_pkiPriv[0]  = (s_pkiPriv[0]  & 248);
-        s_pkiPriv[31] = (s_pkiPriv[31] & 127) | 64;
-        // We use priv as pub placeholder — good enough for compat signalling
-        memcpy(s_pkiPub, s_pkiPriv, 32);
-        s_pkiPub[0] ^= 0xAA;
-        Serial.println("[MESH] PKI mbedtls failed, using MAC-derived key");
-    }
-
-    // Save to SD
-    if (Storage::available()) {
-        File f = SD.open(PKI_PATH, FILE_WRITE);
-        if (f) {
-            f.write((const uint8_t*)&PKI_MAGIC, 4);
-            f.write(s_pkiPriv, 32);
-            f.write(s_pkiPub, 32);
-            f.close();
-        }
+    if (rc != 0 || !x25519Public(s_pkiPriv, s_pkiPub)) {
+        memset(s_pkiPriv, 0, sizeof(s_pkiPriv));
+        memset(s_pkiPub, 0, sizeof(s_pkiPub));
+        Serial.println("[MESH] PKI generate failed");
+        return false;
     }
     s_pkiReady = true;
-    Serial.println("[MESH] PKI generated and saved");
+    writePkiFile();
+    Serial.println("[MESH] PKI generated");
     return true;
+}
+
+static bool keyLive(const MeshNode* n) {
+    if (!n || !n->hasKey) return false;
+    for (int i = 0; i < 32; i++) if (n->pubKey[i]) return true;
+    return false;
+}
+
+static MeshNode* nodeByNum(uint32_t num) {
+    if (!s_nodes) return nullptr;
+    for (uint8_t i = 0; i < s_nodeN; i++) if (s_nodes[i].nodeNum == num) return &s_nodes[i];
+    return nullptr;
+}
+
+static void saveChat() {
+    if (!s_chatDirty) return;
+    if (!Storage::available() || !s_chat) return;
+    meshEnsureDir();
+    sdIdle();
+    File f = SD.open(CHAT_PATH, FILE_WRITE);
+    if (!f) { sdIdle(); return; }
+    uint8_t n = s_chatN > MAX_CHAT ? MAX_CHAT : s_chatN;
+    f.write((const uint8_t*)&CHAT_MAGIC, 4);
+    f.write(s_storeHash);
+    f.write(s_storeRegion);
+    f.write(s_storeModem);
+    f.write((const uint8_t*)s_storeChannel, sizeof(s_storeChannel));
+    f.write(n);
+    for (uint8_t i = 0; i < n; i++) {
+        Msg* m = chatGet(i);
+        if (!m) break;
+        Msg copy = *m;
+        copy.text[47] = 0;
+        copy.fromName[7] = 0;
+        f.write((const uint8_t*)&copy, sizeof(copy));
+    }
+    f.close();
+    sdIdle();
+    s_chatDirty = false;
+}
+
+static void loadChat() {
+    if (!Storage::available() || !s_chat) return;
+    sdIdle();
+    if (!SD.exists(CHAT_PATH)) return;
+    File f = SD.open(CHAT_PATH, FILE_READ);
+    if (!f) return;
+    uint32_t magic = 0;
+    uint8_t hash = 0, region = 0, modem = 0, n = 0;
+    char channel[20] = {};
+    bool ok = f.read((uint8_t*)&magic, 4) == 4 && magic == CHAT_MAGIC &&
+              f.read(&hash, 1) == 1 && f.read(&region, 1) == 1 &&
+              f.read(&modem, 1) == 1 &&
+              f.read((uint8_t*)channel, sizeof(channel)) == (int)sizeof(channel) &&
+              f.read(&n, 1) == 1 && n <= MAX_CHAT &&
+              hash == s_storeHash && region == s_storeRegion &&
+              modem == s_storeModem &&
+              strncmp(channel, s_storeChannel, sizeof(channel)) == 0;
+    if (!ok) { f.close(); sdIdle(); return; }
+    for (uint8_t i = 0; i < n; i++) {
+        if (f.read((uint8_t*)&s_chat[i], sizeof(Msg)) != (int)sizeof(Msg)) { n = i; break; }
+        s_chat[i].text[47] = 0;
+        s_chat[i].fromName[7] = 0;
+    }
+    f.close();
+    sdIdle();
+    s_chatN = n;
+    s_chatHead = (uint8_t)(n % MAX_CHAT);
+    s_chatNew = 0;
+    Serial.printf("[MESH] loaded %u chat lines\n", n);
+}
+
+static void dmPath(uint32_t peer, char* out, size_t cap) {
+    snprintf(out, cap, "/PigMesh/dm/%08lx.bin", (unsigned long)peer);
+}
+
+static uint8_t readDmFile(uint32_t peer, Msg* buf, uint8_t cap) {
+    char path[32];
+    dmPath(peer, path, sizeof(path));
+    sdIdle();
+    if (!Storage::available() || !SD.exists(path)) return 0;
+    File f = SD.open(path, FILE_READ);
+    if (!f) return 0;
+    uint32_t magic = 0;
+    uint8_t n = 0;
+    if (f.read((uint8_t*)&magic, 4) != 4 || magic != DM_MAGIC ||
+        f.read(&n, 1) != 1 || n > cap) {
+        f.close();
+        sdIdle();
+        return 0;
+    }
+    for (uint8_t i = 0; i < n; i++) {
+        if (f.read((uint8_t*)&buf[i], sizeof(Msg)) != (int)sizeof(Msg)) { n = i; break; }
+        buf[i].text[47] = 0;
+        buf[i].fromName[7] = 0;
+    }
+    f.close();
+    sdIdle();
+    return n;
+}
+
+static void writeDmFile(uint32_t peer, const Msg* buf, uint8_t n) {
+    if (!Storage::available() || !peer || peer == BROADCAST_ID) return;
+    if (n > MAX_DM) n = MAX_DM;
+    meshEnsureDir();
+    char path[32];
+    dmPath(peer, path, sizeof(path));
+    sdIdle();
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) { sdIdle(); return; }
+    f.write((const uint8_t*)&DM_MAGIC, 4);
+    f.write(n);
+    if (n && buf) f.write((const uint8_t*)buf, (size_t)n * sizeof(Msg));
+    f.close();
+    sdIdle();
+}
+
+static void rememberDm(uint32_t peer, const Msg& m);
+
+static Msg s_dmPend[8];
+static uint8_t s_dmPendN = 0;
+
+static void queueDm(const Msg& m) {
+    if (s_dmPendN < 8) s_dmPend[s_dmPendN++] = m;
+    else {
+        memmove(s_dmPend, s_dmPend + 1, sizeof(Msg) * 7);
+        s_dmPend[7] = m;
+    }
+    s_dmDirty = true;
+}
+
+static void flushPendingDm() {
+    for (uint8_t i = 0; i < s_dmPendN; i++) {
+        uint32_t peer = (s_dmPend[i].from == s_nodeNum) ? s_dmPend[i].to : s_dmPend[i].from;
+        rememberDm(peer, s_dmPend[i]);
+    }
+    s_dmPendN = 0;
+}
+
+static void saveOpenDm() {
+    if (!s_dmDirty) return;
+    if (!s_dm || !s_dmNode) { s_dmDirty = false; return; }
+    Msg* buf = new (std::nothrow) Msg[MAX_DM];
+    if (!buf) return;
+    uint8_t n = s_dmN > MAX_DM ? MAX_DM : s_dmN;
+    for (uint8_t i = 0; i < n; i++) {
+        Msg* m = dmGet(i);
+        if (m) buf[i] = *m;
+    }
+    writeDmFile(s_dmNode, buf, n);
+    delete[] buf;
+    s_dmDirty = false;
+}
+
+static void rememberDm(uint32_t peer, const Msg& m) {
+    if (!peer || peer == BROADCAST_ID) return;
+    Msg* buf = new (std::nothrow) Msg[MAX_DM];
+    if (!buf) return;
+    uint8_t n = readDmFile(peer, buf, MAX_DM);
+    if (n < MAX_DM) buf[n++] = m;
+    else {
+        memmove(buf, buf + 1, sizeof(Msg) * (MAX_DM - 1));
+        buf[MAX_DM - 1] = m;
+        n = MAX_DM;
+    }
+    writeDmFile(peer, buf, n);
+    delete[] buf;
+}
+
+static void flushMeshDisk() {
+    if (s_nodesDirty) saveNodes();
+    saveChat();
+    flushPendingDm();
+    saveOpenDm();
+}
+
+void meshFlushDm() {
+    flushPendingDm();
+    saveOpenDm();
+}
+
+void meshReloadDm(uint32_t node) {
+    if (!s_dm || !node) return;
+    uint8_t n = readDmFile(node, s_dm, MAX_DM);
+    s_dmN = n;
+    s_dmHead = (uint8_t)(n % MAX_DM);
+    s_dmNew = 0;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -461,11 +791,16 @@ static const char* nodeName(uint32_t num){
 // ════════════════════════════════════════════════════════════════════════════
 // PACKET BUILD
 // ════════════════════════════════════════════════════════════════════════════
-static bool buildEnq(uint32_t to, const uint8_t* pb, uint8_t pbLen, TxPri prio, bool wantAck, uint8_t hop=0xFF){
+static uint8_t clampHop(uint8_t hop) {
     if (hop == 0xFF) {
         hop = Config::mesh().hopLimit;
         if (hop < 1 || hop > 7) hop = 3;
     }
+    return hop;
+}
+
+static bool buildEnq(uint32_t to, const uint8_t* pb, uint8_t pbLen, TxPri prio, bool wantAck, uint8_t hop=0xFF){
+    hop = clampHop(hop);
     if(pbLen>240) return false;
     uint32_t id=nextId();
     uint8_t enc[240];
@@ -478,12 +813,79 @@ static bool buildEnq(uint32_t to, const uint8_t* pb, uint8_t pbLen, TxPri prio, 
     return txEnq(raw,(uint16_t)(HDR_SZ+pbLen),prio);
 }
 
-static void sendAck(uint32_t to, uint32_t reqId){
+// Direct message: hash 0, AES-256-CCM, 8-byte tag, 4-byte extra nonce.
+// Nonce is 13 bytes: packet id, extra nonce at byte 4, sender at byte 8.
+static bool buildPkiEnq(uint32_t to, const uint8_t theirPub[32],
+                        const uint8_t* pb, uint8_t pbLen, TxPri prio, bool wantAck, uint8_t hop=0xFF){
+    hop = clampHop(hop);
+    if (!s_pkiReady || pbLen > 220) return false;
+    uint8_t aes[32];
+    if (!pkiAesKey(theirPub, aes)) return false;
+    uint32_t id = nextId();
+    uint32_t extra = esp_random();
+    if (!extra) extra = 1;
+    uint8_t nonce[16];
+    pkiNonce(nonce, id, extra, s_nodeNum);
+    uint8_t enc[240];
+    mbedtls_ccm_context ccm;
+    mbedtls_ccm_init(&ccm);
+    int rc = mbedtls_ccm_setkey(&ccm, MBEDTLS_CIPHER_ID_AES, aes, 256);
+    if (rc == 0)
+        rc = mbedtls_ccm_encrypt_and_tag(&ccm, pbLen, nonce, 13, nullptr, 0,
+                                          pb, enc, enc + pbLen, 8);
+    mbedtls_ccm_free(&ccm);
+    memset(aes, 0, sizeof(aes));
+    if (rc != 0) return false;
+    memcpy(enc + pbLen + 8, &extra, 4);
+    uint16_t body = (uint16_t)(pbLen + 12);
+    uint8_t raw[256];
+    memcpy(raw + 0, &to, 4);
+    memcpy(raw + 4, &s_nodeNum, 4);
+    memcpy(raw + 8, &id, 4);
+    raw[12] = (hop & FLAGS_HOP_MASK) | (wantAck ? FLAGS_WANT_ACK : 0) | ((hop & 7) << FLAGS_HOPSTART_SHF);
+    raw[13] = 0;
+    raw[14] = 0;
+    raw[15] = (uint8_t)(s_nodeNum & 0xFF);
+    memcpy(raw + HDR_SZ, enc, body);
+    return txEnq(raw, (uint16_t)(HDR_SZ + body), prio);
+}
+
+static bool pkiDecrypt(uint32_t from, uint32_t pktId, const uint8_t theirPub[32],
+                       const uint8_t* enc, uint16_t encLen,
+                       uint8_t* plain, uint16_t& plainLen) {
+    if (encLen < 12 || encLen > 240) return false;
+    uint8_t aes[32];
+    if (!pkiAesKey(theirPub, aes)) return false;
+    uint32_t extra = 0;
+    memcpy(&extra, enc + encLen - 4, 4);
+    const uint8_t* tag = enc + encLen - 12;
+    uint16_t clen = (uint16_t)(encLen - 12);
+    uint8_t nonce[16];
+    pkiNonce(nonce, pktId, extra, from);
+    mbedtls_ccm_context ccm;
+    mbedtls_ccm_init(&ccm);
+    int rc = mbedtls_ccm_setkey(&ccm, MBEDTLS_CIPHER_ID_AES, aes, 256);
+    if (rc == 0)
+        rc = mbedtls_ccm_auth_decrypt(&ccm, clen, nonce, 13, nullptr, 0,
+                                       enc, plain, tag, 8);
+    mbedtls_ccm_free(&ccm);
+    memset(aes, 0, sizeof(aes));
+    if (rc != 0) return false;
+    plainLen = clen;
+    return true;
+}
+
+static void sendAck(uint32_t to, uint32_t reqId, bool pki){
     uint8_t pb[12]; PbW w{pb,sizeof(pb)};
     w.vi(1,reqId);
     uint8_t data[20]; PbW d{data,sizeof(data)};
     d.vi(1,PORT_ROUTING); d.by(2,pb,w.len);
     if (!w.ok || !d.ok) return;
+    if (pki) {
+        MeshNode* peer = nodeByNum(to);
+        if (keyLive(peer) && buildPkiEnq(to, peer->pubKey, data, d.len, PRI_ACK, false, 0))
+            return;
+    }
     buildEnq(to,data,d.len,PRI_ACK,false,0);
 }
 
@@ -491,12 +893,11 @@ static void broadcastNodeInfo(){
     const MeshConfig& mc=Config::mesh();
     char ln[32]; snprintf(ln,sizeof(ln),"0N3P0rK/%s",mc.shortName);
     char id[12]; snprintf(id,sizeof(id),"!%08lx",(unsigned long)s_nodeNum);
-    uint8_t user[120]; PbW u{user,sizeof(user)};
+    uint8_t user[160]; PbW u{user,sizeof(user)};
     u.st(1,id); u.st(2,ln); u.st(3,mc.shortName); u.vi(7,0);
-    // Field 10 = public_key (bytes): tell phone apps we support PKI DM
-    // so they don't show the "security key required" dialog.
-    if (s_pkiReady) u.by(10, s_pkiPub, 32);
-    uint8_t data[140]; PbW d{data,sizeof(data)};
+    // User.public_key is field 8. Field 10 is not the key, so phones ignored it.
+    if (s_pkiReady) u.by(8, s_pkiPub, 32);
+    uint8_t data[192]; PbW d{data,sizeof(data)};
     d.vi(1,PORT_NODEINFO); d.by(2,user,u.len);
     if (!u.ok || !d.ok) return;
     buildEnq(BROADCAST_ID,data,d.len,PRI_DEFAULT,false);
@@ -518,19 +919,46 @@ static void handlePos(uint32_t from, int16_t rssi, int8_t snr, const uint8_t* b,
 
 static void handleNI(uint32_t from, int16_t rssi, int8_t snr, const uint8_t* b, uint16_t l){
     PbR r{b,l}; char sn[5]={}, ln[20]={};
-    while(!r.done()){ uint8_t f,wt; if(!r.tag(f,wt)) break;
-        if(wt==WT_LEN){ const uint8_t* d; uint16_t s; r.ld(d,s);
-            if(f==2&&s<20){memcpy(ln,d,s);ln[s]=0;}
-            if(f==3&&s<5) {memcpy(sn,d,s);sn[s]=0;}
-            // field 10 = public_key; we store it but don't use it for decryption yet
-        } else { uint64_t v; r.vi(v); }
+    uint8_t key[32];
+    bool gotKey = false;
+    while(!r.done()){
+        uint8_t f, wt;
+        if(!r.tag(f,wt)) break;
+        if(wt==WT_LEN){
+            const uint8_t* d; uint16_t s;
+            if(!r.ld(d,s)) break;
+            if(f==2 && s<sizeof(ln)){ memcpy(ln,d,s); ln[s]=0; }
+            if(f==3 && s<sizeof(sn)){ memcpy(sn,d,s); sn[s]=0; }
+            if(f==8 && s==32){ memcpy(key,d,32); gotKey=true; }
+        } else if(!r.skip(wt)) break;
     }
     MeshNode* n=nodeFindOrAdd(from);
-    if(sn[0]) strncpy(n->shortName,sn,4);
-    if(ln[0]) strncpy(n->longName,ln,19);
+    if(sn[0]) { memcpy(n->shortName,sn,4); n->shortName[4]=0; }
+    if(ln[0]) { memcpy(n->longName,ln,19); n->longName[19]=0; }
+    if(gotKey) { memcpy(n->pubKey,key,32); n->hasKey=true; }
     n->rssi=rssi; n->snr=snr; n->lastSeen=(uint32_t)millis();
-    // Persist node table whenever we learn a name
     saveNodes();
+}
+
+static void noteDm(const Msg& m){
+    uint32_t peer=(m.from==s_nodeNum)?m.to:m.from;
+    if(s_dmNode==peer){
+        dmAdd(m);
+        s_dmDirty=true;
+    } else {
+        queueDm(m);
+    }
+}
+
+static void noteMessage(const Msg& m){
+    if(m.to==BROADCAST_ID){
+        chatAdd(m);
+        s_chatDirty=true;
+        return;
+    }
+    noteDm(m);
+    chatAdd(m);
+    s_chatDirty=true;
 }
 
 static void handleText(uint32_t from, uint32_t to, int16_t rssi, int8_t snr, const uint8_t* b, uint16_t l){
@@ -538,23 +966,11 @@ static void handleText(uint32_t from, uint32_t to, int16_t rssi, int8_t snr, con
     Msg m{}; m.from=from; m.to=to; m.timeMs=(uint32_t)millis(); m.sent=false;
     uint8_t cp=l<47?l:47; memcpy(m.text,b,cp); m.text[cp]=0;
     strncpy(m.fromName,nodeName(from),7); m.fromName[7]=0;
-
-    if(to==BROADCAST_ID){
-        chatAdd(m);
-    } else if(to==s_nodeNum || from==s_nodeNum){
-        // DM — add to dm store if it matches the currently open DM node
-        uint32_t peer=(from==s_nodeNum)?to:from;
-        if(s_dmNode==peer || s_dmNode==0){
-            if(s_dmNode==0) s_dmNode=peer;
-            dmAdd(m);
-        }
-        // Also show as chat notification
-        m.to=to; chatAdd(m);
-    }
+    if(to==BROADCAST_ID || to==s_nodeNum || from==s_nodeNum) noteMessage(m);
 }
 
 static void dispatch(uint32_t from, uint32_t to, uint32_t pktId,
-                     bool wantAck, int16_t rssi, float snrF,
+                     bool wantAck, bool pki, int16_t rssi, float snrF,
                      const uint8_t* pb, uint16_t pbLen)
 {
     PbR r{pb,pbLen}; uint8_t port=0;
@@ -564,7 +980,7 @@ static void dispatch(uint32_t from, uint32_t to, uint32_t pktId,
         else if(f==2&&wt==WT_LEN){r.ld(payload,payLen);}
         else r.skip(wt);
     }
-    if(wantAck && from!=BROADCAST_ID && from!=s_nodeNum) sendAck(from,pktId);
+    if(wantAck && from!=BROADCAST_ID && from!=s_nodeNum) sendAck(from,pktId,pki);
     if(!payload) return;
     int8_t snr=(int8_t)snrF;
     switch(port){
@@ -575,44 +991,60 @@ static void dispatch(uint32_t from, uint32_t to, uint32_t pktId,
     }
 }
 
+static void relayDown(const uint8_t* raw, uint16_t rawLen, uint8_t flags, uint8_t hop){
+    if(rawLen>256 || hop<1) return;
+    uint8_t relay[256];
+    memcpy(relay,raw,rawLen);
+    relay[12]=(flags&~FLAGS_HOP_MASK)|(hop-1);
+    relay[14]=0;
+    relay[15]=(uint8_t)(s_nodeNum&0xFF);
+    txEnq(relay,rawLen,PRI_ROUTING);
+}
+
 static void decodePacket(const uint8_t* raw, uint16_t rawLen, int16_t rssi, float snr){
-    if(rawLen<HDR_SZ+1) return;
+    if(rawLen<HDR_SZ+1 || rawLen>256) return;
     uint32_t to,from,pktId;
     memcpy(&to,raw+0,4); memcpy(&from,raw+4,4); memcpy(&pktId,raw+8,4);
     uint8_t flags=raw[12], chanHash=raw[13];
     uint8_t hop=flags&FLAGS_HOP_MASK;
     bool wantAck=(flags&FLAGS_WANT_ACK)!=0;
-    if(to!=BROADCAST_ID&&to!=s_nodeNum){
-        if(hop>1&&chanHash==s_chanHash&&!seenRecently(from,pktId)){
+    bool forUs=(to==BROADCAST_ID || to==s_nodeNum);
+    bool pki=(chanHash==0 && to==s_nodeNum);
+    if(!forUs){
+        if(hop>1 && (chanHash==s_chanHash || chanHash==0) && !seenRecently(from,pktId)){
             markSeen(from,pktId);
-            uint8_t relay[256]; memcpy(relay,raw,rawLen);
-            relay[12]=(flags&~FLAGS_HOP_MASK)|(hop-1);
-            relay[14]=0; relay[15]=(uint8_t)(s_nodeNum&0xFF);
-            txEnq(relay,rawLen,PRI_ROUTING);
+            relayDown(raw,rawLen,flags,hop);
         }
         return;
     }
     if(from==s_nodeNum) return;
-    if(chanHash!=s_chanHash) return;
-    if(seenRecently(from,pktId)) return;
-    markSeen(from,pktId);
-    if(to==BROADCAST_ID&&hop>1){
-        uint8_t relay[256]; memcpy(relay,raw,rawLen);
-        relay[12]=(flags&~FLAGS_HOP_MASK)|(hop-1);
-        relay[14]=0; relay[15]=(uint8_t)(s_nodeNum&0xFF);
-        txEnq(relay,rawLen,PRI_ROUTING);
+    if(!pki && chanHash!=s_chanHash) return;
+
+    uint16_t encLen=(uint16_t)(rawLen-HDR_SZ);
+    uint8_t plain[256];
+    uint16_t plainLen=encLen;
+    if(pki){
+        if(seenRecently(from,pktId)) return;
+        MeshNode* peer=nodeByNum(from);
+        if(!keyLive(peer)) return;
+        if(!pkiDecrypt(from,pktId,peer->pubKey,raw+HDR_SZ,encLen,plain,plainLen)){
+            markSeen(from,pktId);
+            return;
+        }
+        markSeen(from,pktId);
+    } else {
+        if(seenRecently(from,pktId)) return;
+        markSeen(from,pktId);
+        if(to==BROADCAST_ID && hop>1) relayDown(raw,rawLen,flags,hop);
+        if(!aesCtr(s_aesKey,s_aesKeyLen,pktId,from,raw+HDR_SZ,plain,encLen)) return;
     }
-    uint8_t encLen=rawLen-HDR_SZ, plain[256];
-    if(!aesCtr(s_aesKey,s_aesKeyLen,pktId,from,raw+HDR_SZ,plain,encLen)) return;
-    bool known=false;
-    if(s_nodes){ for(uint8_t i=0;i<s_nodeN;i++) if(s_nodes[i].nodeNum==from){ known=true; break; } }
-    if(!known){ s_seenEver++; }
+    bool known=nodeByNum(from)!=nullptr;
+    if(!known) s_seenEver++;
     MeshNode* n=nodeFindOrAdd(from);
     n->lastSeen=(uint32_t)millis(); n->rssi=rssi; n->snr=(int8_t)snr;
-    // Save node table when a genuinely new node is first seen
-    if(!known) saveNodes();
+    if(!known) s_nodesDirty = true;
     s_lastRssi=rssi; s_lastSnr=(int8_t)snr; s_haveSig=true; s_rxPkts++;
-    dispatch(from,to,pktId,wantAck,rssi,snr,plain,encLen);
+    dispatch(from,to,pktId,wantAck,pki,rssi,snr,plain,plainLen);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -864,15 +1296,24 @@ void start(){
         return;
     }
     s_chanHash=channelHash(Config::mesh().channel,s_aesKey,s_aesKeyLen);
+    s_storeHash=s_chanHash;
+    s_storeRegion=Config::mesh().region;
+    s_storeModem=Config::mesh().modem;
+    memset(s_storeChannel,0,sizeof(s_storeChannel));
+    strncpy(s_storeChannel,Config::mesh().channel,sizeof(s_storeChannel)-1);
+    s_chatDirty=false;
+    s_dmDirty=false;
+    s_nodesDirty=false;
+    s_dmPendN=0;
 
     MeshNode* self=nodeFindOrAdd(s_nodeNum);
     strncpy(self->shortName,Config::mesh().shortName,4);
+    self->shortName[4]=0;
     self->isSelf=true; self->lastSeen=(uint32_t)millis();
 
-    // Load persisted nodes from SD (skip self entries, avoid duplicates)
     loadNodes();
-    // Load or generate PKI keypair for Meshtastic DM compatibility
     loadOrGenPki();
+    loadChat();
 
     s_radioOk=radioInit();
     if(s_radioOk){
@@ -893,7 +1334,9 @@ void start(){
         uiReset();
         return;
     }
-    s_lastNodeBcast=0; s_run=true;
+    s_run=true;
+    s_lastNodeBcast=(uint32_t)millis();
+    broadcastNodeInfo();
     snprintf(s_status,sizeof(s_status),"MESH %s !%08lx",
              s_radioOk?"OK":"NO RADIO",(unsigned long)s_nodeNum);
     Serial.printf("[MESH] took %u heap=%u\n",
@@ -902,6 +1345,8 @@ void start(){
 
 void stop(){
     if (!s_run && !s_nodes && !s_chat && !s_dm && !s_hist && !s_txQ && !s_radio) return;
+    if (s_radio) s_radio->standby();
+    flushMeshDisk();
     size_t held = heapHeld();
     s_run=false; s_radioOk=false; s_rs=RS_IDLE;
     freeMeshResources();
@@ -918,7 +1363,19 @@ void update(){
     digitalWrite(12, HIGH);
     uint32_t now=(uint32_t)millis();
 
-    // NodeInfo broadcast every 15 min
+    static uint32_t s_lastDisk = 0;
+    if (s_rs != RS_TX &&
+        (s_chatDirty || s_dmDirty || s_nodesDirty || s_dmPendN) &&
+        (uint32_t)(now - s_lastDisk) > 2000) {
+        if (s_radio) s_radio->standby();
+        flushMeshDisk();
+        s_lastDisk = now;
+        digitalWrite(12, HIGH);
+        if (s_radio && s_radio->startReceive() == RADIOLIB_ERR_NONE) s_rs = RS_RX;
+        else s_rs = RS_IDLE;
+    }
+
+    // NodeInfo broadcast every 15 min. start() already sent the first one.
     if(now-s_lastNodeBcast>15UL*60UL*1000UL){ s_lastNodeBcast=now; broadcastNodeInfo(); }
 
     // Periodic node save every 5 minutes
@@ -966,15 +1423,22 @@ bool sendText(const char* text, uint32_t to){
     uint8_t data[64]; PbW d{data,sizeof(data)};
     d.vi(1,PORT_TEXT); d.by(2,(const uint8_t*)text,tl);
     if (!d.ok) return false;
-    bool ok=buildEnq(to,data,d.len,PRI_DEFAULT,to!=BROADCAST_ID);
+    bool ok = false;
+    if (to != BROADCAST_ID) {
+        MeshNode* peer = nodeByNum(to);
+        if (keyLive(peer))
+            ok = buildPkiEnq(to, peer->pubKey, data, d.len, PRI_DEFAULT, true);
+        else
+            ok = buildEnq(to, data, d.len, PRI_DEFAULT, true);
+    } else {
+        ok = buildEnq(to, data, d.len, PRI_DEFAULT, false);
+    }
     if(ok){
         Msg m{}; m.from=s_nodeNum; m.to=to; m.timeMs=(uint32_t)millis(); m.sent=true;
         uint8_t cp=tl<47?tl:47; memcpy(m.text,text,cp); m.text[cp]=0;
         strncpy(m.fromName,Config::mesh().shortName,7); m.fromName[7]=0;
-        if(to==BROADCAST_ID){ chatAdd(m); }
-        else {
-            if(s_dmNode==to||s_dmNode==0){ if(!s_dmNode) s_dmNode=to; dmAdd(m); }
-        }
+        if(to==BROADCAST_ID){ chatAdd(m); s_chatDirty=true; }
+        else noteDm(m);
     }
     return ok;
 }

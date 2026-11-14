@@ -131,6 +131,7 @@ static uint16_t sigCol(int16_t rssi) {
 }
 
 static void ageStr(uint32_t lastMs, char* out, uint8_t cap) {
+    if (!lastMs) { snprintf(out, cap, "--"); return; }
     uint32_t s = (millis() - lastMs) / 1000;
     if (s < 60) snprintf(out, cap, "%lus", (unsigned long)s);
     else if (s < 3600) snprintf(out, cap, "%lum", (unsigned long)(s / 60));
