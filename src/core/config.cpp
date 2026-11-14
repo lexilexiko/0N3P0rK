@@ -1,4 +1,5 @@
 #include "config.h"
+#include "../modes/mesh_pig.h"
 #include "../board/board.h"
 #include "../storage/littlefs_ops.h"
 #include "../cap/methods/method_ctx.h"
@@ -396,6 +397,7 @@ bool Config::save() {
     s_prefs.putUChar ("meshhop",  mc.hopLimit);
     s_prefs.putUChar ("meshslt",  mc.freqSlot);
     s_prefs.putBool  ("meshrxb",  mc.rxBoost);
+    MeshPig::persistCfg();
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)

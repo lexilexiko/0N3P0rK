@@ -75,6 +75,11 @@ void handleKeys();
 bool isComposing();
 // ASCII hint for the real bottom bar.
 const char* bottomHint();
+// True on PEOPLE when Backspace deletes the selected person, not the window.
+bool grabBackspace();
+// Copy mesh settings to the SD card, and bring them back after a flash erase.
+void syncStoredCfg();
+void persistCfg();
 
 // Status summary for the status bar
 const char* getStatusLine();

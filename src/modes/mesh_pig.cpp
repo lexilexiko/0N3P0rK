@@ -237,6 +237,7 @@ static const char* const PKI_PATH_OLD   = "/0N3P0rK/mesh/pki.bin";
 static const char* const NODES_PATH     = "/PigMesh/nodes.bin";
 static const char* const NODES_PATH_OLD = "/0N3P0rK/mesh/nodes.bin";
 static const char* const CHAT_PATH      = "/PigMesh/chat.bin";
+static const char* const CFG_PATH       = "/PigMesh/cfg.bin";
 
 // Live files are only under /PigMesh. The old /0N3P0rK/mesh copies are read
 // once when the new file is missing, then left alone. GPS, handshakes, and
@@ -246,6 +247,7 @@ static constexpr uint32_t NODES_MAGIC_V0 = 0x4E4F4445u; // 'NODE'
 static constexpr uint32_t PKI_MAGIC   = 0x504B4921u; // 'PKI!'
 static constexpr uint32_t CHAT_MAGIC  = 0x43484131u; // 'CHA1'
 static constexpr uint32_t DM_MAGIC    = 0x444D4731u; // 'DMG1'
+static constexpr uint32_t CFG_MAGIC   = 0x3146434Du; // 'MCF1'
 
 static bool     s_chatDirty = false;
 static bool     s_dmDirty   = false;
@@ -549,12 +551,51 @@ static MeshNode* nodeByNum(uint32_t num) {
     return nullptr;
 }
 
+// One file per channel. A different channel must not truncate this log.
+static void chatStampPath(char* out, size_t cap) {
+    snprintf(out, cap, "/PigMesh/c%02x%02x%02x.bin",
+             s_storeHash, s_storeRegion, s_storeModem);
+}
+
+static bool readChatFile(const char* path) {
+    sdIdle();
+    if (!SD.exists(path)) return false;
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+    uint32_t magic = 0;
+    uint8_t hash = 0, region = 0, modem = 0, n = 0;
+    char channel[20] = {};
+    bool ok = f.read((uint8_t*)&magic, 4) == 4 && magic == CHAT_MAGIC &&
+              f.read(&hash, 1) == 1 && f.read(&region, 1) == 1 &&
+              f.read(&modem, 1) == 1 &&
+              f.read((uint8_t*)channel, sizeof(channel)) == (int)sizeof(channel) &&
+              f.read(&n, 1) == 1 && n <= MAX_CHAT &&
+              hash == s_storeHash && region == s_storeRegion &&
+              modem == s_storeModem &&
+              strncmp(channel, s_storeChannel, sizeof(channel)) == 0;
+    if (!ok) { f.close(); sdIdle(); return false; }
+    for (uint8_t i = 0; i < n; i++) {
+        if (f.read((uint8_t*)&s_chat[i], sizeof(Msg)) != (int)sizeof(Msg)) { n = i; break; }
+        s_chat[i].text[47] = 0;
+        s_chat[i].fromName[7] = 0;
+    }
+    f.close();
+    sdIdle();
+    s_chatN = n;
+    s_chatHead = (uint8_t)(n % MAX_CHAT);
+    s_chatNew = 0;
+    Serial.printf("[MESH] loaded %u chat lines\n", n);
+    return true;
+}
+
 static void saveChat() {
     if (!s_chatDirty) return;
     if (!Storage::available() || !s_chat) return;
     meshEnsureDir();
+    char path[32];
+    chatStampPath(path, sizeof(path));
     sdIdle();
-    File f = SD.open(CHAT_PATH, FILE_WRITE);
+    File f = SD.open(path, FILE_WRITE);
     if (!f) { sdIdle(); return; }
     uint8_t n = s_chatN > MAX_CHAT ? MAX_CHAT : s_chatN;
     f.write((const uint8_t*)&CHAT_MAGIC, 4);
@@ -578,33 +619,11 @@ static void saveChat() {
 
 static void loadChat() {
     if (!Storage::available() || !s_chat) return;
-    sdIdle();
-    if (!SD.exists(CHAT_PATH)) return;
-    File f = SD.open(CHAT_PATH, FILE_READ);
-    if (!f) return;
-    uint32_t magic = 0;
-    uint8_t hash = 0, region = 0, modem = 0, n = 0;
-    char channel[20] = {};
-    bool ok = f.read((uint8_t*)&magic, 4) == 4 && magic == CHAT_MAGIC &&
-              f.read(&hash, 1) == 1 && f.read(&region, 1) == 1 &&
-              f.read(&modem, 1) == 1 &&
-              f.read((uint8_t*)channel, sizeof(channel)) == (int)sizeof(channel) &&
-              f.read(&n, 1) == 1 && n <= MAX_CHAT &&
-              hash == s_storeHash && region == s_storeRegion &&
-              modem == s_storeModem &&
-              strncmp(channel, s_storeChannel, sizeof(channel)) == 0;
-    if (!ok) { f.close(); sdIdle(); return; }
-    for (uint8_t i = 0; i < n; i++) {
-        if (f.read((uint8_t*)&s_chat[i], sizeof(Msg)) != (int)sizeof(Msg)) { n = i; break; }
-        s_chat[i].text[47] = 0;
-        s_chat[i].fromName[7] = 0;
-    }
-    f.close();
-    sdIdle();
-    s_chatN = n;
-    s_chatHead = (uint8_t)(n % MAX_CHAT);
-    s_chatNew = 0;
-    Serial.printf("[MESH] loaded %u chat lines\n", n);
+    char path[32];
+    chatStampPath(path, sizeof(path));
+    if (readChatFile(path)) return;
+    // Older builds kept every channel in one file. Leave it in place.
+    readChatFile(CHAT_PATH);
 }
 
 static void dmPath(uint32_t peer, char* out, size_t cap) {
@@ -656,6 +675,7 @@ static void rememberDm(uint32_t peer, const Msg& m);
 
 static Msg s_dmPend[8];
 static uint8_t s_dmPendN = 0;
+static uint32_t s_forgetNode = 0;
 
 static void queueDm(const Msg& m) {
     if (s_dmPendN < 8) s_dmPend[s_dmPendN++] = m;
@@ -704,7 +724,18 @@ static void rememberDm(uint32_t peer, const Msg& m) {
     delete[] buf;
 }
 
+static void removeForgottenDm() {
+    if (!s_forgetNode || !Storage::available()) return;
+    char path[32];
+    dmPath(s_forgetNode, path, sizeof(path));
+    sdIdle();
+    if (SD.exists(path)) SD.remove(path);
+    sdIdle();
+    s_forgetNode = 0;
+}
+
 static void flushMeshDisk() {
+    removeForgottenDm();
     if (s_nodesDirty) saveNodes();
     saveChat();
     flushPendingDm();
@@ -1267,11 +1298,147 @@ static bool radioInit(){
     return true;
 }
 
+#pragma pack(push, 1)
+struct MeshCfgDisk {
+    uint32_t magic;
+    uint8_t  enabled;
+    uint8_t  region;
+    uint8_t  freqOverride;
+    uint8_t  modem;
+    uint32_t freqKHz;
+    int8_t   txPower;
+    uint8_t  hopLimit;
+    uint8_t  freqSlot;
+    uint8_t  rxBoost;
+    char     channel[20];
+    char     psk[45];
+    char     shortName[5];
+};
+#pragma pack(pop)
+
+static bool pauseRadioForSd() {
+    if (!s_run || !s_radio || s_rs == RS_TX) return false;
+    s_radio->standby();
+    return true;
+}
+
+static void resumeRadioAfterSd(bool paused) {
+    if (!paused || !s_radio) return;
+    digitalWrite(12, HIGH);
+    if (s_radio->startReceive() == RADIOLIB_ERR_NONE) s_rs = RS_RX;
+    else s_rs = RS_IDLE;
+}
+
+static void writeCfgFile() {
+    if (!Storage::available()) return;
+    const MeshConfig& mc = Config::mesh();
+    MeshCfgDisk d{};
+    d.magic = CFG_MAGIC;
+    d.enabled = mc.enabled ? 1 : 0;
+    d.region = mc.region;
+    d.freqOverride = mc.freqOverride ? 1 : 0;
+    d.modem = mc.modem;
+    d.freqKHz = mc.freqKHz;
+    d.txPower = mc.txPower;
+    d.hopLimit = mc.hopLimit;
+    d.freqSlot = mc.freqSlot;
+    d.rxBoost = mc.rxBoost ? 1 : 0;
+    memcpy(d.channel, mc.channel, sizeof(d.channel));
+    memcpy(d.psk, mc.psk, sizeof(d.psk));
+    memcpy(d.shortName, mc.shortName, sizeof(d.shortName));
+    d.channel[sizeof(d.channel) - 1] = 0;
+    d.psk[sizeof(d.psk) - 1] = 0;
+    d.shortName[sizeof(d.shortName) - 1] = 0;
+    bool paused = pauseRadioForSd();
+    meshEnsureDir();
+    sdIdle();
+    File f = SD.open(CFG_PATH, FILE_WRITE);
+    if (f) {
+        f.write((const uint8_t*)&d, sizeof(d));
+        f.close();
+    }
+    sdIdle();
+    resumeRadioAfterSd(paused);
+}
+
+static bool readCfgFile(MeshCfgDisk& d) {
+    if (!Storage::available() || !SD.exists(CFG_PATH)) return false;
+    sdIdle();
+    File f = SD.open(CFG_PATH, FILE_READ);
+    if (!f) return false;
+    bool ok = f.read((uint8_t*)&d, sizeof(d)) == (int)sizeof(d) && d.magic == CFG_MAGIC;
+    f.close();
+    sdIdle();
+    if (!ok) return false;
+    if (d.region >= 17 || d.modem > 9) return false;
+    if (d.txPower < 2 || d.txPower > 22) return false;
+    if (d.hopLimit < 1 || d.hopLimit > 7) return false;
+    if (d.freqKHz && (d.freqKHz < 137000u || d.freqKHz > 960000u)) return false;
+    d.channel[sizeof(d.channel) - 1] = 0;
+    d.psk[sizeof(d.psk) - 1] = 0;
+    d.shortName[sizeof(d.shortName) - 1] = 0;
+    return true;
+}
+
+void meshDropNode(uint8_t index) {
+    if (!s_nodes || index >= s_nodeN) return;
+    if (s_nodes[index].isSelf) return;
+    uint32_t num = s_nodes[index].nodeNum;
+    uint8_t w = 0;
+    for (uint8_t i = 0; i < s_dmPendN; i++) {
+        uint32_t peer = (s_dmPend[i].from == s_nodeNum) ? s_dmPend[i].to : s_dmPend[i].from;
+        if (peer != num) s_dmPend[w++] = s_dmPend[i];
+    }
+    s_dmPendN = w;
+    if (s_dmNode == num) {
+        s_dmNode = 0;
+        s_dmN = 0;
+        s_dmHead = 0;
+        s_dmDirty = false;
+    }
+    s_forgetNode = num;
+    for (uint8_t i = index; i + 1 < s_nodeN; i++) s_nodes[i] = s_nodes[i + 1];
+    s_nodeN--;
+    memset(&s_nodes[s_nodeN], 0, sizeof(MeshNode));
+    s_nodesDirty = true;
+    if (s_rs == RS_TX) return;
+    bool paused = pauseRadioForSd();
+    flushMeshDisk();
+    resumeRadioAfterSd(paused);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // PUBLIC NAMESPACE
 // ════════════════════════════════════════════════════════════════════════════
 namespace MeshPig {
+
+void persistCfg() { writeCfgFile(); }
+
+void syncStoredCfg() {
+    MeshCfgDisk d{};
+    if (!readCfgFile(d)) {
+        writeCfgFile();
+        return;
+    }
+    MeshConfig& mc = Config::mesh();
+    mc.enabled = d.enabled != 0;
+    mc.region = d.region;
+    mc.freqOverride = d.freqOverride != 0;
+    mc.modem = d.modem;
+    if (d.freqKHz) mc.freqKHz = d.freqKHz;
+    mc.txPower = d.txPower;
+    mc.hopLimit = d.hopLimit;
+    mc.freqSlot = d.freqSlot;
+    mc.rxBoost = d.rxBoost != 0;
+    if (d.channel[0]) memcpy(mc.channel, d.channel, sizeof(mc.channel));
+    if (d.psk[0]) memcpy(mc.psk, d.psk, sizeof(mc.psk));
+    if (d.shortName[0]) memcpy(mc.shortName, d.shortName, sizeof(mc.shortName));
+    mc.channel[sizeof(mc.channel) - 1] = 0;
+    mc.psk[sizeof(mc.psk) - 1] = 0;
+    mc.shortName[sizeof(mc.shortName) - 1] = 0;
+    Config::save();
+}
+
 
 size_t heapHeld() {
     size_t n = 0;

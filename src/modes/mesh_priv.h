@@ -53,6 +53,8 @@ void meshFlushDm();
 void meshReloadDm(uint32_t node);
 // Incoming text that is not ours. dm marks that person on PEOPLE.
 void meshIncoming(bool dm, uint32_t peer);
+// Drop one person, their DM file, and the row. Self cannot be dropped.
+void meshDropNode(uint8_t index);
 
 int utf8Next(const char* s, uint32_t& cp);
 int utf8Fit(const char* s, int cap);

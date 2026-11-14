@@ -341,7 +341,7 @@ void loop() {
     }
     if (overlayMode() && s_mode != AppMode::BADUSB && s_mode != AppMode::FILEMGR &&
         s_mode != AppMode::DESK &&
-        !(s_mode == AppMode::MESH && MeshPig::isComposing()) &&
+        !(s_mode == AppMode::MESH && (MeshPig::isComposing() || MeshPig::grabBackspace())) &&
         !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {

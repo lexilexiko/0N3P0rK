@@ -21,6 +21,7 @@
 #include "modes/evilpig.h"
 #include "modes/pigpass.h"
 #include "modes/deskview.h"
+#include "modes/mesh_pig.h"
 #include "board/led.h"
 
 static void preInitWiFiDriverEarly() {
@@ -67,6 +68,7 @@ void setup() {
     Serial.printf("[BOOT] board=%s\n", Board::modelLabel());
 
     Config::init();
+    MeshPig::syncStoredCfg();
     XP::begin();
     M5.Display.setBrightness(Config::personality().brightness * 255 / 100);
 

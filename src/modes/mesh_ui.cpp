@@ -29,12 +29,18 @@
 #define COL_RED     TFT_RED
 #define COL_ORANGE  0xFD20
 #define LH          10
+#define CHAT_LH     26
 #define TAB_H       11
 #define MESH_H      105
 
 // Rows under the tab strip. The key line lives in the real bottom bar.
 static int meshRows() {
     int rows = (MESH_H - TAB_H - 2) / LH;
+    return rows < 1 ? 1 : rows;
+}
+
+static int chatRows() {
+    int rows = (MESH_H - TAB_H - 2) / CHAT_LH;
     return rows < 1 ? 1 : rows;
 }
 
@@ -47,15 +53,54 @@ static void blitGlyph(M5Canvas& cv, int x, int y, const uint8_t* col, uint16_t f
     }
 }
 
+static void blitGlyphScale(M5Canvas& cv, int x, int y, const uint8_t* col,
+                           uint16_t fg, int s) {
+    for (int c = 0; c < 5; c++) {
+        uint8_t bits = col[c];
+        for (int r = 0; r < 7; r++) {
+            if (bits & (uint8_t)(1u << (6 - r)))
+                cv.fillRect(x + c * s, y + r * s, s, s, fg);
+        }
+    }
+}
+
+// Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
+static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
+                         uint16_t fg, int scale) {
+    if (scale < 1) scale = 1;
+    if (cp < 0x80) {
+        cv.setTextSize((uint8_t)scale);
+        cv.setTextColor(fg, (uint16_t)COL_BG);
+        cv.setCursor(x, y);
+        char ch[2] = { (char)cp, 0 };
+        cv.print(ch);
+        cv.setTextSize(1);
+        return;
+    }
+    const uint8_t* g = meshGlyph((uint16_t)cp);
+    if (g) {
+        blitGlyphScale(cv, x, y + (scale > 1 ? 1 : 0), g, fg, scale);
+        return;
+    }
+    cv.setTextSize((uint8_t)scale);
+    cv.setTextColor(fg, (uint16_t)COL_BG);
+    cv.setCursor(x, y);
+    cv.print("?");
+    cv.setTextSize(1);
+}
+
 static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
-                    uint16_t fg, uint16_t bg) {
+                    uint16_t fg, uint16_t bg, int scale = 1) {
     if (!s) return x;
-    while (*s && x + 6 <= xMax) {
+    if (scale < 1) scale = 1;
+    int pitch = scale >= 2 ? 12 : 6;
+    while (*s && x + pitch <= xMax) {
         uint32_t cp;
         int n = utf8Next(s, cp);
         if (n <= 0) break;
         s += n;
-        if (cp < 0x80) {
+        if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale);
+        else if (cp < 0x80) {
             cv.setTextColor(fg, bg);
             cv.setCursor(x, y);
             char ch[2] = { (char)cp, 0 };
@@ -69,7 +114,7 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
                 cv.print("?");
             }
         }
-        x += 6;
+        x += pitch;
     }
     return x;
 }
@@ -363,7 +408,7 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
 static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
     int y = TAB_H + 2;
     int yMax = h - 2;
-    int rows = meshRows();
+    int rows = chatRows();
     uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
     uint8_t nmsg = dm ? s_dmN : s_chatN;
@@ -403,14 +448,15 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
     for (int i = 0; i < rows; i++) {
         Msg* m = dm ? dmGet((uint8_t)(scroll + i)) : chatGet((uint8_t)(scroll + i));
         if (!m) break;
-        int yy = y + i * LH;
+        int yy = y + i * CHAT_LH;
+        if (yy + CHAT_LH > yMax) break;
         uint16_t col = m->sent ? (uint16_t)COL_GREEN : (uint16_t)COL_TEXT;
         const char* who = m->fromName[0] ? m->fromName : "?";
-        int x = drawUtf8(cv, 2, yy, 56, who, col, COL_BG);
+        int x = drawUtf8(cv, 2, yy, 80, who, col, COL_BG);
         cv.setTextColor(col, (uint16_t)COL_BG);
         cv.setCursor(x, yy);
         cv.print(m->to == BROADCAST_ID ? ":" : ">");
-        drawUtf8(cv, x + 6, yy, w - 2, m->text, col, COL_BG);
+        drawUtf8(cv, 2, yy + 9, w - 2, m->text, col, COL_BG, 2);
     }
 }
 
@@ -560,49 +606,15 @@ static char shiftAscii(char c) {
     }
 }
 
-static void blitGlyphScale(M5Canvas& cv, int x, int y, const uint8_t* col,
-                           uint16_t fg, int s) {
-    for (int c = 0; c < 5; c++) {
-        uint8_t bits = col[c];
-        for (int r = 0; r < 7; r++) {
-            if (bits & (uint8_t)(1u << (6 - r)))
-                cv.fillRect(x + c * s, y + r * s, s, s, fg);
-        }
-    }
-}
-
-// Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
-static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
-                         uint16_t fg, int scale) {
-    if (scale < 1) scale = 1;
-    if (cp < 0x80) {
-        cv.setTextSize((uint8_t)scale);
-        cv.setTextColor(fg, (uint16_t)COL_BG);
-        cv.setCursor(x, y);
-        char ch[2] = { (char)cp, 0 };
-        cv.print(ch);
-        cv.setTextSize(1);
-        return;
-    }
-    const uint8_t* g = meshGlyph((uint16_t)cp);
-    if (g) {
-        blitGlyphScale(cv, x, y + (scale > 1 ? 1 : 0), g, fg, scale);
-        return;
-    }
-    cv.setTextSize((uint8_t)scale);
-    cv.setTextColor(fg, (uint16_t)COL_BG);
-    cv.setCursor(x, y);
-    cv.print("?");
-    cv.setTextSize(1);
-}
-
-// Yellow Shift letters pinned to the bottom. Text is drawn only above this.
+// Key legend pinned under the text. Letters follow Shift: small, or capitals.
 static void drawShiftLegend(M5Canvas& cv, int w, int h) {
     const int pitch = 12;
     const int rowH = 16;
     const int keyTop = h - 3 * rowH;
+    bool upper = M5Cardputer.Keyboard.keysState().shift ||
+                 M5Cardputer.Keyboard.capslocked();
     cv.setTextSize(1);
-    cv.setTextColor(COL_YELLOW, (uint16_t)COL_BG);
+    cv.setTextColor(upper ? (uint16_t)COL_YELLOW : (uint16_t)COL_DIM, (uint16_t)COL_BG);
     cv.setCursor(4, keyTop - 9);
     cv.print("SHIFT");
     for (int r = 0; r < 3; r++) {
@@ -611,7 +623,8 @@ static void drawShiftLegend(M5Canvas& cv, int w, int h) {
         if (kx < 2) kx = 2;
         int ky = keyTop + r * rowH;
         for (const char* p = KEY_ROWS[r]; *p; p++) {
-            drawCpScaled(cv, kx, ky, mapLay(shiftAscii(*p), s_lang), COL_YELLOW, 2);
+            char src = upper ? shiftAscii(*p) : *p;
+            drawCpScaled(cv, kx, ky, mapLay(src, s_lang), COL_YELLOW, 2);
             kx += pitch;
         }
     }
@@ -969,7 +982,7 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
     uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
     uint8_t nmsg = dm ? s_dmN : s_chatN;
-    int rows = meshRows();
+    int rows = chatRows();
     uint8_t maxTop = (nmsg > (uint8_t)rows) ? (uint8_t)(nmsg - (uint8_t)rows) : 0;
     if (dir < 0 && scroll > 0) { scroll--; stick = false; }
     else if (dir > 0 && scroll < maxTop) {
@@ -985,6 +998,13 @@ static void peopleKeys(const Keyboard_Class::KeysState& ks) {
         if (s_nodeScroll > 0) s_nodeScroll--;
     } else if (keyHas('.')) {
         if (s_nodeScroll + 1 < s_nodeN) s_nodeScroll++;
+    } else if (ks.del && !s_nodes[s_nodeScroll].isSelf) {
+        uint32_t num = s_nodes[s_nodeScroll].nodeNum;
+        clearDmUnread(num);
+        meshDropNode(s_nodeScroll);
+        if (s_nodeN && s_nodeScroll >= s_nodeN) s_nodeScroll = (uint8_t)(s_nodeN - 1);
+        Display::showToast("DELETED", 700);
+        return;
     } else if (ks.enter && !s_nodes[s_nodeScroll].isSelf) {
         if (!s_run || !s_radioOk) {
             Display::showToast(Config::mesh().enabled ? "NO RADIO" : "MESH OFF", 800);
@@ -1080,7 +1100,8 @@ const char* bottomHint() {
         rest = "</> TAB  ^/v MOVE  ENT WRITE  ESC";
     else if (s_layer == LY_PAGE && s_tab == 1) {
         bool self = s_nodes && s_nodeN && s_nodeScroll < s_nodeN && s_nodes[s_nodeScroll].isSelf;
-        rest = self ? "</> TAB  ^/v MOVE  ESC BACK" : "</> TAB  ^/v MOVE  ENT CHAT  ESC";
+        rest = self ? "</> TAB  ^/v MOVE  ESC BACK"
+                    : "</> ^/v ENT CHAT BKSP DEL ESC";
     } else if (s_layer == LY_PAGE && s_tab == 2) rest = "</> TAB  ESC BACK";
     else if (s_layer == LY_PAGE) rest = "</> TAB  ^/v MOVE  <> CHG  ENT";
     snprintf(b, sizeof(b), "%s  %s", langName(), rest);
@@ -1088,5 +1109,11 @@ const char* bottomHint() {
 }
 
 bool isComposing() { return s_layer == LY_WRITE || s_layer == LY_FIELD; }
+
+bool grabBackspace() {
+    if (s_layer != LY_PAGE || s_tab != 1) return false;
+    if (!s_nodes || !s_nodeN || s_nodeScroll >= s_nodeN) return false;
+    return !s_nodes[s_nodeScroll].isSelf;
+}
 
 } // namespace MeshPig
