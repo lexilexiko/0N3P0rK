@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.4.2**
+**Current version: 1.4.3b(Mesh)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -12,8 +12,9 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Release note:** version **1.4.2** expands GPS with offline SD maps, a
-> movable and zoomable WORLD view, and clearer full-screen MAP controls.
+> **Release note:** version **1.4.3b(Mesh)** adds Meshtastic on the Cardputer
+> ADV LoRa cap: channel chat, direct messages with a public key, and SD
+> storage under `/PigMesh`.
 
 ---
 
@@ -68,7 +69,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.2_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.3b(Mesh)_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -98,7 +99,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.4.2`.
+   `1.4.3b(Mesh)`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -705,24 +706,53 @@ radio stack. Its UART buffer and trail memory are freed when tracking is stopped
 
 ## Meshtastic
 
-The **MESH** mode targets the **Cardputer ADV with the CAP LoRa-1262 SX1262
-module**. It uses the cap's RF-enable expander and shares the SPI bus with the
-SD card. Mesh packet buffers and the radio driver are allocated only while the
-mode is enabled and released when it is stopped. The firmware does not start
-the radio on the original Cardputer or when the CAP expander is absent.
+**MESH** talks to Meshtastic nodes from a **Cardputer ADV with the CAP
+LoRa-1262 (SX1262)**. The original Cardputer has no LoRa cap, so the radio
+stays off and mesh memory stays free until **SET → MESH** is turned on.
+Packet buffers and the radio driver are allocated only while mesh is enabled.
+**TASKS** or the MESH toggle stops the radio and returns that memory. Leaving
+the mesh screen with `ESC` does not stop it.
 
-The current implementation can receive Meshtastic text, NodeInfo, and
-positions, maintain a temporary node list, and send channel text and direct
-text packets. Use the same region, modem preset, channel name, and PSK as the
-peer. The default is LongFast / EU868 with the Meshtastic default PSK.
+Open **CONNECT → MESH**. The other node must use the same region, modem
+preset, channel name, and PSK. The default is one channel: **LongFast**,
+**EU868**, the Meshtastic default PSK, and short name **PIG**. An empty
+channel becomes LongFast, an empty name becomes PIG, and an empty PSK becomes
+the default. Frequency is chosen from the region unless a value from 137 to
+960 MHz is set.
 
-This is **not yet a complete Meshtastic node implementation**: direct messages
-do not use Meshtastic PKI, delivery ACK tracking/retries and persistent node or
-message storage are not implemented, and regional frequency/power/duty-cycle
-handling is limited to the firmware's presets. A node list only contains
-devices this radio has actually heard. Test against a real Meshtastic node
-before relying on interoperability; a successful firmware build does not
-verify the RF path or over-the-air behavior.
+| Tab | What it shows |
+| --- | --- |
+| **CHAT** | Channel messages, plus direct messages sent to this pig |
+| **PEOPLE** | Nodes this radio has heard. `ENT` opens a direct chat |
+| **RADIO** | This node. The `you` line ends with `KEY` or `NO KEY` |
+| **SET** | MESH, region, modem, power, hops, slot, frequency, channel, name, PSK, RX boost |
+
+| Key | Action |
+| --- | --- |
+| `,` / `/` | Previous / next tab, including inside a page |
+| `ENT` | Open the highlighted tab. On SET, toggle MESH or RX BOOST, or open a text field |
+| `ESC` | Back one level. From the tab strip, return to the menu |
+| `;` / `.` | Move up / down |
+| Shift+`,` / Shift+`.` | Change the selected SET value |
+| `T` | Write a channel message, or a direct message when a person is open |
+| `FN` | Cycle **EN / RU / UA** for this session while composing |
+| `BKSP` | Delete one character while composing. Otherwise minimize |
+
+Direct messages use the other node's public key. Channel chat stays on the
+channel PSK. This pig sends its own public key in NodeInfo, answers a NodeInfo
+request addressed to it, and repeats that announcement after start. When
+**RADIO** shows `KEY`, the other node can store the key and a direct message
+can be sent. `NO KEY` means this pig has no key yet, so the other node will
+refuse the direct message.
+
+Heard nodes, the channel conversation, direct messages, and the key are saved
+on the SD card under `/PigMesh` and restored on the next boot when the
+channel, region, and modem still match. Files under `/0N3P0rK` are not mesh
+data.
+
+This is one Meshtastic channel on the firmware's region and modem presets.
+The people list contains nodes this radio has heard. It is not a full
+Meshtastic router.
 
 ## LED indicator
 
@@ -989,7 +1019,17 @@ Open them on the device with **FILES** (FileMgr) or pull them over **XFER**.
   …
 ```
 
-Exact folder names follow `src/core/sd_layout.h`.
+Mesh storage is a separate SD folder, not inside `/0N3P0rK`:
+
+```text
+/PigMesh/
+  pki.bin         this node's public and private key
+  nodes.bin       nodes this radio has heard
+  chat.bin        channel conversation for the saved channel
+  dm/             one direct-message file per node
+```
+
+Exact `/0N3P0rK` folder names follow `src/core/sd_layout.h`.
 
 ---
 
@@ -1008,7 +1048,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.4.2, see
+For the chronological release notes from the early builds through 1.4.3b(Mesh), see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---

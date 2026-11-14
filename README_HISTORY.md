@@ -451,4 +451,28 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - Draw the farm's GPS antenna behind the pig, consistent with the scene's
   background-to-foreground order.
 
+### 1.4.3b(Mesh)
+
+#### Meshtastic on the ADV LoRa cap
+
+- Added **MESH** for the Cardputer ADV with the CAP LoRa-1262 (SX1262). It
+  stays off on the original Cardputer, and its packet buffers and radio driver
+  are allocated only while the SET mesh toggle is on.
+- **CONNECT → MESH** opens the radio screen. **SET → MESH** and the SET tab
+  hold region, modem, channel, PSK, short name, frequency, power, hops, slot,
+  and RX boost. The default is one channel: LongFast, EU868, the Meshtastic
+  default PSK, and short name PIG.
+- **CHAT** shows channel text and direct messages addressed to this node.
+  **PEOPLE** lists nodes this radio has heard and opens a direct chat.
+  **RADIO** shows this node, with `KEY` or `NO KEY` on the `you` line.
+- Direct messages use the other node's X25519 public key. Channel text stays
+  on the channel PSK. The pig includes its public key in NodeInfo, answers a
+  NodeInfo request addressed to it, and announces again after start.
+- Heard nodes, the channel conversation, direct messages, and the key are
+  stored under `/PigMesh` and restored when the channel, region, and modem
+  still match. Other `/0N3P0rK` folders are left untouched.
+- Composing accepts EN, RU, and UA for the session. `ESC` leaves the screen
+  without stopping the radio. **TASKS** or the MESH toggle stops it and
+  returns the heap.
+
 ---
