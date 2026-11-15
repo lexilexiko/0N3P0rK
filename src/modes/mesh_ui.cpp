@@ -18,18 +18,17 @@
 // ════════════════════════════════════════════════════════════════════════════
 // DRAW HELPERS
 // ════════════════════════════════════════════════════════════════════════════
-#define COL_BG      TFT_BLACK
-#define COL_HDR     0x0010
-#define COL_HDR2    0x2104
-#define COL_SEL     0x2965
-#define COL_TEXT    TFT_WHITE
-#define COL_DIM     0x8410
-#define COL_CYAN    TFT_CYAN
-#define COL_GREEN   TFT_GREEN
-#define COL_YELLOW  TFT_YELLOW
-#define COL_PINK    0xF81F
-#define COL_RED     TFT_RED
-#define COL_ORANGE  0xFD20
+#define COL_BG      UiStyle::BG
+#define COL_HDR     UiStyle::PANEL
+#define COL_HDR2    UiStyle::BG
+#define COL_SEL     UiStyle::PINK
+#define COL_TEXT    UiStyle::TEXT
+#define COL_DIM     UiStyle::DIM
+#define COL_CYAN    UiStyle::CYAN
+#define COL_GREEN   UiStyle::GREEN
+#define COL_YELLOW  UiStyle::GOLD
+#define COL_PINK    UiStyle::PINK
+#define COL_RED     UiStyle::RED
 #define LH          10
 #define TAB_H       11
 #define MESH_H      105
@@ -197,7 +196,7 @@ static int32_t drawEmojiPng(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
     for (int c = 0; c < 5; c++) {
         for (int r = 0; r < 7; r++) {
             if (glyph[c] & (uint8_t)(1u << (6 - r)))
-                gfx->fillRect(x + c * scale, y + r * scale, scale, scale, TFT_WHITE);
+                gfx->fillRect(x + c * scale, y + r * scale, scale, scale, COL_TEXT);
         }
     }
     return cellWidth;
@@ -592,42 +591,40 @@ static bool validRadioPlan(const MeshConfig& mc) {
 static void drawTabs(M5Canvas& cv, int w) {
     static const char* tabs[] = { "CHAT", "PEOPLE", "RADIO", "SET" };
     const int tw = w / 4;
+    cv.fillRoundRect(2, 0, w - 4, TAB_H, 4, COL_HDR2);
     for (int i = 0; i < 4; i++) {
         int x = i * tw;
         bool on = (i == (int)s_tab);
-        uint16_t bg = on ? (uint16_t)COL_HDR : (uint16_t)COL_HDR2;
-        cv.fillRect(x, 0, tw, TAB_H, bg);
+        uint16_t bg = on ? (uint16_t)COL_PINK : (uint16_t)COL_HDR2;
+        if (on) cv.fillRoundRect(x + 2, 1, tw - 4, TAB_H - 2, 3, bg);
         bool alert = (i == 0 && s_chatAlert) || (i == 1 && anyDmUnread());
-        uint16_t fg = alert ? (uint16_t)COL_YELLOW : (on ? (uint16_t)COL_CYAN : (uint16_t)COL_DIM);
+        uint16_t fg = on ? (uint16_t)COL_BG :
+                      (alert ? (uint16_t)COL_YELLOW : (uint16_t)COL_DIM);
         cv.setTextColor(fg, bg);
         int lw = (int)strlen(tabs[i]) * 6;
         cv.setCursor(x + (tw - lw) / 2, 1);
         cv.print(tabs[i]);
-        uint16_t mark = (s_layer == LY_STRIP) ? (uint16_t)COL_YELLOW : (uint16_t)COL_CYAN;
-        if (on) cv.fillRect(x, TAB_H - 2, tw, 2, mark);
-        if (i == 0 && !s_chatStick) {
-            cv.setTextColor(COL_YELLOW, bg);
-            cv.setCursor(x + 2, 1);
-            cv.print("+");
-        }
+        if (on) cv.fillRoundRect(x + tw / 2 - 5, TAB_H - 2, 10, 2, 1, COL_YELLOW);
+        if (i == 0 && !s_chatStick) cv.fillCircle(x + tw - 7, 5, 2, COL_YELLOW);
         if (i == 1 && anyDmUnread()) drawSmsMark(cv, x + tw - 9, 3, COL_YELLOW);
     }
-    uint16_t pip = COL_RED;
-    if (s_radioOk && s_rs == RS_TX) pip = COL_PINK;
-    else if (s_radioOk) pip = COL_GREEN;
-    cv.fillRect(tw - 7, 3, 4, 4, pip);
+    uint16_t pip = s_radioOk ? (s_rs == RS_TX ? (uint16_t)COL_YELLOW : (uint16_t)COL_GREEN)
+                             : (uint16_t)COL_RED;
+    cv.fillCircle(3 * tw - 7, 5, 2, pip);
 }
 
 static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel) {
     uint16_t bg = COL_BG;
     if (sel) {
-        cv.fillRect(0, y - 1, w, LH, COL_SEL);
-        cv.fillRect(0, y - 1, 2, LH, COL_CYAN);
+        cv.fillRoundRect(3, y - 1, w - 6, LH, 3, COL_SEL);
+        cv.fillRoundRect(5, y + 1, 2, LH - 3, 1, COL_YELLOW);
         bg = COL_SEL;
     }
     bool fresh = n.isSelf || (n.lastSeen &&
                  (uint32_t)millis() - n.lastSeen < 8UL * 60UL * 1000UL);
-    uint16_t nameCol = n.isSelf ? (uint16_t)COL_PINK : (fresh ? (uint16_t)COL_TEXT : (uint16_t)COL_DIM);
+    uint16_t nameCol = sel ? (uint16_t)COL_BG :
+                       (n.isSelf ? (uint16_t)COL_PINK :
+                        (fresh ? (uint16_t)COL_TEXT : (uint16_t)COL_DIM));
     if (n.isSelf) drawUtf8(cv, 4, y, 40, "you", nameCol, bg);
     else if (n.shortName[0]) drawUtf8(cv, 4, y, 40, n.shortName, nameCol, bg);
     else {
@@ -635,21 +632,23 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
         snprintf(id, sizeof(id), "!%04lx", (unsigned long)(n.nodeNum & 0xFFFF));
         drawUtf8(cv, 4, y, 40, id, nameCol, bg);
     }
-    cv.setTextColor(n.isSelf ? (uint16_t)COL_DIM : sigCol(n.rssi), bg);
+    cv.setTextColor(sel ? (uint16_t)COL_BG :
+                    (n.isSelf ? (uint16_t)COL_DIM : sigCol(n.rssi)), bg);
     cv.setCursor(42, y);
     if (n.isSelf) cv.print("  --");
     else cv.printf("%4d", n.rssi);
     char age[8];
     ageStr(n.lastSeen, age, sizeof(age));
-    cv.setTextColor(COL_DIM, bg);
+    cv.setTextColor(sel ? (uint16_t)COL_BG : (uint16_t)COL_DIM, bg);
     cv.setCursor(72, y);
     cv.printf("%4s", age);
     bool sms = !n.isSelf && dmIsUnread(n.nodeNum);
     int nameMax = sms ? w - 22 : w - 2;
     if (n.longName[0]) drawUtf8(cv, 104, y, nameMax, n.longName, nameCol, bg);
     if (sms) {
-        cv.setTextColor(COL_YELLOW, bg);
-        cv.setCursor(w - 20, y);
+        cv.fillRoundRect(w - 24, y - 1, 21, LH, 3, COL_YELLOW);
+        cv.setTextColor(COL_BG, COL_YELLOW);
+        cv.setCursor(w - 22, y);
         cv.print("SMS");
     }
 }
@@ -721,19 +720,31 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
         char header[24];
         snprintf(header, sizeof(header), "%s%c%s", who,
                  m->to == BROADCAST_ID ? ':' : '>', mark);
+        uint16_t bodyLines = wrappedTextLines(m->text, maxCols);
+        uint16_t blockLines = bodyLines + 1;
+        uint16_t visibleStart = logical > scroll ? logical : scroll;
+        uint16_t visibleEnd = logical + blockLines;
+        if (visibleEnd > scroll + visible) visibleEnd = scroll + visible;
+        if (visibleStart < visibleEnd) {
+            int cardY = y + (visibleStart - scroll) * lineH;
+            int cardH = (visibleEnd - visibleStart) * lineH - 1;
+            uint16_t accent = m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_PINK;
+            cv.fillRoundRect(3, cardY, w - 6, cardH, 4, COL_HDR);
+            if (cardH > 4)
+                cv.fillRoundRect(5, cardY + 2, 2, cardH - 4, 1, accent);
+        }
         if (logical >= scroll && screenLine < visible)
-            drawUtf8(cv, 2, y + screenLine++ * lineH, w - 2,
-                     header, headCol, COL_BG);
+            drawUtf8(cv, 8, y + screenLine++ * lineH, w - 10,
+                     header, headCol, COL_HDR);
         logical++;
 
-        uint16_t bodyLines = wrappedTextLines(m->text, maxCols);
         for (uint16_t line = 0; line < bodyLines; line++, logical++) {
             if (logical < scroll || screenLine >= visible) continue;
             char body[MAX_TEXT_BYTES + 1];
             if (!wrappedTextLine(m->text, maxCols, line, body, sizeof(body))) continue;
             drawUtf8(cv, CHAT_BODY_X, y + screenLine++ * lineH, w - 2,
-                     body, m->sent ? (uint16_t)COL_GREEN : (uint16_t)COL_TEXT,
-                     COL_BG, scale);
+                     body, m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_TEXT,
+                     COL_HDR, scale);
         }
     }
 }
@@ -742,12 +753,17 @@ static void drawPeople(M5Canvas& cv, int w, int h) {
     int y = TAB_H + 2;
     int rows = meshRows();
     if (rows < 2) rows = 2;
-    cv.setTextColor(COL_DIM, (uint16_t)COL_BG);
-    cv.setCursor(4, y);
-    if (!s_nodes || !heardOther()) cv.print("nobody yet");
-    else cv.printf("%u on", countOnline());
-    cv.setCursor(72, y);
-    cv.print("dBm  age");
+    cv.fillRoundRect(3, y - 1, w - 6, LH, 3, COL_HDR);
+    cv.setTextColor(COL_YELLOW, COL_HDR);
+    cv.setCursor(8, y);
+    cv.print("PEOPLE");
+    cv.setTextColor(countOnline() ? (uint16_t)COL_GREEN : (uint16_t)COL_DIM, COL_HDR);
+    cv.setCursor(68, y);
+    if (!s_nodes || !heardOther()) cv.print("nobody");
+    else cv.printf("%u online", countOnline());
+    cv.setTextColor(COL_DIM, COL_HDR);
+    cv.setCursor(w - 55, y);
+    cv.print("dBm age");
     int listRows = rows - 1;
     if (!s_nodes || !s_nodeN) {
         putLine(cv, y + LH, h - 2, w, "Names land here after a packet.", COL_DIM);
@@ -773,10 +789,16 @@ static void drawRadio(M5Canvas& cv, int w, int h) {
     char line[44];
     int y = TAB_H + 2;
     int yMax = h - 2;
-    if (!mc.enabled) y = putLine(cv, y, yMax, w, "MESH OFF", COL_RED);
-    else if (!s_radioOk && s_radioError[0]) y = putLine(cv, y, yMax, w, s_radioError, COL_RED);
-    else if (s_radioOk && s_rs == RS_TX) y = putLine(cv, y, yMax, w, "LORA TX", COL_PINK);
-    else if (s_radioOk) y = putLine(cv, y, yMax, w, "LORA OK", COL_GREEN);
+    const char* status = "LORA OFF";
+    uint16_t statusCol = COL_DIM;
+    if (!mc.enabled) { status = "MESH OFF"; statusCol = COL_RED; }
+    else if (!s_radioOk && s_radioError[0]) { status = s_radioError; statusCol = COL_RED; }
+    else if (s_radioOk && s_rs == RS_TX) { status = "LORA TX"; statusCol = COL_YELLOW; }
+    else if (s_radioOk) { status = "LORA READY"; statusCol = COL_GREEN; }
+    cv.fillRoundRect(4, y - 1, w - 8, LH, 3, COL_HDR);
+    cv.fillRoundRect(7, y + 2, 3, LH - 5, 1, statusCol);
+    drawUtf8(cv, 14, y, w - 12, status, statusCol, COL_HDR);
+    y += LH;
     if (planned) {
         snprintf(line, sizeof(line), "%.3f MHz%s", freq, mc.freqOverride ? "  set" : "");
         y = putLine(cv, y, yMax, w, line, COL_TEXT);
@@ -853,16 +875,17 @@ static void drawSet(M5Canvas& cv, int w, int h) {
         bool sel = (row == s_setRow && s_layer == LY_PAGE);
         uint16_t bg = sel ? (uint16_t)COL_SEL : (uint16_t)COL_BG;
         if (sel) {
-            cv.fillRect(0, y - 1, w, LH, COL_SEL);
-            cv.fillRect(0, y - 1, 2, LH, COL_CYAN);
+            cv.fillRoundRect(3, y - 1, w - 6, LH, 3, COL_SEL);
+            cv.fillRoundRect(5, y + 1, 2, LH - 3, 1, COL_YELLOW);
         }
         char val[24];
         setValue(row, val, sizeof(val));
         uint16_t vc = COL_TEXT;
         if ((row == 0 || row == 10) && val[1] == 'N') vc = COL_GREEN;
         if ((row == 0 || row == 10) && val[1] == 'F') vc = COL_RED;
-        drawUtf8(cv, 4, y, 80, SET_LBL[row], sel ? (uint16_t)COL_CYAN : (uint16_t)COL_TEXT, bg);
-        drawUtf8(cv, 84, y, w - 2, val, vc, bg);
+        drawUtf8(cv, 8, y, 80, SET_LBL[row],
+                 sel ? (uint16_t)COL_BG : (uint16_t)COL_TEXT, bg);
+        drawUtf8(cv, 84, y, w - 8, val, sel ? (uint16_t)COL_BG : vc, bg);
     }
     (void)h;
 }
@@ -895,7 +918,7 @@ static void drawShiftLegend(M5Canvas& cv, int w, int h) {
     cv.setTextSize(1);
     cv.setTextColor(upper ? (uint16_t)COL_YELLOW : (uint16_t)COL_DIM, (uint16_t)COL_BG);
     cv.setCursor(4, keyTop - 9);
-    cv.print("SHIFT");
+    cv.print(upper ? "SHIFT ACTIVE" : "SHIFT");
     for (int r = 0; r < 3; r++) {
         int n = (int)strlen(KEY_ROWS[r]);
         int kx = (w - n * pitch) / 2;
@@ -903,7 +926,10 @@ static void drawShiftLegend(M5Canvas& cv, int w, int h) {
         int ky = keyTop + r * rowH;
         for (const char* p = KEY_ROWS[r]; *p; p++) {
             char src = upper ? shiftAscii(*p) : *p;
-            drawCpScaled(cv, kx, ky, mapLay(src, s_lang), COL_YELLOW, 2);
+            cv.fillRoundRect(kx, ky, pitch - 1, rowH - 2, 3, COL_HDR);
+            cv.drawRoundRect(kx, ky, pitch - 1, rowH - 2, 3, COL_HDR2);
+            drawCpScaled(cv, kx + 1, ky, mapLay(src, s_lang),
+                         upper ? COL_YELLOW : COL_TEXT, 2);
             kx += pitch;
         }
     }
@@ -948,21 +974,29 @@ static void drawWriterBody(M5Canvas& cv, int w, int y0, int pitch, int lineH,
 }
 
 static void drawWriter(M5Canvas& cv, int w, int h, const char* title) {
-    cv.fillRect(0, 0, w, TAB_H, COL_HDR);
-    cv.setTextColor(COL_CYAN, (uint16_t)COL_HDR);
-    cv.setCursor(2, 1);
+    cv.fillRoundRect(3, 0, w - 6, TAB_H, 3, COL_HDR);
+    cv.fillRoundRect(5, 1, 21, 9, 2, COL_PINK);
+    cv.setTextColor(COL_BG, (uint16_t)COL_PINK);
+    cv.setCursor(8, 1);
     cv.print(langName());
-    if (s_fieldAscii) cv.print(" ASCII");
-    drawUtf8(cv, s_fieldAscii ? 56 : 26, 1, w - 36, title ? title : "", COL_TEXT, COL_HDR);
+    if (s_fieldAscii) {
+        cv.setTextColor(COL_YELLOW, (uint16_t)COL_HDR);
+        cv.setCursor(30, 1);
+        cv.print("ASCII");
+    }
+    int titleX = s_fieldAscii ? 62 : 26;
+    drawUtf8(cv, titleX, 1, w - 34, title ? title : "", COL_TEXT, COL_HDR);
     char cnt[8];
     snprintf(cnt, sizeof(cnt), "%d", utf8Cols(s_cmpBuf, s_cmpLen));
-    cv.setTextColor(COL_DIM, (uint16_t)COL_HDR);
-    cv.setCursor(w - 6 * (int)strlen(cnt) - 2, 1);
+    int countW = 6 * (int)strlen(cnt) + 4;
+    cv.fillRoundRect(w - countW - 3, 1, countW, 9, 2, COL_HDR2);
+    cv.setTextColor(COL_YELLOW, (uint16_t)COL_HDR2);
+    cv.setCursor(w - 6 * (int)strlen(cnt) - 1, 1);
     cv.print(cnt);
 
     // Frequency and PSK stay one size and ASCII. No Shift map.
     if (s_fieldAscii) {
-        cv.drawRect(1, TAB_H + 1, w - 2, h - TAB_H - 3, COL_CYAN);
+        cv.drawRoundRect(2, TAB_H + 1, w - 4, h - TAB_H - 3, 4, COL_PINK);
         drawWriterBody(cv, w, TAB_H + 4, 6, LH, h - 4);
         return;
     }
@@ -970,13 +1004,15 @@ static void drawWriter(M5Canvas& cv, int w, int h, const char* title) {
     // Two bigger text lines sit above the Shift map, so the map never covers them.
     const int keyTop = h - 3 * 16;
     const int boxBottom = keyTop - 11;
-    cv.drawRect(1, TAB_H + 1, w - 2, boxBottom - (TAB_H + 1) + 1, COL_CYAN);
+    cv.drawRoundRect(2, TAB_H + 1, w - 4, boxBottom - (TAB_H + 1) + 1,
+                     4, COL_PINK);
     drawWriterBody(cv, w, TAB_H + 3, 12, 16, boxBottom);
     drawShiftLegend(cv, w, h);
 }
 
 static void drawDmHdr(M5Canvas& cv, int w) {
-    cv.fillRect(0, 0, w, TAB_H, COL_HDR);
+    cv.fillRoundRect(3, 0, w - 6, TAB_H, 3, COL_HDR);
+    cv.fillRoundRect(5, 1, 18, 9, 2, COL_PINK);
     const char* nm = "?";
     if (s_nodes) {
         for (uint8_t i = 0; i < s_nodeN; i++) {
@@ -986,10 +1022,10 @@ static void drawDmHdr(M5Canvas& cv, int w) {
             }
         }
     }
-    cv.setTextColor(COL_CYAN, (uint16_t)COL_HDR);
-    cv.setCursor(2, 1);
+    cv.setTextColor(COL_BG, (uint16_t)COL_PINK);
+    cv.setCursor(8, 1);
     cv.print("DM");
-    drawUtf8(cv, 20, 1, w - 20, nm, COL_TEXT, COL_HDR);
+    drawUtf8(cv, 27, 1, w - 6, nm, COL_TEXT, COL_HDR);
 }
 
 void draw(M5Canvas& canvas) {
