@@ -248,7 +248,7 @@ static const Item MESH_ITEMS[] = {
     {"NAME",     Kind::ACTION, 3, 0, 0,                          0},
     {"PSK",      Kind::ACTION, 4, 0, 0,                          0},
     {"RX BOOST", Kind::TOGGLE, 11, 0, 1,                         1},
-    {"FONT",     Kind::VALUE,  12, 1, 3,                         1},
+    {"CHAT FONT", Kind::VALUE, 12, 1, 3,                         1},
     {"OPEN",     Kind::ACTION, 5, 0, 0,                          0},
 };
 static const uint8_t MESH_ITEMS_N = sizeof(MESH_ITEMS)/sizeof(MESH_ITEMS[0]);
@@ -908,7 +908,7 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         else                 snprintf(raw, sizeof(raw), "(auto)");
     } else if (s_page == SettingsPage::MESH && it.id == 12) {
         int s = getValue(it);
-        strncpy(raw, s <= 1 ? "S" : s >= 3 ? "L" : "M", sizeof(raw) - 1);
+        strncpy(raw, s <= 1 ? "SMALL" : s >= 3 ? "LARGE" : "MEDIUM", sizeof(raw) - 1);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }

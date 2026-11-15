@@ -63,9 +63,9 @@ static int chatScale() {
 }
 
 static const char* chatSizeName(uint8_t s) {
-    if (s <= 1) return "S";
-    if (s >= 3) return "L";
-    return "M";
+    if (s <= 1) return "SMALL";
+    if (s >= 3) return "LARGE";
+    return "MEDIUM";
 }
 
 static void blitGlyph(M5Canvas& cv, int x, int y, const uint8_t* col, uint16_t fg) {
@@ -579,7 +579,7 @@ static bool heardOther() {
 
 static const char* SET_LBL[] = {
     "MESH", "REGION", "MODEM", "TX dBm", "HOPS", "SLOT",
-    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "FONT", "EMOJI"
+    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "CHAT FONT", "EMOJI"
 };
 static const uint8_t SET_N = 13;
 
@@ -1403,7 +1403,9 @@ static void setKeys(const Keyboard_Class::KeysState& ks) {
         if (s_setRow + 1 < SET_N) s_setRow++;
         return;
     }
-    // Shift+, and Shift+.  Plain comma and slash already moved the tab.
+    if (keyHas('-') || keyHas('_')) { bumpSet(-1); return; }
+    if (keyHas('=') || keyHas('+')) { bumpSet(1); return; }
+    // Keep the shifted angle-bracket controls for compatibility.
     if (keyHas('<')) { bumpSet(-1); return; }
     if (keyHas('>')) { bumpSet(1); return; }
     if (!ks.enter) return;
@@ -1479,7 +1481,7 @@ const char* bottomHint() {
         rest = self ? "</> TAB  ^/v MOVE  ESC BACK"
                     : "</> ^/v ENT CHAT BKSP DEL ESC";
     } else if (s_layer == LY_PAGE && s_tab == 2) rest = "</> TAB  ESC BACK";
-    else if (s_layer == LY_PAGE) rest = "</> TAB  ^/v MOVE  <> CHG  ENT";
+    else if (s_layer == LY_PAGE) rest = "</> TAB  ^/v ROW  -/= CHG  ENT";
     snprintf(b, sizeof(b), "%s  %s", langName(), rest);
     return b;
 }
