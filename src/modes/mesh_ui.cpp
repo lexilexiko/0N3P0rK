@@ -55,26 +55,17 @@ static int meshRows() {
     return rows < 1 ? 1 : rows;
 }
 
-// Chat letters: 1 small, 2 medium, 3 large. Medium is the usual size.
+// Chat and emoji sizes are independent Font0 scale multipliers.
 static int chatScale() {
     uint8_t s = Config::mesh().chatSize;
-    if (s < 1 || s > 3) s = 2;
+    if (s < 1 || s > 10) s = 2;
     return (int)s;
 }
 
-static const char* chatSizeName(uint8_t s) {
-    if (s <= 1) return "SMALL";
-    if (s >= 3) return "LARGE";
-    return "MEDIUM";
-}
-
-static void blitGlyph(M5Canvas& cv, int x, int y, const uint8_t* col, uint16_t fg) {
-    for (int c = 0; c < 5; c++) {
-        uint8_t bits = col[c];
-        for (int r = 0; r < 7; r++) {
-            if (bits & (uint8_t)(1u << (6 - r))) cv.drawPixel(x + c, y + r, fg);
-        }
-    }
+static int emojiScale() {
+    uint8_t s = Config::mesh().emojiSize;
+    if (s < 1 || s > 10) s = (uint8_t)chatScale();
+    return (int)s;
 }
 
 static void blitGlyphScale(M5Canvas& cv, int x, int y, const uint8_t* col,
@@ -221,7 +212,14 @@ static int32_t drawEmoji(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
          : drawBuiltinEmoji(gfx, x, y, code, fontHeight);
 }
 
-// Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
+static int emojiCellWidth(int scale) {
+    return 6 * (scale < 1 ? 1 : scale);
+}
+
+static int glyphCellWidth(uint32_t cp, int scale, int emojiSize) {
+    return cp >= 0x2300 ? emojiCellWidth(emojiSize) : 6 * scale;
+}
+
 static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
                          uint16_t fg, int scale) {
     if (scale < 1) scale = 1;
@@ -231,15 +229,6 @@ static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
         cv.setCursor(x, y);
         char ch[2] = { (char)cp, 0 };
         cv.print(ch);
-        cv.setTextSize(1);
-        return;
-    }
-    if (cp >= 0x2300 && drawEmoji(&cv, x, y, cp, 8 * scale) > 0) return;
-    if (cp >= 0x2300 && Config::mesh().emojiFromSd) {
-        cv.setTextSize((uint8_t)scale);
-        cv.setTextColor(fg);
-        cv.setCursor(x, y);
-        cv.print("?");
         cv.setTextSize(1);
         return;
     }
@@ -256,41 +245,30 @@ static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
 }
 
 static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
-                    uint16_t fg, int scale = 1) {
+                    uint16_t fg, int scale = 1, int emojiSize = 0) {
     if (!s) return x;
     if (scale < 1) scale = 1;
-    int pitch = 6 * scale;
-    while (*s && x + pitch <= xMax) {
+    if (emojiSize < 1) emojiSize = scale;
+    while (*s) {
         uint32_t cp;
         int n = utf8Next(s, cp);
         if (n <= 0) break;
         s += n;
         if (utf8IsEmojiSequencePart(cp)) continue;
-        if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale);
-        else if (cp < 0x80) {
-            cv.setTextColor(fg);
-            cv.setCursor(x, y);
-            char ch[2] = { (char)cp, 0 };
-            cv.print(ch);
-        } else {
-            int32_t emojiWidth = cp >= 0x2300
-                               ? drawEmoji(&cv, x, y, cp, 8 * scale) : 0;
-            const uint8_t* g = meshGlyph(cp);
-            if (emojiWidth > 0) {
-                x += emojiWidth;
+        int advance = glyphCellWidth(cp, scale, emojiSize);
+        if (x + advance > xMax) break;
+        if (cp >= 0x2300) {
+            int32_t width = drawEmoji(&cv, x, y, cp, 8 * emojiSize);
+            if (width > 0) {
+                x += width;
                 continue;
-            } else if (cp >= 0x2300 && Config::mesh().emojiFromSd) {
-                cv.setTextColor(fg);
-                cv.setCursor(x, y);
-                cv.print("?");
-            } else if (g) blitGlyph(cv, x, y, g, fg);
-            else {
-                cv.setTextColor(fg);
-                cv.setCursor(x, y);
-                cv.print("?");
             }
+            drawCpScaled(cv, x, y, '?', fg, emojiSize);
+            x += advance;
+            continue;
         }
-        x += pitch;
+        drawCpScaled(cv, x, y, cp, fg, scale);
+        x += advance;
     }
     return x;
 }
@@ -369,15 +347,11 @@ static int putLine(M5Canvas& cv, int y, int yMax, int w, const char* s, uint16_t
     return y + LH;
 }
 
-static int chatWrapCols(int width, int scale) {
-    int cols = (width - CHAT_BODY_X - 2) / (6 * scale);
-    return cols < 1 ? 1 : cols;
-}
-
-static uint16_t wrappedTextLines(const char* text, int maxCols) {
-    if (maxCols < 1) maxCols = 1;
+static uint16_t wrappedTextLines(const char* text, int maxWidth,
+                                 int scale, int emojiSize) {
+    if (maxWidth < 1) maxWidth = 1;
     uint16_t lines = 1;
-    int cols = 0;
+    int usedWidth = 0;
     for (int i = 0; text && text[i];) {
         uint32_t cp;
         int n = utf8Next(text + i, cp);
@@ -385,24 +359,26 @@ static uint16_t wrappedTextLines(const char* text, int maxCols) {
         i += n;
         if (cp == '\n') {
             lines++;
-            cols = 0;
+            usedWidth = 0;
         } else if (!utf8IsEmojiSequencePart(cp)) {
-            if (cols >= maxCols) {
+            int width = glyphCellWidth(cp, scale, emojiSize);
+            if (usedWidth > 0 && usedWidth + width > maxWidth) {
                 lines++;
-                cols = 0;
+                usedWidth = 0;
             }
-            cols++;
+            usedWidth += width;
         }
     }
     return lines;
 }
 
-static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
-                            char* out, size_t outCap) {
+static bool wrappedTextLine(const char* text, int maxWidth, int scale,
+                            int emojiSize, uint16_t target, char* out,
+                            size_t outCap) {
     if (!text || !out || outCap == 0) return false;
-    if (maxCols < 1) maxCols = 1;
+    if (maxWidth < 1) maxWidth = 1;
     uint16_t line = 0;
-    int cols = 0;
+    int usedWidth = 0;
     size_t start = 0;
     size_t i = 0;
     while (text[i]) {
@@ -420,23 +396,26 @@ static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
             line++;
             i += n;
             start = i;
-            cols = 0;
+            usedWidth = 0;
             continue;
         }
-        if (!utf8IsEmojiSequencePart(cp) && cols >= maxCols) {
-            if (line == target) {
-                size_t len = i - start;
-                if (len >= outCap) len = outCap - 1;
-                memcpy(out, text + start, len);
-                out[len] = 0;
-                return true;
+        if (!utf8IsEmojiSequencePart(cp)) {
+            int width = glyphCellWidth(cp, scale, emojiSize);
+            if (usedWidth > 0 && usedWidth + width > maxWidth) {
+                if (line == target) {
+                    size_t len = i - start;
+                    if (len >= outCap) len = outCap - 1;
+                    memcpy(out, text + start, len);
+                    out[len] = 0;
+                    return true;
+                }
+                line++;
+                start = i;
+                usedWidth = 0;
             }
-            line++;
-            start = i;
-            cols = 0;
+            usedWidth += width;
         }
         i += n;
-        if (!utf8IsEmojiSequencePart(cp)) cols++;
     }
     if (line != target) return false;
     size_t len = i - start;
@@ -446,13 +425,13 @@ static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
     return true;
 }
 
-static uint16_t chatTotalRows(bool dm, int width, int scale) {
+static uint16_t chatTotalRows(bool dm, int width, int scale, int emojiSize) {
     uint8_t count = dm ? s_dmN : s_chatN;
-    int cols = chatWrapCols(width, scale);
+    int maxWidth = width - CHAT_BODY_X - 2;
     uint32_t total = 0;
     for (uint8_t i = 0; i < count; i++) {
         Msg* m = dm ? dmGet(i) : chatGet(i);
-        if (m) total += 1u + wrappedTextLines(m->text, cols);
+        if (m) total += 1u + wrappedTextLines(m->text, maxWidth, scale, emojiSize);
     }
     return total > 65535u ? 65535u : (uint16_t)total;
 }
@@ -579,9 +558,10 @@ static bool heardOther() {
 
 static const char* SET_LBL[] = {
     "MESH", "REGION", "MODEM", "TX dBm", "HOPS", "SLOT",
-    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "CHAT FONT", "EMOJI"
+    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "CHAT FONT",
+    "EMOJI SIZE", "EMOJI"
 };
-static const uint8_t SET_N = 13;
+static const uint8_t SET_N = 14;
 
 static bool keyHas(char a) {
     if (M5Cardputer.Keyboard.isKeyPressed(a)) return true;
@@ -716,10 +696,12 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
         return;
     }
     int scale = chatScale();
-    int rowHeight = scale * 8 + 2;
+    int emojis = emojiScale();
+    int rowScale = scale > emojis ? scale : emojis;
+    int rowHeight = rowScale * 8 + 2;
     int visibleRows = (yMax - y) / rowHeight;
     if (visibleRows < 1) visibleRows = 1;
-    uint16_t total = chatTotalRows(dm, w, scale);
+    uint16_t total = chatTotalRows(dm, w, scale, emojis);
     uint16_t maxTop = total > (uint16_t)visibleRows
                     ? (uint16_t)(total - visibleRows) : 0;
     if (scroll > maxTop) scroll = maxTop;
@@ -727,13 +709,13 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
 
     uint16_t logical = 0;
     uint16_t viewEnd = (uint16_t)(scroll + visibleRows);
-    int maxCols = chatWrapCols(w, scale);
+    int maxWidth = w - CHAT_BODY_X - 2;
     for (uint8_t i = 0; i < nmsg; i++) {
         Msg* m = dm ? dmGet(i) : chatGet(i);
         if (!m) continue;
         if (logical >= viewEnd) break;
         const char* who = m->fromName[0] ? m->fromName : "?";
-        uint16_t bodyLines = wrappedTextLines(m->text, maxCols);
+        uint16_t bodyLines = wrappedTextLines(m->text, maxWidth, scale, emojis);
         uint16_t blockRows = (uint16_t)(bodyLines + 1);
         uint16_t cardEnd = (uint16_t)(logical + blockRows);
         uint16_t visibleStart = logical > scroll ? logical : scroll;
@@ -759,10 +741,11 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
             uint16_t bodyRow = (uint16_t)(logical + 1 + line);
             if (bodyRow < scroll || bodyRow >= viewEnd) continue;
             char body[MAX_TEXT_BYTES + 1];
-            if (!wrappedTextLine(m->text, maxCols, line, body, sizeof(body))) continue;
+            if (!wrappedTextLine(m->text, maxWidth, scale, emojis, line,
+                                 body, sizeof(body))) continue;
             drawUtf8(cv, CHAT_BODY_X, y + (bodyRow - scroll) * rowHeight + 1, w - 2,
                      body, m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_TEXT,
-                     scale);
+                     scale, emojis);
         }
         logical = (uint16_t)(logical + blockRows);
     }
@@ -877,7 +860,8 @@ static void setValue(uint8_t row, char* out, int cap) {
                      strcmp(mc.psk, "AA==") == 0 ? "OPEN" : "CUSTOM");
             break;
         case 10: snprintf(out, cap, "%s", mc.rxBoost ? "ON" : "OFF"); break;
-        case 11: snprintf(out, cap, "%s", chatSizeName(mc.chatSize)); break;
+        case 11: snprintf(out, cap, "%ux", chatScale()); break;
+        case 12: snprintf(out, cap, "%ux", emojiScale()); break;
         default: snprintf(out, cap, "%s", mc.emojiFromSd ? "SD PNG" : "BUILTIN"); break;
     }
 }
@@ -903,7 +887,7 @@ static void drawSet(M5Canvas& cv, int w, int h) {
         uint16_t vc = COL_TEXT;
         if ((row == 0 || row == 10) && val[1] == 'N') vc = COL_GREEN;
         if ((row == 0 || row == 10) && val[1] == 'F') vc = COL_RED;
-        if (row == 12) vc = Config::mesh().emojiFromSd ? COL_GREEN : COL_CYAN;
+        if (row == 13) vc = Config::mesh().emojiFromSd ? COL_GREEN : COL_CYAN;
         drawUtf8(cv, 8, y, 80, SET_LBL[row],
                  sel ? (uint16_t)COL_BG : (uint16_t)COL_TEXT);
         drawUtf8(cv, 84, y, w - 8, val, sel ? (uint16_t)COL_BG : vc);
@@ -1301,13 +1285,22 @@ static void bumpSet(int dir) {
         case 11: {
             int v = (int)mc.chatSize + dir;
             if (v < 1) v = 1;
-            if (v > 3) v = 3;
+            if (v > 10) v = 10;
             if (v == (int)mc.chatSize) break;
             mc.chatSize = (uint8_t)v;
             Config::save();
             break;
         }
-        case 12:
+        case 12: {
+            int v = (int)mc.emojiSize + dir;
+            if (v < 1) v = 1;
+            if (v > 10) v = 10;
+            if (v == (int)mc.emojiSize) break;
+            mc.emojiSize = (uint8_t)v;
+            Config::save();
+            break;
+        }
+        case 13:
             if ((dir > 0 && !mc.emojiFromSd) || (dir < 0 && mc.emojiFromSd)) {
                 mc.emojiFromSd = dir > 0;
                 emojiCacheClear();
@@ -1352,10 +1345,12 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
     uint16_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
     int scale = chatScale();
-    int rowHeight = scale * 8 + 2;
+    int emojis = emojiScale();
+    int rowScale = scale > emojis ? scale : emojis;
+    int rowHeight = rowScale * 8 + 2;
     int visibleRows = (MESH_H - (TAB_H + 2) - 2) / rowHeight;
     if (visibleRows < 1) visibleRows = 1;
-    uint16_t total = chatTotalRows(dm, 240, scale);
+    uint16_t total = chatTotalRows(dm, 240, scale, emojis);
     uint16_t maxTop = total > (uint16_t)visibleRows
                     ? (uint16_t)(total - visibleRows) : 0;
     if (dir < 0 && scroll > 0) { scroll--; stick = false; }

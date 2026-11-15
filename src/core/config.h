@@ -274,8 +274,9 @@ struct MeshConfig {
     uint8_t  hopLimit         = 3;
     uint8_t  freqSlot         = 0;
     bool     rxBoost          = false;
-    // Chat and DM letter size. 1 small, 2 medium, 3 large.
+    // Chat and DM Font0 scale multipliers.
     uint8_t  chatSize         = 2;
+    uint8_t  emojiSize        = 2;
     bool     emojiFromSd      = false;
 };
 

@@ -196,7 +196,9 @@ bool Config::init() {
     mc.freqSlot = s_prefs.getUChar("meshslt", mc.freqSlot);
     mc.rxBoost = s_prefs.getBool("meshrxb", mc.rxBoost);
     mc.chatSize = s_prefs.getUChar("meshcsz", mc.chatSize);
-    if (mc.chatSize < 1 || mc.chatSize > 3) mc.chatSize = 2;
+    if (mc.chatSize < 1 || mc.chatSize > 10) mc.chatSize = 2;
+    mc.emojiSize = s_prefs.getUChar("meshesz", mc.chatSize);
+    if (mc.emojiSize < 1 || mc.emojiSize > 10) mc.emojiSize = mc.chatSize;
     mc.emojiFromSd = s_prefs.getBool("meshemo", mc.emojiFromSd);
 
     HotkeyConfig def{};
@@ -401,6 +403,7 @@ bool Config::save() {
     s_prefs.putUChar ("meshslt",  mc.freqSlot);
     s_prefs.putBool  ("meshrxb",  mc.rxBoost);
     s_prefs.putUChar ("meshcsz",  mc.chatSize);
+    s_prefs.putUChar ("meshesz",  mc.emojiSize);
     s_prefs.putBool  ("meshemo",  mc.emojiFromSd);
     MeshPig::persistCfg();
 

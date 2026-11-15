@@ -1545,6 +1545,7 @@ struct MeshCfgDisk {
     char     shortName[5];
     uint8_t  chatSize;
     uint8_t  emojiFromSd;
+    uint8_t  emojiSize;
 };
 #pragma pack(pop)
 
@@ -1575,8 +1576,10 @@ static void writeCfgFile() {
     d.hopLimit = mc.hopLimit;
     d.freqSlot = mc.freqSlot;
     d.rxBoost = mc.rxBoost ? 1 : 0;
-    d.chatSize = (mc.chatSize >= 1 && mc.chatSize <= 3) ? mc.chatSize : 2;
+    d.chatSize = (mc.chatSize >= 1 && mc.chatSize <= 10) ? mc.chatSize : 2;
     d.emojiFromSd = mc.emojiFromSd ? 1 : 0;
+    d.emojiSize = (mc.emojiSize >= 1 && mc.emojiSize <= 10)
+                ? mc.emojiSize : d.chatSize;
     memcpy(d.channel, mc.channel, sizeof(d.channel));
     memcpy(d.psk, mc.psk, sizeof(d.psk));
     memcpy(d.shortName, mc.shortName, sizeof(d.shortName));
@@ -1600,24 +1603,29 @@ static bool readCfgFile(MeshCfgDisk& d) {
     sdIdle();
     File f = SD.open(CFG_PATH, FILE_READ);
     if (!f) return false;
-    const size_t chatSizeBytes = sizeof(d) - sizeof(d.emojiFromSd);
-    const size_t legacyBytes = chatSizeBytes - sizeof(d.chatSize);
+    const size_t oldFullBytes = sizeof(d) - sizeof(d.emojiSize);
+    const size_t oldNoEmojiSourceBytes = oldFullBytes - sizeof(d.emojiFromSd);
+    const size_t legacyBytes = oldNoEmojiSourceBytes - sizeof(d.chatSize);
     memset(&d, 0, sizeof(d));
     int got = (int)f.read((uint8_t*)&d, sizeof(d));
     f.close();
     sdIdle();
-    if ((got != (int)sizeof(d) && got != (int)chatSizeBytes &&
-         got != (int)legacyBytes) || d.magic != CFG_MAGIC) return false;
-    if (got == (int)chatSizeBytes) d.emojiFromSd = 0;
+    if ((got != (int)sizeof(d) && got != (int)oldFullBytes &&
+         got != (int)oldNoEmojiSourceBytes && got != (int)legacyBytes) ||
+        d.magic != CFG_MAGIC) return false;
+    if (got == (int)oldFullBytes || got == (int)oldNoEmojiSourceBytes)
+        d.emojiSize = d.chatSize;
     if (got == (int)legacyBytes) {
         d.chatSize = 2;
         d.emojiFromSd = 0;
+        d.emojiSize = 2;
     }
     if (d.region >= 17 || d.modem > 9) return false;
     if (d.txPower < 2 || d.txPower > 22) return false;
     if (d.hopLimit < 1 || d.hopLimit > 7) return false;
     if (d.freqKHz && (d.freqKHz < 137000u || d.freqKHz > 960000u)) return false;
-    if (d.chatSize < 1 || d.chatSize > 3) d.chatSize = 2;
+    if (d.chatSize < 1 || d.chatSize > 10) d.chatSize = 2;
+    if (d.emojiSize < 1 || d.emojiSize > 10) d.emojiSize = d.chatSize;
     if (d.emojiFromSd > 1) return false;
     d.channel[sizeof(d.channel) - 1] = 0;
     d.psk[sizeof(d.psk) - 1] = 0;
@@ -1676,6 +1684,7 @@ void syncStoredCfg() {
     mc.freqSlot = d.freqSlot;
     mc.rxBoost = d.rxBoost != 0;
     mc.chatSize = d.chatSize;
+    mc.emojiSize = d.emojiSize;
     mc.emojiFromSd = d.emojiFromSd != 0;
     if (d.channel[0]) memcpy(mc.channel, d.channel, sizeof(mc.channel));
     if (d.psk[0]) memcpy(mc.psk, d.psk, sizeof(mc.psk));

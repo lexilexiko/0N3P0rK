@@ -248,7 +248,8 @@ static const Item MESH_ITEMS[] = {
     {"NAME",     Kind::ACTION, 3, 0, 0,                          0},
     {"PSK",      Kind::ACTION, 4, 0, 0,                          0},
     {"RX BOOST", Kind::TOGGLE, 11, 0, 1,                         1},
-    {"CHAT FONT", Kind::VALUE, 12, 1, 3,                         1},
+    {"CHAT FONT", Kind::VALUE, 12, 1, 10,                        1},
+    {"EMOJI SIZE",Kind::VALUE, 13, 1, 10,                        1},
     {"OPEN",     Kind::ACTION, 5, 0, 0,                          0},
 };
 static const uint8_t MESH_ITEMS_N = sizeof(MESH_ITEMS)/sizeof(MESH_ITEMS[0]);
@@ -743,7 +744,8 @@ static int getValue(const Item& it) {
             case 9: return mc.hopLimit;
             case 10: return mc.freqSlot;
             case 11: return mc.rxBoost ? 1 : 0;
-            case 12: return mc.chatSize < 1 ? 2 : mc.chatSize;
+            case 12: return mc.chatSize < 1 || mc.chatSize > 10 ? 2 : mc.chatSize;
+            case 13: return mc.emojiSize < 1 || mc.emojiSize > 10 ? 2 : mc.emojiSize;
             default: return 0;
         }
     }
@@ -907,8 +909,9 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         if (mc.freqOverride) snprintf(raw, sizeof(raw), "%.3f*", (float)mc.freqKHz/1000.0f);
         else                 snprintf(raw, sizeof(raw), "(auto)");
     } else if (s_page == SettingsPage::MESH && it.id == 12) {
-        int s = getValue(it);
-        strncpy(raw, s <= 1 ? "SMALL" : s >= 3 ? "LARGE" : "MEDIUM", sizeof(raw) - 1);
+        snprintf(raw, sizeof(raw), "%dx", getValue(it));
+    } else if (s_page == SettingsPage::MESH && it.id == 13) {
+        snprintf(raw, sizeof(raw), "%dx", getValue(it));
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -1387,8 +1390,14 @@ static bool setValue(const Item& it, int v) {
                 return true;
             case 12:
                 if (v < 1) v = 1;
-                if (v > 3) v = 3;
+                if (v > 10) v = 10;
                 mc.chatSize = (uint8_t)v;
+                Config::save();
+                return true;
+            case 13:
+                if (v < 1) v = 1;
+                if (v > 10) v = 10;
+                mc.emojiSize = (uint8_t)v;
                 Config::save();
                 return true;
             default: return false;
@@ -1494,7 +1503,8 @@ const char* bottomHint() {
                 "NAME OTHER NODES SEE. 4 LETTERS.",
                 "CHANNEL KEY. AQ== IS THE PUBLIC DEFAULT.",
                 "SX1262 RX BOOST. LOUDER, MORE CURRENT.",
-                "CHAT LETTERS. S SMALL  M MEDIUM  L BIG.",
+                "CHAT TEXT SCALE. 1X THROUGH 10X.",
+                "EMOJI SIZE IS SEPARATE. 1X THROUGH 10X.",
                 "OPEN THE MESH NODE LIST."
             };
             if (s_idx < sizeof(H_MESH) / sizeof(H_MESH[0]))

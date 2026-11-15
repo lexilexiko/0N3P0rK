@@ -1,6 +1,6 @@
 # 0N3P0rK — Project guide
 
-**Current version: 1.4.3(Mesh)**
+**Current version: 1.4.4(Mesh)**
 Firmware for **M5Cardputer** / **Cardputer ADV** (ESP32-S3).
 
 **Idea in one line:** a living pig on a small farm (Tamagotchi-style), and a Wi‑Fi / radio lab in the same barn.
@@ -12,10 +12,9 @@ For the chronological list of changes, see the
 [version history](README_HISTORY.md).
 Secret menu codes are **not** listed here (keep them private).
 
-> **Release note:** version **1.4.3(Mesh)** adds Meshtastic on the Cardputer
-> ADV LoRa cap. Channel chat and direct messages stay separate, the mesh
-> screen uses the same keys and menu style as the rest of the pig, and
-> settings plus conversations live on the SD card under `/0N3P0rK/PigMesh`.
+> **Release note:** version **1.4.4(Mesh)** adds independent numeric scaling
+> for Mesh chat text and emoji, with adaptive wrapping and saved settings.
+> DESK remains a monitor-picture viewer; PC audio streaming is not included.
 
 ---
 
@@ -70,7 +69,7 @@ All handshakes, wordlists, talk files, and the file manager live on **SD** (not 
 ### Ready binary
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.3(Mesh)_*_Full.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.4.4(Mesh)_*_Full.bin
 ```
 
 Or **M5Launcher** with a `*Launcher*.bin`.
@@ -100,7 +99,7 @@ pio run -t upload --upload-port COMx
    once before flashing.
 4. Insert the SD card and reboot.
 5. Open **SET → STATUS** and confirm that the displayed firmware version is
-   `1.4.3(Mesh)`.
+   `1.4.4(Mesh)`.
 
 Existing SD captures are not removed by a firmware update. NVS settings are
 loaded with compatibility defaults when an older configuration does not contain
@@ -572,7 +571,7 @@ wait.
 ### Picture and file
 
 Frames arrive as JPEG over UDP port **1234**. The live view is only the
-monitor picture.
+monitor picture; PC audio is not streamed.
 
 At boot the device writes `/0N3P0rK/on3desk.py` on the SD card. After DESK
 joins the home network, that file is rewritten with the Cardputer's address.
@@ -729,7 +728,7 @@ so a flash that clears NVS brings the same channel back.
 | **CHAT** | The channel. Turns yellow when a channel message is waiting |
 | **PEOPLE** | Nodes this radio has heard. A waiting direct message turns the tab yellow, draws an envelope, and marks that row `SMS` |
 | **RADIO** | This node. The `you` line ends with `KEY` or `NO KEY` |
-| **SET** | The same knobs as **SET → MESH**, including chat letter size |
+| **SET** | The same knobs as **SET → MESH**, including separate chat-font and emoji sizes |
 
 A direct message to this pig stays in that person's chat. It is not copied
 into the channel. Other people's direct messages are ignored. Opening the
@@ -741,7 +740,7 @@ farm. The ring stays quiet when that conversation is already on screen.
 | --- | --- | --- |
 | `</>` | `,` / `/` | Previous / next tab, on the strip and inside a page |
 | `^/v` | `;` / `.` | Move up / down |
-| `<>` | Shift+`,` / Shift+`.` | Change the selected SET value |
+| `-` / `=` | `-` / `=` (or Shift+`,` / Shift+`.`) | Decrease / increase the selected SET value |
 | `ENT` | Enter | Open the tab. Inside CHAT or a person's chat, write. Enter again sends |
 | `ESC` | Esc | Back one level. From the tab strip, return to the menu. The radio keeps running |
 | `BKSP` | Backspace | Delete one letter while writing. On PEOPLE, delete the selected person. Otherwise minimize |
@@ -752,9 +751,10 @@ Shift or Caps Lock is held, then the capitals. Typed text stays above the map.
 Frequency and PSK editors stay ASCII. The bottom bar is prefixed with
 **EN**, **RU**, or **UA**.
 
-**FONT** is **S**, **M**, or **L**. **S** draws each message on one small
-line. **M** keeps the name small and the message double size, about three
-messages on screen. **L** is the largest, about two messages. The screen
+**CHAT FONT** and **EMOJI SIZE** are independent numeric scales from **1x**
+through **10x**. The chat-font setting scales message text; the emoji setting
+scales emoji images and glyphs. Wrapping and row height adapt to both sizes.
+Large values show fewer characters and messages at once, and the screen
 scrolls. The log itself holds 32 channel lines, 16 direct messages per
 person, and 16 people. When a list is full, the oldest entry drops. On
 PEOPLE, Backspace deletes someone else and that person's direct-message file.
@@ -1073,7 +1073,7 @@ Put screenshots in **`docs/gallery/`** on the **default branch**, then refresh P
 
 ## Version history
 
-For the chronological release notes from the early builds through 1.4.3(Mesh), see
+For the chronological release notes from the early builds through 1.4.4(Mesh), see
 [README_HISTORY.md](README_HISTORY.md).
 
 ---

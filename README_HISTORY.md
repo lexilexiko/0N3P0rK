@@ -488,4 +488,19 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 - `ESC` leaves the screen without stopping the radio. **TASKS** or the MESH
   toggle stops it and returns the heap.
 
+### 1.4.4(Mesh)
+
+#### Mesh chat sizing
+
+- Added independent **CHAT FONT** and **EMOJI SIZE** controls, each adjustable
+  from **1x** to **10x** in both Mesh settings menus.
+- Chat wrapping and row height now adapt to the selected text and emoji sizes.
+- Saved the emoji size in NVS and the SD Mesh config, with compatibility for
+  existing configurations.
+
+#### DESK
+
+- Reverted experimental PC-audio streaming. DESK remains a monitor-picture
+  viewer using JPEG frames over UDP.
+
 ---
