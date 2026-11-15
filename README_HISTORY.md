@@ -494,7 +494,9 @@ Patch numbers may match tags you used in git; the **story** is what matters.
 
 - Added independent **CHAT FONT** and **EMOJI SIZE** controls, each adjustable
   from **1x** to **10x** in both Mesh settings menus.
-- Chat wrapping and row height now adapt to the selected text and emoji sizes.
+- Chat row height now follows the text size, not the emoji size. Emoji-only
+  messages scale up to the space available in their fixed-height card; inline
+  emoji stay within the text line height.
 - Saved the emoji size in NVS and the SD Mesh config, with compatibility for
   existing configurations.
 

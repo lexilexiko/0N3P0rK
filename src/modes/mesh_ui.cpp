@@ -220,6 +220,21 @@ static int glyphCellWidth(uint32_t cp, int scale, int emojiSize) {
     return cp >= 0x2300 ? emojiCellWidth(emojiSize) : 6 * scale;
 }
 
+static bool emojiOnlyMessage(const char* text) {
+    bool hasEmoji = false;
+    for (int i = 0; text && text[i];) {
+        uint32_t cp;
+        int n = utf8Next(text + i, cp);
+        if (n <= 0) break;
+        i += n;
+        if (utf8IsEmojiSequencePart(cp) || cp == ' ' || cp == '\t' ||
+            cp == '\r' || cp == '\n') continue;
+        if (cp < 0x2300) return false;
+        hasEmoji = true;
+    }
+    return hasEmoji;
+}
+
 static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
                          uint16_t fg, int scale) {
     if (scale < 1) scale = 1;
@@ -372,6 +387,13 @@ static uint16_t wrappedTextLines(const char* text, int maxWidth,
     return lines;
 }
 
+static int fittedMessageEmojiScale(const char* text, int maxWidth,
+                                   int scale, int emojiSize) {
+    if (!emojiOnlyMessage(text)) return emojiSize < scale ? emojiSize : scale;
+    if (wrappedTextLines(text, maxWidth, scale, emojiSize) == 1) return emojiSize;
+    return emojiSize < scale ? emojiSize : scale;
+}
+
 static bool wrappedTextLine(const char* text, int maxWidth, int scale,
                             int emojiSize, uint16_t target, char* out,
                             size_t outCap) {
@@ -425,13 +447,43 @@ static bool wrappedTextLine(const char* text, int maxWidth, int scale,
     return true;
 }
 
+// Leave room for a 3x Font0 glyph without tying the bubble to emojiSize.
+static const int EMOJI_CARD_MIN_H = 28;
+
+static uint16_t chatMessageRows(const char* text, int maxWidth,
+                                int scale, int emojiSize) {
+    const int messageEmojiSize = fittedMessageEmojiScale(text, maxWidth, scale, emojiSize);
+    uint16_t bodyLines = wrappedTextLines(text, maxWidth, scale, messageEmojiSize);
+    uint16_t rows = (uint16_t)(bodyLines + 1);
+    if (emojiOnlyMessage(text) && bodyLines == 1) {
+        int rowHeight = scale * 8 + 2;
+        uint16_t minRows = (uint16_t)(
+            (EMOJI_CARD_MIN_H + 2 + rowHeight - 1) / rowHeight);
+        if (rows < minRows) rows = minRows;
+    }
+    return rows;
+}
+
+static int utf8TextWidth(const char* text, int scale, int emojiSize) {
+    int width = 0;
+    for (int i = 0; text && text[i];) {
+        uint32_t cp;
+        int n = utf8Next(text + i, cp);
+        if (n <= 0) break;
+        i += n;
+        if (!utf8IsEmojiSequencePart(cp))
+            width += glyphCellWidth(cp, scale, emojiSize);
+    }
+    return width;
+}
+
 static uint16_t chatTotalRows(bool dm, int width, int scale, int emojiSize) {
     uint8_t count = dm ? s_dmN : s_chatN;
     int maxWidth = width - CHAT_BODY_X - 2;
     uint32_t total = 0;
     for (uint8_t i = 0; i < count; i++) {
         Msg* m = dm ? dmGet(i) : chatGet(i);
-        if (m) total += 1u + wrappedTextLines(m->text, maxWidth, scale, emojiSize);
+        if (m) total += chatMessageRows(m->text, maxWidth, scale, emojiSize);
     }
     return total > 65535u ? 65535u : (uint16_t)total;
 }
@@ -697,8 +749,7 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
     }
     int scale = chatScale();
     int emojis = emojiScale();
-    int rowScale = scale > emojis ? scale : emojis;
-    int rowHeight = rowScale * 8 + 2;
+    int rowHeight = scale * 8 + 2;
     int visibleRows = (yMax - y) / rowHeight;
     if (visibleRows < 1) visibleRows = 1;
     uint16_t total = chatTotalRows(dm, w, scale, emojis);
@@ -715,11 +766,16 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
         if (!m) continue;
         if (logical >= viewEnd) break;
         const char* who = m->fromName[0] ? m->fromName : "?";
-        uint16_t bodyLines = wrappedTextLines(m->text, maxWidth, scale, emojis);
-        uint16_t blockRows = (uint16_t)(bodyLines + 1);
+        const int lineEmojiSize = fittedMessageEmojiScale(
+            m->text, maxWidth, scale, emojis);
+        uint16_t bodyLines = wrappedTextLines(m->text, maxWidth, scale,
+                                              lineEmojiSize);
+        uint16_t blockRows = chatMessageRows(m->text, maxWidth, scale, emojis);
         uint16_t cardEnd = (uint16_t)(logical + blockRows);
         uint16_t visibleStart = logical > scroll ? logical : scroll;
         uint16_t visibleEnd = cardEnd < viewEnd ? cardEnd : viewEnd;
+        int messageTop = y + ((int)logical - (int)scroll) * rowHeight;
+        int fullCardH = blockRows * rowHeight - 2;
         if (visibleStart < visibleEnd) {
             int cardY = y + (visibleStart - scroll) * rowHeight;
             int cardBottom = y + (visibleEnd - scroll) * rowHeight;
@@ -729,23 +785,47 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
             if (cardH > 4)
                 cv.fillRoundRect(5, cardY + 2, 2, cardH - 4, 1, accent);
         }
+        const bool largeEmojiCard = emojiOnlyMessage(m->text) && bodyLines == 1;
+        if (largeEmojiCard && visibleStart < visibleEnd) {
+            int fitScale = (fullCardH - 4) / 8;
+            if (fitScale < 1) fitScale = 1;
+            if (fitScale > emojis) fitScale = emojis;
+            int emojiHeight = fitScale * 8;
+            int drawY = messageTop + (fullCardH - emojiHeight) / 2;
+            int visibleHeight = yMax - y - 2;
+            if (emojiHeight <= visibleHeight) {
+                if (drawY < y) drawY = y + 1;
+                if (drawY + emojiHeight > yMax - 1)
+                    drawY = yMax - emojiHeight - 1;
+            }
+            int emojiWidth = utf8TextWidth(m->text, scale, fitScale);
+            int drawX = (w - emojiWidth) / 2;
+            if (drawX < CHAT_BODY_X) drawX = CHAT_BODY_X;
+            drawUtf8(cv, drawX, drawY, w - 2, m->text,
+                     m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_TEXT,
+                     scale, fitScale);
+        }
         if (logical >= scroll && logical < viewEnd) {
             int nameWidth = (int)strlen(who) * 6;
-            int nameX = (w - nameWidth) / 2;
+            int nameX = largeEmojiCard ? 8 : (w - nameWidth) / 2;
             if (nameX < 8) nameX = 8;
-            int nameY = y + (logical - scroll) * rowHeight + (rowHeight - 8) / 2;
+            int nameY = messageTop + (largeEmojiCard ? 1 : (rowHeight - 8) / 2);
             drawUtf8(cv, nameX, nameY, w - 8, who,
                      m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_PINK);
+        }
+        if (largeEmojiCard) {
+            logical = (uint16_t)(logical + blockRows);
+            continue;
         }
         for (uint16_t line = 0; line < bodyLines; line++) {
             uint16_t bodyRow = (uint16_t)(logical + 1 + line);
             if (bodyRow < scroll || bodyRow >= viewEnd) continue;
             char body[MAX_TEXT_BYTES + 1];
-            if (!wrappedTextLine(m->text, maxWidth, scale, emojis, line,
+            if (!wrappedTextLine(m->text, maxWidth, scale, lineEmojiSize, line,
                                  body, sizeof(body))) continue;
             drawUtf8(cv, CHAT_BODY_X, y + (bodyRow - scroll) * rowHeight + 1, w - 2,
                      body, m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_TEXT,
-                     scale, emojis);
+                     scale, lineEmojiSize);
         }
         logical = (uint16_t)(logical + blockRows);
     }
@@ -1346,8 +1426,7 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
     bool& stick = dm ? s_dmStick : s_chatStick;
     int scale = chatScale();
     int emojis = emojiScale();
-    int rowScale = scale > emojis ? scale : emojis;
-    int rowHeight = rowScale * 8 + 2;
+    int rowHeight = scale * 8 + 2;
     int visibleRows = (MESH_H - (TAB_H + 2) - 2) / rowHeight;
     if (visibleRows < 1) visibleRows = 1;
     uint16_t total = chatTotalRows(dm, 240, scale, emojis);

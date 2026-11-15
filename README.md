@@ -753,12 +753,12 @@ Frequency and PSK editors stay ASCII. The bottom bar is prefixed with
 
 **CHAT FONT** and **EMOJI SIZE** are independent numeric scales from **1x**
 through **10x**. The chat-font setting scales message text; the emoji setting
-scales emoji images and glyphs. Wrapping and row height adapt to both sizes.
-Large values show fewer characters and messages at once, and the screen
-scrolls. The log itself holds 32 channel lines, 16 direct messages per
-person, and 16 people. When a list is full, the oldest entry drops. On
-PEOPLE, Backspace deletes someone else and that person's direct-message file.
-You cannot delete yourself.
+scales emoji images and glyphs. Emoji-only messages use a fixed-height card;
+emoji scales up to the space available there. Inline emoji stay within the
+text line height. Larger chat text still uses taller rows. The screen scrolls. The log
+itself holds 32 channel lines, 16 direct messages per person, and 16 people.
+When a list is full, the oldest entry drops. On PEOPLE, Backspace deletes
+someone else and that person's direct-message file. You cannot delete yourself.
 
 **EMOJI** selects **BUILTIN** pixel glyphs or **SD PNG** images. SD images go
 in `/0N3P0rK/PigMesh/emoji/` and use uppercase code-point filenames such as
