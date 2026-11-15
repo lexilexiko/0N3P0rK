@@ -31,6 +31,7 @@
 #define LH          10
 #define TAB_H       11
 #define MESH_H      105
+#define CHAT_BODY_X 14
 
 // Rows under the tab strip. The key line lives in the real bottom bar.
 static int meshRows() {
@@ -206,7 +207,7 @@ static int chatLineHeight() {
 }
 
 static int chatWrapCols(int width, int scale) {
-    int cols = (width - 8) / (6 * scale);
+    int cols = (width - CHAT_BODY_X - 2) / (6 * scale);
     return cols < 1 ? 1 : cols;
 }
 
@@ -385,7 +386,8 @@ static uint8_t countOnline() {
     uint8_t n = 0;
     for (uint8_t i = 0; i < s_nodeN; i++) {
         if (s_nodes[i].isSelf) continue;
-        if (now - s_nodes[i].lastSeen < 8UL * 60UL * 1000UL) n++;
+        if (s_nodes[i].lastSeen &&
+            now - s_nodes[i].lastSeen < 8UL * 60UL * 1000UL) n++;
     }
     return n;
 }
@@ -484,7 +486,8 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
         cv.fillRect(0, y - 1, 2, LH, COL_CYAN);
         bg = COL_SEL;
     }
-    bool fresh = n.isSelf || ((uint32_t)millis() - n.lastSeen < 8UL * 60UL * 1000UL);
+    bool fresh = n.isSelf || (n.lastSeen &&
+                 (uint32_t)millis() - n.lastSeen < 8UL * 60UL * 1000UL);
     uint16_t nameCol = n.isSelf ? (uint16_t)COL_PINK : (fresh ? (uint16_t)COL_TEXT : (uint16_t)COL_DIM);
     if (n.isSelf) drawUtf8(cv, 4, y, 40, "you", nameCol, bg);
     else if (n.shortName[0]) drawUtf8(cv, 4, y, 40, n.shortName, nameCol, bg);
@@ -589,7 +592,7 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
             if (logical < scroll || screenLine >= visible) continue;
             char body[MAX_TEXT_BYTES + 1];
             if (!wrappedTextLine(m->text, maxCols, line, body, sizeof(body))) continue;
-            drawUtf8(cv, 4, y + screenLine++ * lineH, w - 2,
+            drawUtf8(cv, CHAT_BODY_X, y + screenLine++ * lineH, w - 2,
                      body, m->sent ? (uint16_t)COL_GREEN : (uint16_t)COL_TEXT,
                      COL_BG, scale);
         }
