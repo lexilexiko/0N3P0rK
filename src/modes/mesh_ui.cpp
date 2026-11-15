@@ -3,6 +3,7 @@
 
 #include "mesh_pig.h"
 #include "mesh_priv.h"
+#include "mesh_emoji.h"
 #include "mesh_glyph.h"
 #include "../audio/sfx.h"
 #include "../core/app.h"
@@ -123,11 +124,18 @@ static EmojiPng* emojiPng(uint32_t code) {
     entry->stamp = ++s_emojiCacheStamp;
     entry->checked = true;
 
-    char path[32];
-    snprintf(path, sizeof(path), "/0N3P0rK/PigMesh/emoji/u%lX.png",
-             (unsigned long)code);
+    char path[48];
+    int pathLen = snprintf(path, sizeof(path), "/0N3P0rK/PigMesh/emoji/u%lX.png",
+                           (unsigned long)code);
+    if (pathLen < 0 || (size_t)pathLen >= sizeof(path)) {
+        Serial.printf("[MESH] emoji path too long for U+%lX\n", (unsigned long)code);
+        return nullptr;
+    }
     File file = SD.open(path, FILE_READ);
-    if (!file) return entry;
+    if (!file) {
+        Serial.printf("[MESH] emoji PNG not found: %s\n", path);
+        return entry;
+    }
 
     size_t size = file.size();
     if (size < 24 || size > MAX_EMOJI_PNG_BYTES) {
@@ -193,7 +201,7 @@ static int32_t drawEmojiPng(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
 static int32_t drawBuiltinEmoji(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
                                 uint32_t code, int32_t fontHeight) {
     if (!gfx || fontHeight <= 0) return 0;
-    const uint8_t* glyph = meshGlyph(code);
+    const uint8_t* glyph = meshEmojiGlyph(code);
     if (!glyph) return 0;
     int scale = (fontHeight + 4) / 8;
     if (scale < 1) scale = 1;
