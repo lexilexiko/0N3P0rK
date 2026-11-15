@@ -35,6 +35,7 @@
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
 #include "../modes/mesh_pig.h"
+#include "../modes/wps_pig.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -1030,6 +1031,9 @@ void Display::drawBottomBar() {
             case AppMode::MESH:
                 strncpy(left, MeshPig::bottomHint(), sizeof(left) - 1);
                 break;
+            case AppMode::WPSPIG:
+                WpsPigMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -1069,6 +1073,9 @@ void Display::drawBottomBar() {
                 break;
             case AppMode::MESH:
                 strncpy(left, MeshPig::bottomHint(), sizeof(left) - 1);
+                break;
+            case AppMode::WPSPIG:
+                WpsPigMode::getStatusLine(left, sizeof(left));
                 break;
             default:
                 break;
@@ -1186,7 +1193,8 @@ void Display::update() {
          App::mode() == AppMode::INSPECTOR ||
          App::mode() == AppMode::DESK ||
          App::mode() == AppMode::GPS ||
-         App::mode() == AppMode::MESH);
+         App::mode() == AppMode::MESH ||
+         App::mode() == AppMode::WPSPIG);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {
@@ -1205,6 +1213,7 @@ void Display::update() {
         else if (App::mode() == AppMode::DESK) DeskMode::draw(mainCanvas);
         else if (App::mode() == AppMode::GPS)  GpsMode::draw(mainCanvas);
         else if (App::mode() == AppMode::MESH) MeshPig::draw(mainCanvas);
+        else if (App::mode() == AppMode::WPSPIG) WpsPigMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

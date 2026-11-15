@@ -160,6 +160,10 @@ static const char* const H_STOP[] = {
     "RADIO SLEEP. RINGS DIE.",
     "LOOT STAYS ON /0N3P0rK/."
 };
+static const char* const H_WPS[] = {
+    "WPS PIN BRUTE FORCE.",
+    "LAB / AUTHORIZED NETS ONLY."
+};
 static const char* const H_EVIL[] = {
     "LAB PORTAL. OWN NETS ONLY.",
     "ENT CLONE. V LOOT. D KICK."
@@ -209,6 +213,7 @@ static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
     {"!!", "AGGRO",   2,  H_AGGRO, 2},
     {"EP", "EVILPIG", 9,  H_EVIL,  2},
+    {"WP", "WPS PIN", 32, H_WPS,   2},
     {"PP", "PIGPASS", 10, H_PASS,  2},
     {"BL", "BLE",     13, H_BLE,   2},
     {"IR", "IR PORT", 15, H_IR,    2},
@@ -400,6 +405,10 @@ static void doAction(uint8_t id) {
         case 9:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::EVILPIG);
+            break;
+        case 32:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::WPSPIG);
             break;
         case 10:
             if (Cap::isRunning()) Cap::stop();

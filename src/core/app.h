@@ -24,7 +24,8 @@ enum class AppMode : uint8_t {
     INSPECTOR,
     DESK,
     GPS,
-    MESH
+    MESH,
+    WPSPIG
 };
 
 namespace App {

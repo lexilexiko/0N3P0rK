@@ -953,7 +953,7 @@ static void handleNI(uint32_t from, int16_t rssi, int8_t snr, const uint8_t* b, 
     if(ln[0]) { memcpy(n->longName,ln,19); n->longName[19]=0; }
     if(gotKey) { memcpy(n->pubKey,key,32); n->hasKey=true; }
     n->rssi=rssi; n->snr=snr; n->lastSeen=(uint32_t)millis();
-    saveNodes();
+    s_nodesDirty = true;
 }
 
 static void noteDm(const Msg& m){
@@ -1535,18 +1535,6 @@ void update(){
     digitalWrite(12, HIGH);
     uint32_t now=(uint32_t)millis();
 
-    static uint32_t s_lastDisk = 0;
-    if (s_rs != RS_TX &&
-        (s_chatDirty || s_dmDirty || s_nodesDirty || s_dmPendN) &&
-        (uint32_t)(now - s_lastDisk) > 2000) {
-        if (s_radio) s_radio->standby();
-        flushMeshDisk();
-        s_lastDisk = now;
-        digitalWrite(12, HIGH);
-        if (s_radio && s_radio->startReceive() == RADIOLIB_ERR_NONE) s_rs = RS_RX;
-        else s_rs = RS_IDLE;
-    }
-
     // Two extra announcements after start, then every 15 min.
     // The phone only learns the public key from these, or from a direct reply.
     uint32_t niGap = s_niSoon ? 20000UL : 15UL*60UL*1000UL;
@@ -1558,7 +1546,7 @@ void update(){
 
     // Periodic node save every 5 minutes
     static uint32_t s_lastNodeSave = 0;
-    if(now - s_lastNodeSave > 5UL*60UL*1000UL){ s_lastNodeSave=now; saveNodes(); }
+    if(now - s_lastNodeSave > 5UL*60UL*1000UL){ s_lastNodeSave=now; s_nodesDirty=true; }
 
     // RX
     if(s_rxFlag&&s_rs==RS_RX){
@@ -1573,15 +1561,39 @@ void update(){
         if (s_radio->startReceive() == RADIOLIB_ERR_NONE) s_rs=RS_RX;
         else s_rs=RS_IDLE;
     }
+    static uint32_t s_lastDisk = 0;
+    if (s_rs == RS_RX && !s_rxFlag &&
+        (s_chatDirty || s_dmDirty || s_nodesDirty || s_dmPendN) &&
+        (uint32_t)(now - s_lastDisk) > 2000) {
+        if (s_radio) s_radio->standby();
+        flushMeshDisk();
+        s_lastDisk = now;
+        digitalWrite(12, HIGH);
+        if (s_radio && s_radio->startReceive() == RADIOLIB_ERR_NONE) s_rs = RS_RX;
+        else s_rs = RS_IDLE;
+    }
+
     // TX done
     if(s_txFlag){ s_txFlag=false; s_radio->setPacketReceivedAction(onRx); s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE; }
     // TX watchdog
     if(s_rs==RS_TX&&now-s_txStartMs>5000){ s_radio->setPacketReceivedAction(onRx); s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE; }
+    // Recover transient receive failures without resetting the application.
+    static uint32_t lastRecovery = 0;
+    if (s_rs == RS_IDLE && (uint32_t)(now-lastRecovery) >= 1000) {
+        lastRecovery = now;
+        s_radio->standby();
+        s_radio->setPacketReceivedAction(onRx);
+        int16_t err = s_radio->startReceive();
+        if (err == RADIOLIB_ERR_NONE) s_rs = RS_RX;
+        else Serial.printf("[MESH] RX recovery error %d\n", err);
+    }
     // Send next queued packet
-    if(s_rs==RS_RX&&s_txN>0){
-        TxPkt pkt; if(txDeq(pkt)){
+    static uint32_t lastTxAttempt = 0;
+    if(s_rs==RS_RX&&!s_rxFlag&&s_txN>0&&(uint32_t)(now-lastTxAttempt)>=1000){
+        lastTxAttempt = now;
+        TxPkt pkt = s_txQ[0]; {
             s_radio->setPacketSentAction(onTx);
-            if(s_radio->startTransmit(pkt.data,pkt.len)==RADIOLIB_ERR_NONE){ s_rs=RS_TX; s_txStartMs=now; s_txPkts++; }
+            if(s_radio->startTransmit(pkt.data,pkt.len)==RADIOLIB_ERR_NONE){ txDeq(pkt); s_rs=RS_TX; s_txStartMs=now; s_txPkts++; }
             else { s_radio->setPacketReceivedAction(onRx); s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE; }
         }
     }
