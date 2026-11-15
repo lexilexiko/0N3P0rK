@@ -215,11 +215,11 @@ static int32_t drawEmoji(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
 
 // Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
 static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
-                         uint16_t fg, int scale, uint16_t bg = COL_BG) {
+                         uint16_t fg, int scale) {
     if (scale < 1) scale = 1;
     if (cp < 0x80) {
         cv.setTextSize((uint8_t)scale);
-        cv.setTextColor(fg, bg);
+        cv.setTextColor(fg);
         cv.setCursor(x, y);
         char ch[2] = { (char)cp, 0 };
         cv.print(ch);
@@ -229,7 +229,7 @@ static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
     if (cp >= 0x2300 && drawEmoji(&cv, x, y, cp, 8 * scale) > 0) return;
     if (cp >= 0x2300 && Config::mesh().emojiFromSd) {
         cv.setTextSize((uint8_t)scale);
-        cv.setTextColor(fg, bg);
+        cv.setTextColor(fg);
         cv.setCursor(x, y);
         cv.print("?");
         cv.setTextSize(1);
@@ -241,14 +241,14 @@ static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
         return;
     }
     cv.setTextSize((uint8_t)scale);
-    cv.setTextColor(fg, bg);
+    cv.setTextColor(fg);
     cv.setCursor(x, y);
     cv.print("?");
     cv.setTextSize(1);
 }
 
 static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
-                    uint16_t fg, uint16_t bg, int scale = 1) {
+                    uint16_t fg, int scale = 1) {
     if (!s) return x;
     if (scale < 1) scale = 1;
     int pitch = 6 * scale;
@@ -258,9 +258,9 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
         if (n <= 0) break;
         s += n;
         if (utf8IsEmojiSequencePart(cp)) continue;
-        if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale, bg);
+        if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale);
         else if (cp < 0x80) {
-            cv.setTextColor(fg, bg);
+            cv.setTextColor(fg);
             cv.setCursor(x, y);
             char ch[2] = { (char)cp, 0 };
             cv.print(ch);
@@ -272,12 +272,12 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
                 x += emojiWidth;
                 continue;
             } else if (cp >= 0x2300 && Config::mesh().emojiFromSd) {
-                cv.setTextColor(fg, bg);
+                cv.setTextColor(fg);
                 cv.setCursor(x, y);
                 cv.print("?");
             } else if (g) blitGlyph(cv, x, y, g, fg);
             else {
-                cv.setTextColor(fg, bg);
+                cv.setTextColor(fg);
                 cv.setCursor(x, y);
                 cv.print("?");
             }
@@ -357,13 +357,8 @@ static void ageStr(uint32_t lastMs, char* out, uint8_t cap) {
 
 static int putLine(M5Canvas& cv, int y, int yMax, int w, const char* s, uint16_t col) {
     if (y > yMax - 8) return y;
-    drawUtf8(cv, 2, y, w - 2, s, col, COL_BG);
+    drawUtf8(cv, 2, y, w - 2, s, col);
     return y + LH;
-}
-
-static int chatLineHeight() {
-    int scale = chatScale();
-    return scale < 1 ? 8 : scale * 8;
 }
 
 static int chatWrapCols(int width, int scale) {
@@ -443,7 +438,7 @@ static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
     return true;
 }
 
-static uint16_t chatTotalLines(bool dm, int width, int scale) {
+static uint16_t chatTotalRows(bool dm, int width, int scale) {
     uint8_t count = dm ? s_dmN : s_chatN;
     int cols = chatWrapCols(width, scale);
     uint32_t total = 0;
@@ -648,12 +643,12 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
     uint16_t nameCol = sel ? (uint16_t)COL_BG :
                        (n.isSelf ? (uint16_t)COL_PINK :
                         (fresh ? (uint16_t)COL_TEXT : (uint16_t)COL_DIM));
-    if (n.isSelf) drawUtf8(cv, 4, y, 40, "you", nameCol, bg);
-    else if (n.shortName[0]) drawUtf8(cv, 4, y, 40, n.shortName, nameCol, bg);
+    if (n.isSelf) drawUtf8(cv, 4, y, 40, "you", nameCol);
+    else if (n.shortName[0]) drawUtf8(cv, 4, y, 40, n.shortName, nameCol);
     else {
         char id[8];
         snprintf(id, sizeof(id), "!%04lx", (unsigned long)(n.nodeNum & 0xFFFF));
-        drawUtf8(cv, 4, y, 40, id, nameCol, bg);
+        drawUtf8(cv, 4, y, 40, id, nameCol);
     }
     cv.setTextColor(sel ? (uint16_t)COL_BG :
                     (n.isSelf ? (uint16_t)COL_DIM : sigCol(n.rssi)), bg);
@@ -667,7 +662,7 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
     cv.printf("%4s", age);
     bool sms = !n.isSelf && dmIsUnread(n.nodeNum);
     int nameMax = sms ? w - 22 : w - 2;
-    if (n.longName[0]) drawUtf8(cv, 104, y, nameMax, n.longName, nameCol, bg);
+    if (n.longName[0]) drawUtf8(cv, 104, y, nameMax, n.longName, nameCol);
     if (sms) {
         cv.fillRoundRect(w - 24, y - 1, 21, LH, 3, COL_YELLOW);
         cv.setTextColor(COL_BG, COL_YELLOW);
@@ -713,62 +708,55 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
         return;
     }
     int scale = chatScale();
-    int lineH = chatLineHeight();
-    int visible = (yMax - y) / lineH;
-    if (visible < 1) visible = 1;
-    uint16_t total = chatTotalLines(dm, w, scale);
-    uint16_t maxTop = total > (uint16_t)visible ? (uint16_t)(total - visible) : 0;
+    int rowHeight = scale * 8 + 2;
+    int visibleRows = (yMax - y) / rowHeight;
+    if (visibleRows < 1) visibleRows = 1;
+    uint16_t total = chatTotalRows(dm, w, scale);
+    uint16_t maxTop = total > (uint16_t)visibleRows
+                    ? (uint16_t)(total - visibleRows) : 0;
     if (scroll > maxTop) scroll = maxTop;
     if (stick) scroll = maxTop;
 
     uint16_t logical = 0;
-    int screenLine = 0;
+    uint16_t viewEnd = (uint16_t)(scroll + visibleRows);
     int maxCols = chatWrapCols(w, scale);
-    for (uint8_t i = 0; i < nmsg && screenLine < visible; i++) {
+    for (uint8_t i = 0; i < nmsg; i++) {
         Msg* m = dm ? dmGet(i) : chatGet(i);
         if (!m) continue;
+        if (logical >= viewEnd) break;
         const char* who = m->fromName[0] ? m->fromName : "?";
-        const char* mark = "";
-        uint16_t headCol = COL_TEXT;
-        if (m->sent) {
-            switch (m->delivery) {
-                case TX_QUEUED: mark = " Q"; headCol = COL_CYAN; break;
-                case TX_WAITING: mark = " .."; headCol = COL_YELLOW; break;
-                case TX_SENT: mark = " TX"; headCol = COL_DIM; break;
-                case TX_ACKED: mark = " OK"; headCol = COL_GREEN; break;
-                case TX_FAILED: mark = " X"; headCol = COL_RED; break;
-                default: mark = " ?"; headCol = COL_DIM; break;
-            }
-        }
-        char header[24];
-        snprintf(header, sizeof(header), "%s%c%s", who,
-                 m->to == BROADCAST_ID ? ':' : '>', mark);
         uint16_t bodyLines = wrappedTextLines(m->text, maxCols);
-        uint16_t blockLines = bodyLines + 1;
+        uint16_t blockRows = (uint16_t)(bodyLines + 1);
+        uint16_t cardEnd = (uint16_t)(logical + blockRows);
         uint16_t visibleStart = logical > scroll ? logical : scroll;
-        uint16_t visibleEnd = logical + blockLines;
-        if (visibleEnd > scroll + visible) visibleEnd = scroll + visible;
+        uint16_t visibleEnd = cardEnd < viewEnd ? cardEnd : viewEnd;
         if (visibleStart < visibleEnd) {
-            int cardY = y + (visibleStart - scroll) * lineH;
-            int cardH = (visibleEnd - visibleStart) * lineH - 1;
+            int cardY = y + (visibleStart - scroll) * rowHeight;
+            int cardBottom = y + (visibleEnd - scroll) * rowHeight;
+            int cardH = cardBottom - cardY - 2;
             uint16_t accent = m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_PINK;
             cv.fillRoundRect(3, cardY, w - 6, cardH, 4, COL_HDR);
             if (cardH > 4)
                 cv.fillRoundRect(5, cardY + 2, 2, cardH - 4, 1, accent);
         }
-        if (logical >= scroll && screenLine < visible)
-            drawUtf8(cv, 8, y + screenLine++ * lineH, w - 10,
-                     header, headCol, COL_HDR);
-        logical++;
-
-        for (uint16_t line = 0; line < bodyLines; line++, logical++) {
-            if (logical < scroll || screenLine >= visible) continue;
+        if (logical >= scroll && logical < viewEnd) {
+            int nameWidth = (int)strlen(who) * 6;
+            int nameX = (w - nameWidth) / 2;
+            if (nameX < 8) nameX = 8;
+            int nameY = y + (logical - scroll) * rowHeight + (rowHeight - 8) / 2;
+            drawUtf8(cv, nameX, nameY, w - 8, who,
+                     m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_PINK);
+        }
+        for (uint16_t line = 0; line < bodyLines; line++) {
+            uint16_t bodyRow = (uint16_t)(logical + 1 + line);
+            if (bodyRow < scroll || bodyRow >= viewEnd) continue;
             char body[MAX_TEXT_BYTES + 1];
             if (!wrappedTextLine(m->text, maxCols, line, body, sizeof(body))) continue;
-            drawUtf8(cv, CHAT_BODY_X, y + screenLine++ * lineH, w - 2,
+            drawUtf8(cv, CHAT_BODY_X, y + (bodyRow - scroll) * rowHeight + 1, w - 2,
                      body, m->sent ? (uint16_t)COL_CYAN : (uint16_t)COL_TEXT,
-                     COL_HDR, scale);
+                     scale);
         }
+        logical = (uint16_t)(logical + blockRows);
     }
 }
 
@@ -820,7 +808,7 @@ static void drawRadio(M5Canvas& cv, int w, int h) {
     else if (s_radioOk) { status = "LORA READY"; statusCol = COL_GREEN; }
     cv.fillRoundRect(4, y - 1, w - 8, LH, 3, COL_HDR);
     cv.fillRoundRect(7, y + 2, 3, LH - 5, 1, statusCol);
-    drawUtf8(cv, 14, y, w - 12, status, statusCol, COL_HDR);
+    drawUtf8(cv, 14, y, w - 12, status, statusCol);
     y += LH;
     if (planned) {
         snprintf(line, sizeof(line), "%.3f MHz%s", freq, mc.freqOverride ? "  set" : "");
@@ -909,8 +897,8 @@ static void drawSet(M5Canvas& cv, int w, int h) {
         if ((row == 0 || row == 10) && val[1] == 'F') vc = COL_RED;
         if (row == 12) vc = Config::mesh().emojiFromSd ? COL_GREEN : COL_CYAN;
         drawUtf8(cv, 8, y, 80, SET_LBL[row],
-                 sel ? (uint16_t)COL_BG : (uint16_t)COL_TEXT, bg);
-        drawUtf8(cv, 84, y, w - 8, val, sel ? (uint16_t)COL_BG : vc, bg);
+                 sel ? (uint16_t)COL_BG : (uint16_t)COL_TEXT);
+        drawUtf8(cv, 84, y, w - 8, val, sel ? (uint16_t)COL_BG : vc);
     }
     (void)h;
 }
@@ -1010,7 +998,7 @@ static void drawWriter(M5Canvas& cv, int w, int h, const char* title) {
         cv.print("ASCII");
     }
     int titleX = s_fieldAscii ? 62 : 26;
-    drawUtf8(cv, titleX, 1, w - 34, title ? title : "", COL_TEXT, COL_HDR);
+    drawUtf8(cv, titleX, 1, w - 34, title ? title : "", COL_TEXT);
     char cnt[8];
     snprintf(cnt, sizeof(cnt), "%d", utf8Cols(s_cmpBuf, s_cmpLen));
     int countW = 6 * (int)strlen(cnt) + 4;
@@ -1050,7 +1038,7 @@ static void drawDmHdr(M5Canvas& cv, int w) {
     cv.setTextColor(COL_BG, (uint16_t)COL_PINK);
     cv.setCursor(8, 1);
     cv.print("DM");
-    drawUtf8(cv, 27, 1, w - 6, nm, COL_TEXT, COL_HDR);
+    drawUtf8(cv, 27, 1, w - 6, nm, COL_TEXT);
 }
 
 void draw(M5Canvas& canvas) {
@@ -1356,11 +1344,12 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
     uint16_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
     int scale = chatScale();
-    int lineH = chatLineHeight();
-    int visible = (MESH_H - (TAB_H + 2) - 2) / lineH;
-    if (visible < 1) visible = 1;
-    uint16_t total = chatTotalLines(dm, 240, scale);
-    uint16_t maxTop = total > (uint16_t)visible ? (uint16_t)(total - visible) : 0;
+    int rowHeight = scale * 8 + 2;
+    int visibleRows = (MESH_H - (TAB_H + 2) - 2) / rowHeight;
+    if (visibleRows < 1) visibleRows = 1;
+    uint16_t total = chatTotalRows(dm, 240, scale);
+    uint16_t maxTop = total > (uint16_t)visibleRows
+                    ? (uint16_t)(total - visibleRows) : 0;
     if (dir < 0 && scroll > 0) { scroll--; stick = false; }
     else if (dir > 0 && scroll < maxTop) {
         scroll++;
