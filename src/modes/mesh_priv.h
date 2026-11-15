@@ -73,6 +73,7 @@ void meshDropNode(uint8_t index);
 int utf8Next(const char* s, uint32_t& cp);
 int utf8Fit(const char* s, int cap);
 int utf8Cols(const char* s, int nbytes);
+bool utf8IsEmojiSequencePart(uint32_t cp);
 uint32_t mapLay(char c, uint8_t lang);
 
 bool planRadio(const MeshConfig& mc, float& freq, float& bw,
@@ -83,4 +84,5 @@ void uiArmOpen();
 void uiStick();
 void uiReset();
 void uiClearNav();
+void uiEmojiCacheClear();
 }

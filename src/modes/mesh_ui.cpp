@@ -7,10 +7,12 @@
 #include "../audio/sfx.h"
 #include "../core/app.h"
 #include "../core/config.h"
+#include "../storage/littlefs_ops.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"
 
 #include <M5Cardputer.h>
+#include <stdlib.h>
 #include <string.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -32,6 +34,20 @@
 #define TAB_H       11
 #define MESH_H      105
 #define CHAT_BODY_X 14
+
+constexpr uint8_t EMOJI_CACHE_CAP = 4;
+constexpr uint32_t MAX_EMOJI_PNG_BYTES = 16 * 1024;
+struct EmojiPng {
+    uint32_t code;
+    uint32_t stamp;
+    uint32_t length;
+    uint16_t width;
+    uint16_t height;
+    uint8_t* data;
+    bool checked;
+};
+static EmojiPng s_emojiCache[EMOJI_CACHE_CAP] = {};
+static uint32_t s_emojiCacheStamp = 0;
 
 // Rows under the tab strip. The key line lives in the real bottom bar.
 static int meshRows() {
@@ -72,6 +88,121 @@ static void blitGlyphScale(M5Canvas& cv, int x, int y, const uint8_t* col,
     }
 }
 
+static uint32_t pngReadBe32(const uint8_t* p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | p[3];
+}
+
+static void emojiCacheClear() {
+    for (uint8_t i = 0; i < EMOJI_CACHE_CAP; i++) {
+        free(s_emojiCache[i].data);
+        memset(&s_emojiCache[i], 0, sizeof(s_emojiCache[i]));
+    }
+    s_emojiCacheStamp = 0;
+}
+
+static EmojiPng* emojiPng(uint32_t code) {
+    if (!Storage::available()) return nullptr;
+    for (uint8_t i = 0; i < EMOJI_CACHE_CAP; i++) {
+        if (s_emojiCache[i].checked && s_emojiCache[i].code == code) {
+            s_emojiCache[i].stamp = ++s_emojiCacheStamp;
+            return &s_emojiCache[i];
+        }
+    }
+
+    EmojiPng* entry = &s_emojiCache[0];
+    for (uint8_t i = 0; i < EMOJI_CACHE_CAP; i++) {
+        if (!s_emojiCache[i].checked) {
+            entry = &s_emojiCache[i];
+            break;
+        }
+        if (s_emojiCache[i].stamp < entry->stamp) entry = &s_emojiCache[i];
+    }
+    free(entry->data);
+    memset(entry, 0, sizeof(*entry));
+    entry->code = code;
+    entry->stamp = ++s_emojiCacheStamp;
+    entry->checked = true;
+
+    char path[32];
+    snprintf(path, sizeof(path), "/0N3P0rK/PigMesh/emoji/u%lX.png",
+             (unsigned long)code);
+    File file = SD.open(path, FILE_READ);
+    if (!file) return entry;
+
+    size_t size = file.size();
+    if (size < 24 || size > MAX_EMOJI_PNG_BYTES) {
+        file.close();
+        Serial.printf("[MESH] invalid emoji PNG size for U+%lX\n", (unsigned long)code);
+        return entry;
+    }
+
+    uint8_t* data = (uint8_t*)malloc(size);
+    if (!data) {
+        file.close();
+        Serial.printf("[MESH] emoji PNG allocation failed for U+%lX\n", (unsigned long)code);
+        return entry;
+    }
+    size_t read = file.read(data, size);
+    file.close();
+
+    static const uint8_t pngSignature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    uint32_t width = read == size && memcmp(data, pngSignature, sizeof(pngSignature)) == 0
+                   ? pngReadBe32(data + 16) : 0;
+    uint32_t height = width ? pngReadBe32(data + 20) : 0;
+    if (!width || !height || width > 256 || height > 256) {
+        free(data);
+        Serial.printf("[MESH] invalid emoji PNG for U+%lX\n", (unsigned long)code);
+        return entry;
+    }
+
+    entry->data = data;
+    entry->length = (uint32_t)size;
+    entry->width = (uint16_t)width;
+    entry->height = (uint16_t)height;
+    return entry;
+}
+
+static int32_t drawEmojiPng(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
+                            uint32_t code, int32_t fontHeight) {
+    if (!gfx || fontHeight <= 0) return 0;
+    EmojiPng* image = emojiPng(code);
+    const int32_t cellWidth = (fontHeight * 6 + 4) / 8;
+    if (image && image->data) {
+        const int32_t maxWidth = fontHeight * 5 / 8;
+        const int32_t maxHeight = fontHeight * 7 / 8;
+        float sx = (float)maxWidth / image->width;
+        float sy = (float)maxHeight / image->height;
+        float scale = sx < sy ? sx : sy;
+        int32_t drawWidth = (int32_t)(image->width * scale + 0.5f);
+        int32_t drawHeight = (int32_t)(image->height * scale + 0.5f);
+        if (gfx->drawPng(image->data, image->length,
+                         x + (cellWidth - drawWidth) / 2,
+                         y + (fontHeight - drawHeight) / 2,
+                         0, 0, 0, 0, scale, scale)) {
+            return cellWidth;
+        }
+        free(image->data);
+        image->data = nullptr;
+        image->length = 0;
+        image->width = 0;
+        image->height = 0;
+        Serial.printf("[MESH] failed to decode emoji PNG U+%lX\n", (unsigned long)code);
+    }
+
+    const uint8_t* glyph = meshGlyph(code);
+    if (!glyph) return 0;
+    int scale = (fontHeight + 4) / 8;
+    if (scale < 1) scale = 1;
+    for (int c = 0; c < 5; c++) {
+        for (int r = 0; r < 7; r++) {
+            if (glyph[c] & (uint8_t)(1u << (6 - r)))
+                gfx->fillRect(x + c * scale, y + r * scale, scale, scale, TFT_WHITE);
+        }
+    }
+    return cellWidth;
+}
+
 // Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
 static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
                          uint16_t fg, int scale) {
@@ -85,7 +216,8 @@ static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
         cv.setTextSize(1);
         return;
     }
-    const uint8_t* g = cp <= 0xFFFF ? meshGlyph((uint16_t)cp) : nullptr;
+    if (cp >= 0x2300 && drawEmojiPng(&cv, x, y, cp, 8 * scale) > 0) return;
+    const uint8_t* g = meshGlyph(cp);
     if (g) {
         blitGlyphScale(cv, x, y + (scale > 1 ? 1 : 0), g, fg, scale);
         return;
@@ -107,6 +239,7 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
         int n = utf8Next(s, cp);
         if (n <= 0) break;
         s += n;
+        if (utf8IsEmojiSequencePart(cp)) continue;
         if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale);
         else if (cp < 0x80) {
             cv.setTextColor(fg, bg);
@@ -114,8 +247,13 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
             char ch[2] = { (char)cp, 0 };
             cv.print(ch);
         } else {
-            const uint8_t* g = cp <= 0xFFFF ? meshGlyph((uint16_t)cp) : nullptr;
-            if (g) blitGlyph(cv, x, y, g, fg);
+            int32_t emojiWidth = cp >= 0x2300
+                               ? drawEmojiPng(&cv, x, y, cp, 8 * scale) : 0;
+            const uint8_t* g = meshGlyph(cp);
+            if (emojiWidth > 0) {
+                x += emojiWidth;
+                continue;
+            } else if (g) blitGlyph(cv, x, y, g, fg);
             else {
                 cv.setTextColor(fg, bg);
                 cv.setCursor(x, y);
@@ -223,7 +361,7 @@ static uint16_t wrappedTextLines(const char* text, int maxCols) {
         if (cp == '\n') {
             lines++;
             cols = 0;
-        } else {
+        } else if (!utf8IsEmojiSequencePart(cp)) {
             if (cols >= maxCols) {
                 lines++;
                 cols = 0;
@@ -260,7 +398,7 @@ static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
             cols = 0;
             continue;
         }
-        if (cols >= maxCols) {
+        if (!utf8IsEmojiSequencePart(cp) && cols >= maxCols) {
             if (line == target) {
                 size_t len = i - start;
                 if (len >= outCap) len = outCap - 1;
@@ -273,7 +411,7 @@ static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
             cols = 0;
         }
         i += n;
-        cols++;
+        if (!utf8IsEmojiSequencePart(cp)) cols++;
     }
     if (line != target) return false;
     size_t len = i - start;
@@ -359,6 +497,7 @@ namespace MeshPig {
 
 void uiArmOpen() { s_swallowEnter = true; }
 void uiStick() { s_chatStick = true; s_dmStick = true; }
+void uiEmojiCacheClear() { emojiCacheClear(); }
 
 void uiReset() {
     if (s_holdUi) return;
@@ -867,6 +1006,7 @@ void draw(M5Canvas& canvas) {
     canvas.setFont(&fonts::Font0);
     canvas.setTextSize(1);
     canvas.setTextWrap(false);
+    canvas.setEmojiCallback(drawEmojiPng);
 
     if (s_layer == LY_WRITE || s_layer == LY_FIELD) {
         char title[32];

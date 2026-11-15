@@ -345,6 +345,7 @@ static void meshEnsureDir() {
     if (!SD.exists("/0N3P0rK")) SD.mkdir("/0N3P0rK");
     if (!SD.exists("/0N3P0rK/PigMesh")) SD.mkdir("/0N3P0rK/PigMesh");
     if (!SD.exists("/0N3P0rK/PigMesh/dm")) SD.mkdir("/0N3P0rK/PigMesh/dm");
+    if (!SD.exists("/0N3P0rK/PigMesh/emoji")) SD.mkdir("/0N3P0rK/PigMesh/emoji");
     sdIdle();
 }
 
@@ -1805,6 +1806,7 @@ void start(){
 }
 
 void stop(){
+    uiEmojiCacheClear();
     if (!s_run && !s_nodes && !s_chat && !s_dm && !s_hist && !s_txQ && !s_radio) return;
     if (s_radio) s_radio->standby();
     flushMeshDisk();

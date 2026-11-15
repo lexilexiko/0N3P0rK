@@ -84,9 +84,16 @@ int utf8Cols(const char* s, int nbytes) {
         int n = utf8Next(s + i, cp);
         if (n <= 0) break;
         i += n;
-        cols++;
+        if (!utf8IsEmojiSequencePart(cp)) cols++;
     }
     return cols;
+}
+
+bool utf8IsEmojiSequencePart(uint32_t cp) {
+    return (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0x200D ||
+           cp == 0x20E3 ||
+           (cp >= 0x1F3FB && cp <= 0x1F3FF) ||
+           (cp >= 0xE0020 && cp <= 0xE007F);
 }
 
 // Cardputer Esc is the ` key, so yo and ghe-upturn sit on the backslash key.
