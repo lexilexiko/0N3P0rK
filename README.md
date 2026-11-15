@@ -760,6 +760,11 @@ person, and 16 people. When a list is full, the oldest entry drops. On
 PEOPLE, Backspace deletes someone else and that person's direct-message file.
 You cannot delete yourself.
 
+**EMOJI** selects **BUILTIN** pixel glyphs or **SD PNG** images. SD images go
+in `/0N3P0rK/PigMesh/emoji/` and use uppercase code-point filenames such as
+`u1F600.png`. In SD mode, a missing image is shown as `?` instead of silently
+using a built-in glyph.
+
 Direct messages use the other node's public key. Channel chat stays on the
 channel PSK. This pig sends its own public key in NodeInfo, answers a NodeInfo
 request addressed to it, and repeats that announcement after start. When

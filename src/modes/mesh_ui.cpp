@@ -167,28 +167,32 @@ static int32_t drawEmojiPng(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
     if (!gfx || fontHeight <= 0) return 0;
     EmojiPng* image = emojiPng(code);
     const int32_t cellWidth = (fontHeight * 6 + 4) / 8;
-    if (image && image->data) {
-        const int32_t maxWidth = fontHeight * 5 / 8;
-        const int32_t maxHeight = fontHeight * 7 / 8;
-        float sx = (float)maxWidth / image->width;
-        float sy = (float)maxHeight / image->height;
-        float scale = sx < sy ? sx : sy;
-        int32_t drawWidth = (int32_t)(image->width * scale + 0.5f);
-        int32_t drawHeight = (int32_t)(image->height * scale + 0.5f);
-        if (gfx->drawPng(image->data, image->length,
-                         x + (cellWidth - drawWidth) / 2,
-                         y + (fontHeight - drawHeight) / 2,
-                         0, 0, 0, 0, scale, scale)) {
-            return cellWidth;
-        }
-        free(image->data);
-        image->data = nullptr;
-        image->length = 0;
-        image->width = 0;
-        image->height = 0;
-        Serial.printf("[MESH] failed to decode emoji PNG U+%lX\n", (unsigned long)code);
+    if (!image || !image->data) return 0;
+    const int32_t maxWidth = fontHeight * 5 / 8;
+    const int32_t maxHeight = fontHeight * 7 / 8;
+    float sx = (float)maxWidth / image->width;
+    float sy = (float)maxHeight / image->height;
+    float scale = sx < sy ? sx : sy;
+    int32_t drawWidth = (int32_t)(image->width * scale + 0.5f);
+    int32_t drawHeight = (int32_t)(image->height * scale + 0.5f);
+    if (gfx->drawPng(image->data, image->length,
+                     x + (cellWidth - drawWidth) / 2,
+                     y + (fontHeight - drawHeight) / 2,
+                     0, 0, 0, 0, scale, scale)) {
+        return cellWidth;
     }
+    free(image->data);
+    image->data = nullptr;
+    image->length = 0;
+    image->width = 0;
+    image->height = 0;
+    Serial.printf("[MESH] failed to decode emoji PNG U+%lX\n", (unsigned long)code);
+    return 0;
+}
 
+static int32_t drawBuiltinEmoji(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
+                                uint32_t code, int32_t fontHeight) {
+    if (!gfx || fontHeight <= 0) return 0;
     const uint8_t* glyph = meshGlyph(code);
     if (!glyph) return 0;
     int scale = (fontHeight + 4) / 8;
@@ -199,30 +203,45 @@ static int32_t drawEmojiPng(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
                 gfx->fillRect(x + c * scale, y + r * scale, scale, scale, COL_TEXT);
         }
     }
-    return cellWidth;
+    return (fontHeight * 6 + 4) / 8;
+}
+
+static int32_t drawEmoji(lgfx::LGFXBase* gfx, int32_t x, int32_t y,
+                         uint32_t code, int32_t fontHeight) {
+    return Config::mesh().emojiFromSd
+         ? drawEmojiPng(gfx, x, y, code, fontHeight)
+         : drawBuiltinEmoji(gfx, x, y, code, fontHeight);
 }
 
 // Scale 1 is Font0 6x8. Scale 2 is 12x16. A 5x7 glyph doubles to 10x14.
 static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
-                         uint16_t fg, int scale) {
+                         uint16_t fg, int scale, uint16_t bg = COL_BG) {
     if (scale < 1) scale = 1;
     if (cp < 0x80) {
         cv.setTextSize((uint8_t)scale);
-        cv.setTextColor(fg, (uint16_t)COL_BG);
+        cv.setTextColor(fg, bg);
         cv.setCursor(x, y);
         char ch[2] = { (char)cp, 0 };
         cv.print(ch);
         cv.setTextSize(1);
         return;
     }
-    if (cp >= 0x2300 && drawEmojiPng(&cv, x, y, cp, 8 * scale) > 0) return;
+    if (cp >= 0x2300 && drawEmoji(&cv, x, y, cp, 8 * scale) > 0) return;
+    if (cp >= 0x2300 && Config::mesh().emojiFromSd) {
+        cv.setTextSize((uint8_t)scale);
+        cv.setTextColor(fg, bg);
+        cv.setCursor(x, y);
+        cv.print("?");
+        cv.setTextSize(1);
+        return;
+    }
     const uint8_t* g = meshGlyph(cp);
     if (g) {
         blitGlyphScale(cv, x, y + (scale > 1 ? 1 : 0), g, fg, scale);
         return;
     }
     cv.setTextSize((uint8_t)scale);
-    cv.setTextColor(fg, (uint16_t)COL_BG);
+    cv.setTextColor(fg, bg);
     cv.setCursor(x, y);
     cv.print("?");
     cv.setTextSize(1);
@@ -239,7 +258,7 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
         if (n <= 0) break;
         s += n;
         if (utf8IsEmojiSequencePart(cp)) continue;
-        if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale);
+        if (scale >= 2) drawCpScaled(cv, x, y, cp, fg, scale, bg);
         else if (cp < 0x80) {
             cv.setTextColor(fg, bg);
             cv.setCursor(x, y);
@@ -247,11 +266,15 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
             cv.print(ch);
         } else {
             int32_t emojiWidth = cp >= 0x2300
-                               ? drawEmojiPng(&cv, x, y, cp, 8 * scale) : 0;
+                               ? drawEmoji(&cv, x, y, cp, 8 * scale) : 0;
             const uint8_t* g = meshGlyph(cp);
             if (emojiWidth > 0) {
                 x += emojiWidth;
                 continue;
+            } else if (cp >= 0x2300 && Config::mesh().emojiFromSd) {
+                cv.setTextColor(fg, bg);
+                cv.setCursor(x, y);
+                cv.print("?");
             } else if (g) blitGlyph(cv, x, y, g, fg);
             else {
                 cv.setTextColor(fg, bg);
@@ -553,9 +576,9 @@ static bool heardOther() {
 
 static const char* SET_LBL[] = {
     "MESH", "REGION", "MODEM", "TX dBm", "HOPS", "SLOT",
-    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "FONT"
+    "FREQ", "CHANNEL", "NAME", "PSK", "RX BOOST", "FONT", "EMOJI"
 };
-static const uint8_t SET_N = 12;
+static const uint8_t SET_N = 13;
 
 static bool keyHas(char a) {
     if (M5Cardputer.Keyboard.isKeyPressed(a)) return true;
@@ -858,7 +881,8 @@ static void setValue(uint8_t row, char* out, int cap) {
                      strcmp(mc.psk, "AA==") == 0 ? "OPEN" : "CUSTOM");
             break;
         case 10: snprintf(out, cap, "%s", mc.rxBoost ? "ON" : "OFF"); break;
-        default: snprintf(out, cap, "%s", chatSizeName(mc.chatSize)); break;
+        case 11: snprintf(out, cap, "%s", chatSizeName(mc.chatSize)); break;
+        default: snprintf(out, cap, "%s", mc.emojiFromSd ? "SD PNG" : "BUILTIN"); break;
     }
 }
 
@@ -883,6 +907,7 @@ static void drawSet(M5Canvas& cv, int w, int h) {
         uint16_t vc = COL_TEXT;
         if ((row == 0 || row == 10) && val[1] == 'N') vc = COL_GREEN;
         if ((row == 0 || row == 10) && val[1] == 'F') vc = COL_RED;
+        if (row == 12) vc = Config::mesh().emojiFromSd ? COL_GREEN : COL_CYAN;
         drawUtf8(cv, 8, y, 80, SET_LBL[row],
                  sel ? (uint16_t)COL_BG : (uint16_t)COL_TEXT, bg);
         drawUtf8(cv, 84, y, w - 8, val, sel ? (uint16_t)COL_BG : vc, bg);
@@ -1042,7 +1067,7 @@ void draw(M5Canvas& canvas) {
     canvas.setFont(&fonts::Font0);
     canvas.setTextSize(1);
     canvas.setTextWrap(false);
-    canvas.setEmojiCallback(drawEmojiPng);
+    canvas.setEmojiCallback(drawEmoji);
 
     if (s_layer == LY_WRITE || s_layer == LY_FIELD) {
         char title[32];
@@ -1286,6 +1311,14 @@ static void bumpSet(int dir) {
             Config::save();
             break;
         }
+        case 12:
+            if ((dir > 0 && !mc.emojiFromSd) || (dir < 0 && mc.emojiFromSd)) {
+                mc.emojiFromSd = dir > 0;
+                emojiCacheClear();
+                Config::save();
+                Display::showToast(mc.emojiFromSd ? "EMOJI: SD PNG" : "EMOJI: BUILTIN", 900);
+            }
+            break;
         default:
             break;
     }
@@ -1377,8 +1410,10 @@ static void setKeys(const Keyboard_Class::KeysState& ks) {
     if (keyHas('<')) { bumpSet(-1); return; }
     if (keyHas('>')) { bumpSet(1); return; }
     if (!ks.enter) return;
-    if (s_setRow == 0 || s_setRow == 10) {
-        bool on = (s_setRow == 0) ? Config::mesh().enabled : Config::mesh().rxBoost;
+    if (s_setRow == 0 || s_setRow == 10 || s_setRow == 12) {
+        bool on = s_setRow == 0 ? Config::mesh().enabled :
+                  s_setRow == 10 ? Config::mesh().rxBoost :
+                  Config::mesh().emojiFromSd;
         bumpSet(on ? -1 : 1);
         return;
     }

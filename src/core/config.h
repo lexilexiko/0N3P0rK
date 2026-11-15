@@ -276,6 +276,7 @@ struct MeshConfig {
     bool     rxBoost          = false;
     // Chat and DM letter size. 1 small, 2 medium, 3 large.
     uint8_t  chatSize         = 2;
+    bool     emojiFromSd      = false;
 };
 
 static const uint8_t HOTKEY_COUNT = 21;

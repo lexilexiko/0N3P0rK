@@ -1544,6 +1544,7 @@ struct MeshCfgDisk {
     char     psk[45];
     char     shortName[5];
     uint8_t  chatSize;
+    uint8_t  emojiFromSd;
 };
 #pragma pack(pop)
 
@@ -1575,6 +1576,7 @@ static void writeCfgFile() {
     d.freqSlot = mc.freqSlot;
     d.rxBoost = mc.rxBoost ? 1 : 0;
     d.chatSize = (mc.chatSize >= 1 && mc.chatSize <= 3) ? mc.chatSize : 2;
+    d.emojiFromSd = mc.emojiFromSd ? 1 : 0;
     memcpy(d.channel, mc.channel, sizeof(d.channel));
     memcpy(d.psk, mc.psk, sizeof(d.psk));
     memcpy(d.shortName, mc.shortName, sizeof(d.shortName));
@@ -1598,19 +1600,25 @@ static bool readCfgFile(MeshCfgDisk& d) {
     sdIdle();
     File f = SD.open(CFG_PATH, FILE_READ);
     if (!f) return false;
-    // Older cfg.bin has no chat size. Keep those settings and treat the size as medium.
-    const size_t oldBytes = sizeof(d) - sizeof(d.chatSize);
+    const size_t chatSizeBytes = sizeof(d) - sizeof(d.emojiFromSd);
+    const size_t legacyBytes = chatSizeBytes - sizeof(d.chatSize);
     memset(&d, 0, sizeof(d));
     int got = (int)f.read((uint8_t*)&d, sizeof(d));
     f.close();
     sdIdle();
-    if ((got != (int)sizeof(d) && got != (int)oldBytes) || d.magic != CFG_MAGIC) return false;
-    if (got == (int)oldBytes) d.chatSize = 2;
+    if ((got != (int)sizeof(d) && got != (int)chatSizeBytes &&
+         got != (int)legacyBytes) || d.magic != CFG_MAGIC) return false;
+    if (got == (int)chatSizeBytes) d.emojiFromSd = 0;
+    if (got == (int)legacyBytes) {
+        d.chatSize = 2;
+        d.emojiFromSd = 0;
+    }
     if (d.region >= 17 || d.modem > 9) return false;
     if (d.txPower < 2 || d.txPower > 22) return false;
     if (d.hopLimit < 1 || d.hopLimit > 7) return false;
     if (d.freqKHz && (d.freqKHz < 137000u || d.freqKHz > 960000u)) return false;
     if (d.chatSize < 1 || d.chatSize > 3) d.chatSize = 2;
+    if (d.emojiFromSd > 1) return false;
     d.channel[sizeof(d.channel) - 1] = 0;
     d.psk[sizeof(d.psk) - 1] = 0;
     d.shortName[sizeof(d.shortName) - 1] = 0;
@@ -1668,6 +1676,7 @@ void syncStoredCfg() {
     mc.freqSlot = d.freqSlot;
     mc.rxBoost = d.rxBoost != 0;
     mc.chatSize = d.chatSize;
+    mc.emojiFromSd = d.emojiFromSd != 0;
     if (d.channel[0]) memcpy(mc.channel, d.channel, sizeof(mc.channel));
     if (d.psk[0]) memcpy(mc.psk, d.psk, sizeof(mc.psk));
     if (d.shortName[0]) memcpy(mc.shortName, d.shortName, sizeof(mc.shortName));
