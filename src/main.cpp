@@ -19,7 +19,6 @@
 #include "net/ap_sta.h"
 #include "cap/sniffer.h"
 #include "modes/evilpig.h"
-#include "modes/wps_pig.h"
 #include "modes/pigpass.h"
 #include "modes/deskview.h"
 #include "modes/mesh_pig.h"
@@ -88,7 +87,6 @@ void setup() {
     Cap::begin();
     Led::begin();
     EvilPigMode::init();
-    WpsPigMode::init();
     PigpassMode::init();
 
     Net::Status s = Net::status();

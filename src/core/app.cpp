@@ -20,7 +20,6 @@
 #include "../modes/deskview.h"
 #include "../modes/gpspig.h"
 #include "../modes/mesh_pig.h"
-#include "../modes/wps_pig.h"
 #include "../piglet/avatar.h"
 #include "../piglet/cards_table.h"
 #include "../piglet/props.h"
@@ -60,8 +59,7 @@ bool overlayMode() {
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI ||
            s_mode == AppMode::DESK ||
            s_mode == AppMode::GPS ||
-           s_mode == AppMode::MESH ||
-           s_mode == AppMode::WPSPIG;
+           s_mode == AppMode::MESH;
 }
 
 bool windowHidden() { return s_winHid && overlayMode(); }
@@ -107,7 +105,6 @@ const char* modeName() {
         case AppMode::DESK:     return "DESK";
         case AppMode::GPS:      return "GPS";
         case AppMode::MESH:     return "MESH";
-        case AppMode::WPSPIG:   return "WPS";
         default:                return "?";
     }
 }
@@ -130,7 +127,6 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::INSPECTOR && InspectorPig::isRunning()) InspectorPig::stop();
     if (s_mode == AppMode::TASKS && TaskManager::isRunning()) TaskManager::stop();
     if (s_mode == AppMode::DESK && DeskMode::isRunning()) DeskMode::stop();
-    if (s_mode == AppMode::WPSPIG && WpsPigMode::isRunning()) WpsPigMode::stop();
     // MESH keeps its heap when the screen closes. SET or TASKS releases it.
     s_winHid = false;
     s_mode = m;
@@ -151,7 +147,6 @@ void setMode(AppMode m) {
     if (m == AppMode::DESK) DeskMode::start();
     if (m == AppMode::GPS)  GpsMode::start();
     if (m == AppMode::MESH) MeshPig::start();
-    if (m == AppMode::WPSPIG) WpsPigMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -404,9 +399,6 @@ void loop() {
     } else if (s_mode == AppMode::DESK) {
         DeskMode::update();
         if (!DeskMode::isRunning()) setMode(AppMode::MENU);
-    } else if (s_mode == AppMode::WPSPIG) {
-        WpsPigMode::update();
-        if (!WpsPigMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::GPS) {
         if (!GpsMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::MESH) {
@@ -435,8 +427,7 @@ void loop() {
         s_mode == AppMode::INSPECTOR ||
         s_mode == AppMode::DESK ||
         s_mode == AppMode::GPS ||
-        s_mode == AppMode::MESH ||
-        s_mode == AppMode::WPSPIG) return;
+        s_mode == AppMode::MESH) return;
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();
