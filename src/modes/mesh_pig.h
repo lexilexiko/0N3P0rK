@@ -10,6 +10,10 @@
 #include <stdint.h>
 #include <M5GFX.h>
 
+// Fits Meshtastic's text payload inside the direct-message encrypted packet limit.
+constexpr uint16_t MESH_MAX_TEXT_BYTES = 216;
+constexpr uint8_t MESH_MAX_NODES = 128;
+
 // ── Node entry ───────────────────────────────────────────────────────────────
 struct MeshNode {
     uint32_t nodeNum   = 0;
@@ -31,7 +35,7 @@ struct MeshNode {
 struct MeshMsg {
     uint32_t from      = 0;
     uint32_t time      = 0;
-    char     text[48]  = {};
+    char     text[MESH_MAX_TEXT_BYTES + 1] = {};
     char     fromName[8] = {};
     bool     broadcast = true;
 };
@@ -47,7 +51,7 @@ bool isRunning();
 // Bytes held in heap. Zero unless MESH is enabled and the radio came up.
 size_t heapHeld();
 
-// Node table (ring, max 16)
+// Node table (ring, max 128)
 uint8_t   nodeCount();
 MeshNode* nodeAt(uint8_t i);    // 0-based
 

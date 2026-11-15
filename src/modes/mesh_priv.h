@@ -10,13 +10,27 @@ constexpr uint32_t BROADCAST_ID = 0xFFFFFFFFu;
 struct Msg {
     uint32_t from, to;
     uint32_t timeMs;
-    char     text[48];
+    char     text[MESH_MAX_TEXT_BYTES + 1];
     char     fromName[8];
     bool     sent;
+    uint8_t  hops; // hop_start - hop_limit. 0 = heard direct. Fits old padding.
+    uint32_t packetId;
+    uint8_t  delivery;
+};
+
+enum TxStatus : uint8_t {
+    TX_NONE,
+    TX_QUEUED,
+    TX_WAITING,
+    TX_SENT,
+    TX_ACKED,
+    TX_FAILED
 };
 
 constexpr uint8_t MAX_CHAT = 32;
 constexpr uint8_t MAX_DM   = 16;
+constexpr uint8_t MAX_NODES = MESH_MAX_NODES;
+constexpr uint16_t MAX_TEXT_BYTES = MESH_MAX_TEXT_BYTES;
 
 enum RadioSt : uint8_t { RS_IDLE, RS_RX, RS_TX };
 

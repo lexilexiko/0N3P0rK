@@ -51,6 +51,14 @@ int utf8Next(const char* s, uint32_t& cp) {
              ((uint8_t)s[2] & 0x3F);
         return 3;
     }
+    if ((a & 0xF8) == 0xF0 && (uint8_t)s[1] >= 0x80 &&
+        (uint8_t)s[2] >= 0x80 && (uint8_t)s[3] >= 0x80) {
+        cp = ((uint32_t)(a & 0x07) << 18) |
+             ((uint32_t)((uint8_t)s[1] & 0x3F) << 12) |
+             ((uint32_t)((uint8_t)s[2] & 0x3F) << 6) |
+             ((uint8_t)s[3] & 0x3F);
+        return 4;
+    }
     cp = '?';
     return 1;
 }
@@ -139,7 +147,7 @@ MeshMsg*  msgAt(uint8_t i)  {
     // convert Msg → MeshMsg on-the-fly using static buffer
     static MeshMsg mm;
     mm.from=m->from; mm.time=m->timeMs; mm.broadcast=(m->to==BROADCAST_ID);
-    strncpy(mm.text,m->text,47); mm.text[47]=0;
+    strncpy(mm.text,m->text,sizeof(mm.text)-1); mm.text[sizeof(mm.text)-1]=0;
     strncpy(mm.fromName,m->fromName,7); mm.fromName[7]=0;
     return &mm;
 }

@@ -45,17 +45,6 @@ static int chatScale() {
     return (int)s;
 }
 
-static int chatBlockH() {
-    int s = chatScale();
-    if (s <= 1) return LH;
-    return 10 + s * 8;
-}
-
-static int chatRows() {
-    int rows = (MESH_H - TAB_H - 2) / chatBlockH();
-    return rows < 1 ? 1 : rows;
-}
-
 static const char* chatSizeName(uint8_t s) {
     if (s <= 1) return "S";
     if (s >= 3) return "L";
@@ -95,7 +84,7 @@ static void drawCpScaled(M5Canvas& cv, int x, int y, uint32_t cp,
         cv.setTextSize(1);
         return;
     }
-    const uint8_t* g = meshGlyph((uint16_t)cp);
+    const uint8_t* g = cp <= 0xFFFF ? meshGlyph((uint16_t)cp) : nullptr;
     if (g) {
         blitGlyphScale(cv, x, y + (scale > 1 ? 1 : 0), g, fg, scale);
         return;
@@ -124,7 +113,7 @@ static int drawUtf8(M5Canvas& cv, int x, int y, int xMax, const char* s,
             char ch[2] = { (char)cp, 0 };
             cv.print(ch);
         } else {
-            const uint8_t* g = meshGlyph((uint16_t)cp);
+            const uint8_t* g = cp <= 0xFFFF ? meshGlyph((uint16_t)cp) : nullptr;
             if (g) blitGlyph(cv, x, y, g, fg);
             else {
                 cv.setTextColor(fg, bg);
@@ -145,20 +134,20 @@ static uint8_t  s_setRow = 0;
 static uint8_t  s_setScroll = 0;
 static uint8_t  s_field = 0;
 static bool     s_fieldAscii = false;
-static uint8_t  s_fieldMax = 47;
+static uint16_t s_fieldMax = 47;
 static bool     s_holdUi = false;
 static bool     s_swallowEnter = false;
 static uint8_t  s_lang = 0;
 static uint8_t  s_nodeScroll = 0;
-static uint8_t  s_chatScroll = 0;
-static uint8_t  s_dmScroll = 0;
+static uint16_t s_chatScroll = 0;
+static uint16_t s_dmScroll = 0;
 static bool     s_chatStick = true;
 static bool     s_dmStick = true;
-static char     s_cmpBuf[48] = {};
-static uint8_t  s_cmpLen = 0;
+static char     s_cmpBuf[MAX_TEXT_BYTES + 1] = {};
+static uint16_t s_cmpLen = 0;
 static uint32_t s_lastDraw = 0;
 static bool     s_chatAlert = false;
-static uint32_t s_dmUnread[16] = {};
+static uint32_t s_dmUnread[MAX_NODES] = {};
 static uint8_t  s_dmUnreadN = 0;
 
 static const char* langName() {
@@ -183,7 +172,7 @@ static void pushCp(uint32_t cp) {
     } else return;
     if ((uint16_t)s_cmpLen + n > s_fieldMax) return;
     memcpy(s_cmpBuf + s_cmpLen, tmp, n);
-    s_cmpLen = (uint8_t)(s_cmpLen + n);
+    s_cmpLen = (uint16_t)(s_cmpLen + n);
     s_cmpBuf[s_cmpLen] = 0;
 }
 
@@ -211,6 +200,99 @@ static int putLine(M5Canvas& cv, int y, int yMax, int w, const char* s, uint16_t
     return y + LH;
 }
 
+static int chatLineHeight() {
+    int scale = chatScale();
+    return scale < 1 ? 8 : scale * 8;
+}
+
+static int chatWrapCols(int width, int scale) {
+    int cols = (width - 8) / (6 * scale);
+    return cols < 1 ? 1 : cols;
+}
+
+static uint16_t wrappedTextLines(const char* text, int maxCols) {
+    if (maxCols < 1) maxCols = 1;
+    uint16_t lines = 1;
+    int cols = 0;
+    for (int i = 0; text && text[i];) {
+        uint32_t cp;
+        int n = utf8Next(text + i, cp);
+        if (n <= 0) break;
+        i += n;
+        if (cp == '\n') {
+            lines++;
+            cols = 0;
+        } else {
+            if (cols >= maxCols) {
+                lines++;
+                cols = 0;
+            }
+            cols++;
+        }
+    }
+    return lines;
+}
+
+static bool wrappedTextLine(const char* text, int maxCols, uint16_t target,
+                            char* out, size_t outCap) {
+    if (!text || !out || outCap == 0) return false;
+    if (maxCols < 1) maxCols = 1;
+    uint16_t line = 0;
+    int cols = 0;
+    size_t start = 0;
+    size_t i = 0;
+    while (text[i]) {
+        uint32_t cp;
+        int n = utf8Next(text + i, cp);
+        if (n <= 0) break;
+        if (cp == '\n') {
+            if (line == target) {
+                size_t len = i - start;
+                if (len >= outCap) len = outCap - 1;
+                memcpy(out, text + start, len);
+                out[len] = 0;
+                return true;
+            }
+            line++;
+            i += n;
+            start = i;
+            cols = 0;
+            continue;
+        }
+        if (cols >= maxCols) {
+            if (line == target) {
+                size_t len = i - start;
+                if (len >= outCap) len = outCap - 1;
+                memcpy(out, text + start, len);
+                out[len] = 0;
+                return true;
+            }
+            line++;
+            start = i;
+            cols = 0;
+        }
+        i += n;
+        cols++;
+    }
+    if (line != target) return false;
+    size_t len = i - start;
+    if (len >= outCap) len = outCap - 1;
+    memcpy(out, text + start, len);
+    out[len] = 0;
+    return true;
+}
+
+static uint16_t chatTotalLines(bool dm, int width, int scale) {
+    uint8_t count = dm ? s_dmN : s_chatN;
+    int cols = chatWrapCols(width, scale);
+    uint32_t total = 0;
+    for (uint8_t i = 0; i < count; i++) {
+        Msg* m = dm ? dmGet(i) : chatGet(i);
+        if (m) total += 1u + wrappedTextLines(m->text, cols);
+    }
+    return total > 65535u ? 65535u : (uint16_t)total;
+}
+
 static bool dmIsUnread(uint32_t node) {
     for (uint8_t i = 0; i < s_dmUnreadN; i++)
         if (s_dmUnread[i] == node) return true;
@@ -229,7 +311,7 @@ static bool anyDmUnread() {
 
 static void markDmUnread(uint32_t node) {
     if (!node || node == BROADCAST_ID || dmIsUnread(node)) return;
-    if (s_dmUnreadN >= 16) return;
+    if (s_dmUnreadN >= MAX_NODES) return;
     s_dmUnread[s_dmUnreadN++] = node;
 }
 
@@ -359,6 +441,13 @@ static void radioRestart() {
     s_holdUi = false;
 }
 
+static bool validRadioPlan(const MeshConfig& mc) {
+    float freq = 0, bw = 0;
+    uint8_t sf = 0, cr = 0;
+    int8_t power = 0;
+    return planRadio(mc, freq, bw, sf, cr, power);
+}
+
 static void drawTabs(M5Canvas& cv, int w) {
     static const char* tabs[] = { "CHAT", "PEOPLE", "RADIO", "SET" };
     const int tw = w / 4;
@@ -426,13 +515,9 @@ static void drawNodeRow(M5Canvas& cv, int y, int w, const MeshNode& n, bool sel)
 static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
     int y = TAB_H + 2;
     int yMax = h - 2;
-    int rows = chatRows();
-    uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
+    uint16_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
     uint8_t nmsg = dm ? s_dmN : s_chatN;
-    uint8_t maxTop = (nmsg > (uint8_t)rows) ? (uint8_t)(nmsg - (uint8_t)rows) : 0;
-    if (scroll > maxTop) scroll = maxTop;
-    if (stick) scroll = maxTop;
 
     if (!nmsg) {
         if (!Config::mesh().enabled) {
@@ -464,26 +549,49 @@ static void drawChat(M5Canvas& cv, int w, int h, bool dm) {
         return;
     }
     int scale = chatScale();
-    int block = chatBlockH();
-    for (int i = 0; i < rows; i++) {
-        Msg* m = dm ? dmGet((uint8_t)(scroll + i)) : chatGet((uint8_t)(scroll + i));
-        if (!m) break;
-        int yy = y + i * block;
-        if (yy + block > yMax) break;
-        uint16_t col = m->sent ? (uint16_t)COL_GREEN : (uint16_t)COL_TEXT;
+    int lineH = chatLineHeight();
+    int visible = (yMax - y) / lineH;
+    if (visible < 1) visible = 1;
+    uint16_t total = chatTotalLines(dm, w, scale);
+    uint16_t maxTop = total > (uint16_t)visible ? (uint16_t)(total - visible) : 0;
+    if (scroll > maxTop) scroll = maxTop;
+    if (stick) scroll = maxTop;
+
+    uint16_t logical = 0;
+    int screenLine = 0;
+    int maxCols = chatWrapCols(w, scale);
+    for (uint8_t i = 0; i < nmsg && screenLine < visible; i++) {
+        Msg* m = dm ? dmGet(i) : chatGet(i);
+        if (!m) continue;
         const char* who = m->fromName[0] ? m->fromName : "?";
-        if (scale <= 1) {
-            int x = drawUtf8(cv, 2, yy, 56, who, col, COL_BG);
-            cv.setTextColor(col, (uint16_t)COL_BG);
-            cv.setCursor(x, yy);
-            cv.print(m->to == BROADCAST_ID ? ":" : ">");
-            drawUtf8(cv, x + 8, yy, w - 2, m->text, col, COL_BG);
-        } else {
-            int x = drawUtf8(cv, 2, yy, 80, who, col, COL_BG);
-            cv.setTextColor(col, (uint16_t)COL_BG);
-            cv.setCursor(x, yy);
-            cv.print(m->to == BROADCAST_ID ? ":" : ">");
-            drawUtf8(cv, 2, yy + 9, w - 2, m->text, col, COL_BG, scale);
+        const char* mark = "";
+        uint16_t headCol = COL_TEXT;
+        if (m->sent) {
+            switch (m->delivery) {
+                case TX_QUEUED: mark = " Q"; headCol = COL_CYAN; break;
+                case TX_WAITING: mark = " .."; headCol = COL_YELLOW; break;
+                case TX_SENT: mark = " TX"; headCol = COL_DIM; break;
+                case TX_ACKED: mark = " OK"; headCol = COL_GREEN; break;
+                case TX_FAILED: mark = " X"; headCol = COL_RED; break;
+                default: mark = " ?"; headCol = COL_DIM; break;
+            }
+        }
+        char header[24];
+        snprintf(header, sizeof(header), "%s%c%s", who,
+                 m->to == BROADCAST_ID ? ':' : '>', mark);
+        if (logical >= scroll && screenLine < visible)
+            drawUtf8(cv, 2, y + screenLine++ * lineH, w - 2,
+                     header, headCol, COL_BG);
+        logical++;
+
+        uint16_t bodyLines = wrappedTextLines(m->text, maxCols);
+        for (uint16_t line = 0; line < bodyLines; line++, logical++) {
+            if (logical < scroll || screenLine >= visible) continue;
+            char body[MAX_TEXT_BYTES + 1];
+            if (!wrappedTextLine(m->text, maxCols, line, body, sizeof(body))) continue;
+            drawUtf8(cv, 4, y + screenLine++ * lineH, w - 2,
+                     body, m->sent ? (uint16_t)COL_GREEN : (uint16_t)COL_TEXT,
+                     COL_BG, scale);
         }
     }
 }
@@ -811,7 +919,7 @@ static void openWrite() {
     s_writeFrom = s_layer;
     s_layer = LY_WRITE;
     s_fieldAscii = false;
-    s_fieldMax = 47;
+    s_fieldMax = MAX_TEXT_BYTES;
     s_cmpLen = 0;
     s_cmpBuf[0] = 0;
 }
@@ -875,19 +983,27 @@ static void commitField() {
     s_cmpBuf[s_cmpLen] = 0;
     bool restart = false;
     if (s_field == 6) {
-        float fMHz = atof(s_cmpBuf);
-        if (fMHz >= 137.0f && fMHz <= 960.0f) {
-            mc.freqKHz = (uint32_t)(fMHz * 1000.0f + 0.5f);
-            mc.freqOverride = true;
-            restart = true;
-            Display::showToast("FREQ SET", 800);
-        } else if (!s_cmpBuf[0] || s_cmpBuf[0] == '0') {
+        if (!s_cmpBuf[0] || strcmp(s_cmpBuf, "0") == 0) {
             mc.freqOverride = false;
             restart = true;
             Display::showToast("FREQ AUTO", 800);
         } else {
-            Display::showToast("BAD FREQ", 800);
-            return;
+            float fMHz = atof(s_cmpBuf);
+            if (fMHz < 137.0f || fMHz > 960.0f) {
+                Display::showToast("BAD FREQ", 800);
+                return;
+            }
+            MeshConfig candidate = mc;
+            candidate.freqKHz = (uint32_t)(fMHz * 1000.0f + 0.5f);
+            candidate.freqOverride = true;
+            if (!validRadioPlan(candidate)) {
+                Display::showToast("OUT OF REGION", 1000);
+                return;
+            }
+            mc.freqKHz = candidate.freqKHz;
+            mc.freqOverride = true;
+            restart = true;
+            Display::showToast("FREQ SET", 800);
         }
     } else if (s_field == 7) {
         memset(mc.channel, 0, sizeof(mc.channel));
@@ -935,6 +1051,10 @@ static void bumpSet(int dir) {
             int v = (int)mc.region + dir;
             if (v < 0 || v > 16) break;
             mc.region = (uint8_t)v;
+            if (mc.freqOverride && !validRadioPlan(mc)) {
+                mc.freqOverride = false;
+                Display::showToast("FREQ AUTO", 800);
+            }
             Config::save();
             radioRestart();
             break;
@@ -943,6 +1063,10 @@ static void bumpSet(int dir) {
             int v = (int)mc.modem + dir;
             if (v < 0 || v > 9) break;
             mc.modem = (uint8_t)v;
+            if (mc.freqOverride && !validRadioPlan(mc)) {
+                mc.freqOverride = false;
+                Display::showToast("FREQ AUTO", 800);
+            }
             Config::save();
             radioRestart();
             break;
@@ -1017,11 +1141,14 @@ static void chatKeys(const Keyboard_Class::KeysState& ks, bool dm) {
     if (keyHas(';')) dir = -1;
     else if (keyHas('.')) dir = 1;
     if (!dir) return;
-    uint8_t& scroll = dm ? s_dmScroll : s_chatScroll;
+    uint16_t& scroll = dm ? s_dmScroll : s_chatScroll;
     bool& stick = dm ? s_dmStick : s_chatStick;
-    uint8_t nmsg = dm ? s_dmN : s_chatN;
-    int rows = chatRows();
-    uint8_t maxTop = (nmsg > (uint8_t)rows) ? (uint8_t)(nmsg - (uint8_t)rows) : 0;
+    int scale = chatScale();
+    int lineH = chatLineHeight();
+    int visible = (MESH_H - (TAB_H + 2) - 2) / lineH;
+    if (visible < 1) visible = 1;
+    uint16_t total = chatTotalLines(dm, 240, scale);
+    uint16_t maxTop = total > (uint16_t)visible ? (uint16_t)(total - visible) : 0;
     if (dir < 0 && scroll > 0) { scroll--; stick = false; }
     else if (dir > 0 && scroll < maxTop) {
         scroll++;

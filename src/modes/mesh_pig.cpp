@@ -207,6 +207,13 @@ static void markSeen(uint32_t sndr, uint32_t id){
 enum TxPri : uint8_t { PRI_ACK=0, PRI_ROUTING=1, PRI_DEFAULT=4 };
 struct TxPkt { uint8_t data[256]; uint16_t len; TxPri prio; };
 static TxPkt* s_txQ=nullptr; uint8_t s_txN=0;
+static constexpr uint8_t MAX_PENDING_ACKS = 64;
+static constexpr uint32_t ACK_TIMEOUT_MS = 60000;
+struct PendingAck { uint32_t packetId, peer, sentAt; bool active; };
+static PendingAck s_pendingAcks[MAX_PENDING_ACKS] = {};
+static uint32_t s_txInFlightId = 0;
+static uint32_t s_txInFlightTo = 0;
+static bool s_txInFlightWantAck = false;
 static bool txEnq(const uint8_t* d, uint16_t l, TxPri p){
     if(s_txN>=16||l>sizeof(s_txQ[0].data)) return false;
     uint8_t ins=s_txN;
@@ -223,7 +230,7 @@ static bool txDeq(TxPkt& p){ if(!s_txN) return false; p=s_txQ[0]; memmove(s_txQ,
 MeshNode* s_nodes=nullptr; uint8_t s_nodeN=0;
 static MeshNode* nodeFindOrAdd(uint32_t num){
     for(uint8_t i=0;i<s_nodeN;i++) if(s_nodes[i].nodeNum==num) return &s_nodes[i];
-    if(s_nodeN<16){ s_nodes[s_nodeN]={}; s_nodes[s_nodeN].nodeNum=num; return &s_nodes[s_nodeN++]; }
+    if(s_nodeN<MAX_NODES){ s_nodes[s_nodeN]={}; s_nodes[s_nodeN].nodeNum=num; return &s_nodes[s_nodeN++]; }
     uint8_t old=0; uint32_t oldMs=UINT32_MAX;
     for(uint8_t i=0;i<s_nodeN;i++) if(!s_nodes[i].isSelf&&s_nodes[i].lastSeen<oldMs){oldMs=s_nodes[i].lastSeen;old=i;}
     s_nodes[old]={}; s_nodes[old].nodeNum=num; return &s_nodes[old];
@@ -241,7 +248,19 @@ static constexpr uint32_t NODES_MAGIC = 0x50494731u; // 'PIG1'
 static constexpr uint32_t PKI_MAGIC   = 0x504B4921u; // 'PKI!'
 static constexpr uint32_t CHAT_MAGIC  = 0x43484131u; // 'CHA1'
 static constexpr uint32_t DM_MAGIC    = 0x444D4731u; // 'DMG1'
+static constexpr uint32_t CHAT_MAGIC_V2 = 0x43484132u; // 'CHA2'
+static constexpr uint32_t DM_MAGIC_V2 = 0x444D4732u; // 'DMG2'
 static constexpr uint32_t CFG_MAGIC   = 0x3146434Du; // 'MCF1'
+
+struct LegacyMsg {
+    uint32_t from, to;
+    uint32_t timeMs;
+    char text[48];
+    char fromName[8];
+    bool sent;
+    uint8_t hops;
+};
+static_assert(sizeof(LegacyMsg) == 72, "Legacy mesh message layout changed");
 
 static bool     s_chatDirty = false;
 static bool     s_dmDirty   = false;
@@ -253,6 +272,73 @@ static char     s_storeChannel[20] = {};
 
 static void sdIdle() { digitalWrite(12, HIGH); }
 
+static bool beginAtomicWrite(const char* path, char* temp, size_t tempCap,
+                             char* backup, size_t backupCap) {
+    if (snprintf(temp, tempCap, "%s.mesh_tmp", path) >= (int)tempCap ||
+        snprintf(backup, backupCap, "%s.mesh_bak", path) >= (int)backupCap)
+        return false;
+    sdIdle();
+    if (SD.exists(temp) && !SD.remove(temp)) return false;
+    return true;
+}
+
+static bool finishAtomicWrite(File& file, const char* path, const char* temp,
+                              const char* backup, bool written) {
+    file.flush();
+    file.close();
+    sdIdle();
+    if (!written) {
+        SD.remove(temp);
+        return false;
+    }
+    bool hadOriginal = SD.exists(path);
+    if (hadOriginal) {
+        if (SD.exists(backup)) SD.remove(backup);
+        if (!SD.rename(path, backup)) {
+            SD.remove(temp);
+            return false;
+        }
+    }
+    if (!SD.rename(temp, path)) {
+        if (hadOriginal) SD.rename(backup, path);
+        SD.remove(temp);
+        return false;
+    }
+    if (hadOriginal) SD.remove(backup);
+    return true;
+}
+
+static bool readMsg(File& file, Msg& msg, bool legacy, bool* repaired = nullptr) {
+    if (repaired) *repaired = false;
+    if (legacy) {
+        LegacyMsg old{};
+        if (file.read((uint8_t*)&old, sizeof(old)) != (int)sizeof(old)) return false;
+        msg = {};
+        msg.from = old.from;
+        msg.to = old.to;
+        msg.timeMs = old.timeMs;
+        memcpy(msg.text, old.text, sizeof(old.text));
+        memcpy(msg.fromName, old.fromName, sizeof(old.fromName));
+        msg.sent = old.sent;
+        msg.hops = old.hops;
+        msg.delivery = old.sent ? TX_SENT : TX_NONE;
+    } else if (file.read((uint8_t*)&msg, sizeof(msg)) != (int)sizeof(msg)) {
+        return false;
+    }
+    msg.text[MAX_TEXT_BYTES] = 0;
+    msg.fromName[sizeof(msg.fromName) - 1] = 0;
+    if (msg.hops > 7) msg.hops = 0;
+    if (msg.delivery > TX_FAILED) msg.delivery = msg.sent ? TX_SENT : TX_NONE;
+    if (msg.sent && msg.delivery == TX_QUEUED) {
+        msg.delivery = TX_FAILED;
+        if (repaired) *repaired = true;
+    } else if (msg.sent && msg.delivery == TX_WAITING) {
+        msg.delivery = TX_SENT;
+        if (repaired) *repaired = true;
+    }
+    return true;
+}
+
 static void meshEnsureDir() {
     if (!Storage::available()) return;
     sdIdle();
@@ -263,21 +349,26 @@ static void meshEnsureDir() {
 }
 
 static void saveNodes() {
-    s_nodesDirty = false;
     if (!Storage::available() || !s_nodes || !s_nodeN) return;
     meshEnsureDir();
+    char temp[64], backup[64];
+    if (!beginAtomicWrite(NODES_PATH, temp, sizeof(temp), backup, sizeof(backup))) {
+        Serial.println("[MESH] node database temp path failed");
+        return;
+    }
     sdIdle();
-    File f = SD.open(NODES_PATH, FILE_WRITE);
-    if (!f) { sdIdle(); return; }
-    f.write((const uint8_t*)&NODES_MAGIC, 4);
-    f.write(s_nodeN);
-    f.write((const uint8_t*)s_nodes, (size_t)s_nodeN * sizeof(MeshNode));
-    f.close();
-    sdIdle();
+    File f = SD.open(temp, FILE_WRITE);
+    if (!f) { sdIdle(); Serial.println("[MESH] node database open failed"); return; }
+    bool ok = f.write((const uint8_t*)&NODES_MAGIC, 4) == 4 &&
+              f.write(s_nodeN) == 1 &&
+              f.write((const uint8_t*)s_nodes, (size_t)s_nodeN * sizeof(MeshNode)) ==
+                  (size_t)s_nodeN * sizeof(MeshNode);
+    if (finishAtomicWrite(f, NODES_PATH, temp, backup, ok)) s_nodesDirty = false;
+    else Serial.println("[MESH] node database save failed");
 }
 
 static bool keepNode(const MeshNode& in) {
-    if (in.isSelf || in.nodeNum == 0 || s_nodeN >= 16) return false;
+    if (in.isSelf || in.nodeNum == 0 || s_nodeN >= MAX_NODES) return false;
     for (uint8_t j = 0; j < s_nodeN; j++)
         if (s_nodes[j].nodeNum == in.nodeNum) return false;
     MeshNode tmp = in;
@@ -297,7 +388,7 @@ static bool loadNodesFile(const char* path, uint8_t& loaded) {
     uint32_t got = 0;
     if (f.read((uint8_t*)&got, 4) != 4 || got != NODES_MAGIC) { f.close(); sdIdle(); return false; }
     uint8_t n = 0;
-    if (f.read(&n, 1) != 1 || n == 0 || n > 16 ||
+    if (f.read(&n, 1) != 1 || n == 0 || n > MAX_NODES ||
         (size_t)f.size() < 5u + (size_t)n * sizeof(MeshNode)) {
         f.close();
         sdIdle();
@@ -518,25 +609,30 @@ static bool readChatFile(const char* path) {
     uint32_t magic = 0;
     uint8_t hash = 0, region = 0, modem = 0, n = 0;
     char channel[20] = {};
-    bool ok = f.read((uint8_t*)&magic, 4) == 4 && magic == CHAT_MAGIC &&
+    bool gotHeader = f.read((uint8_t*)&magic, 4) == 4 &&
+              (magic == CHAT_MAGIC || magic == CHAT_MAGIC_V2) &&
               f.read(&hash, 1) == 1 && f.read(&region, 1) == 1 &&
               f.read(&modem, 1) == 1 &&
               f.read((uint8_t*)channel, sizeof(channel)) == (int)sizeof(channel) &&
-              f.read(&n, 1) == 1 && n <= MAX_CHAT &&
+              f.read(&n, 1) == 1 && n <= MAX_CHAT;
+    bool ok = gotHeader &&
               hash == s_storeHash && region == s_storeRegion &&
               modem == s_storeModem &&
               strncmp(channel, s_storeChannel, sizeof(channel)) == 0;
     if (!ok) { f.close(); sdIdle(); return false; }
+    bool legacy = magic == CHAT_MAGIC;
+    bool repaired = false;
     for (uint8_t i = 0; i < n; i++) {
-        if (f.read((uint8_t*)&s_chat[i], sizeof(Msg)) != (int)sizeof(Msg)) { n = i; break; }
-        s_chat[i].text[47] = 0;
-        s_chat[i].fromName[7] = 0;
+        bool itemRepaired = false;
+        if (!readMsg(f, s_chat[i], legacy, &itemRepaired)) { n = i; break; }
+        repaired = repaired || itemRepaired;
     }
     f.close();
     sdIdle();
     s_chatN = n;
     s_chatHead = (uint8_t)(n % MAX_CHAT);
     s_chatNew = 0;
+    if (legacy || repaired) s_chatDirty = true;
     Serial.printf("[MESH] loaded %u chat lines\n", n);
     return true;
 }
@@ -545,29 +641,33 @@ static void saveChat() {
     if (!s_chatDirty) return;
     if (!Storage::available() || !s_chat) return;
     meshEnsureDir();
-    char path[48];
+    char path[48], temp[64], backup[64];
     chatStampPath(path, sizeof(path));
+    if (!beginAtomicWrite(path, temp, sizeof(temp), backup, sizeof(backup))) {
+        Serial.println("[MESH] chat temp path failed");
+        return;
+    }
     sdIdle();
-    File f = SD.open(path, FILE_WRITE);
-    if (!f) { sdIdle(); return; }
+    File f = SD.open(temp, FILE_WRITE);
+    if (!f) { sdIdle(); Serial.println("[MESH] chat temp open failed"); return; }
     uint8_t n = s_chatN > MAX_CHAT ? MAX_CHAT : s_chatN;
-    f.write((const uint8_t*)&CHAT_MAGIC, 4);
-    f.write(s_storeHash);
-    f.write(s_storeRegion);
-    f.write(s_storeModem);
-    f.write((const uint8_t*)s_storeChannel, sizeof(s_storeChannel));
-    f.write(n);
+    bool ok = f.write((const uint8_t*)&CHAT_MAGIC_V2, 4) == 4;
+    ok = f.write(s_storeHash) == 1 && ok;
+    ok = f.write(s_storeRegion) == 1 && ok;
+    ok = f.write(s_storeModem) == 1 && ok;
+    ok = f.write((const uint8_t*)s_storeChannel, sizeof(s_storeChannel)) ==
+             sizeof(s_storeChannel) && ok;
+    ok = f.write(n) == 1 && ok;
     for (uint8_t i = 0; i < n; i++) {
         Msg* m = chatGet(i);
-        if (!m) break;
+        if (!m) { ok = false; break; }
         Msg copy = *m;
-        copy.text[47] = 0;
+        copy.text[MAX_TEXT_BYTES] = 0;
         copy.fromName[7] = 0;
-        f.write((const uint8_t*)&copy, sizeof(copy));
+        ok = f.write((const uint8_t*)&copy, sizeof(copy)) == sizeof(copy) && ok;
     }
-    f.close();
-    sdIdle();
-    s_chatDirty = false;
+    if (finishAtomicWrite(f, path, temp, backup, ok)) s_chatDirty = false;
+    else Serial.println("[MESH] chat save failed");
 }
 
 static void loadChat() {
@@ -583,8 +683,10 @@ static void dmPath(uint32_t peer, char* out, size_t cap) {
     snprintf(out, cap, "/0N3P0rK/PigMesh/dm/%08lx.bin", (unsigned long)peer);
 }
 
-static uint8_t readDmFile(uint32_t peer, Msg* buf, uint8_t cap) {
-    char path[48];
+static uint8_t readDmFile(uint32_t peer, Msg* buf, uint8_t cap,
+                          bool* repaired = nullptr) {
+    if (repaired) *repaired = false;
+    char path[64];
     dmPath(peer, path, sizeof(path));
     sdIdle();
     if (!Storage::available() || !SD.exists(path)) return 0;
@@ -592,39 +694,57 @@ static uint8_t readDmFile(uint32_t peer, Msg* buf, uint8_t cap) {
     if (!f) return 0;
     uint32_t magic = 0;
     uint8_t n = 0;
-    if (f.read((uint8_t*)&magic, 4) != 4 || magic != DM_MAGIC ||
+    if (f.read((uint8_t*)&magic, 4) != 4 ||
+        (magic != DM_MAGIC && magic != DM_MAGIC_V2) ||
         f.read(&n, 1) != 1 || n > cap) {
         f.close();
         sdIdle();
         return 0;
     }
+    bool legacy = magic == DM_MAGIC;
     for (uint8_t i = 0; i < n; i++) {
-        if (f.read((uint8_t*)&buf[i], sizeof(Msg)) != (int)sizeof(Msg)) { n = i; break; }
-        buf[i].text[47] = 0;
-        buf[i].fromName[7] = 0;
+        bool itemRepaired = false;
+        if (!readMsg(f, buf[i], legacy, &itemRepaired)) { n = i; break; }
+        if (repaired) *repaired = *repaired || itemRepaired;
     }
     f.close();
     sdIdle();
     return n;
 }
 
-static void writeDmFile(uint32_t peer, const Msg* buf, uint8_t n) {
-    if (!Storage::available() || !peer || peer == BROADCAST_ID) return;
+static bool writeDmFile(uint32_t peer, const Msg* buf, uint8_t n) {
+    if (!Storage::available() || !peer || peer == BROADCAST_ID) return false;
     if (n > MAX_DM) n = MAX_DM;
     meshEnsureDir();
-    char path[48];
+    char path[64], temp[80], backup[80];
     dmPath(peer, path, sizeof(path));
+    if (!beginAtomicWrite(path, temp, sizeof(temp), backup, sizeof(backup))) {
+        Serial.printf("[MESH] DM %08lx temp path failed\n", (unsigned long)peer);
+        return false;
+    }
     sdIdle();
-    File f = SD.open(path, FILE_WRITE);
-    if (!f) { sdIdle(); return; }
-    f.write((const uint8_t*)&DM_MAGIC, 4);
-    f.write(n);
-    if (n && buf) f.write((const uint8_t*)buf, (size_t)n * sizeof(Msg));
-    f.close();
-    sdIdle();
+    File f = SD.open(temp, FILE_WRITE);
+    if (!f) { sdIdle(); Serial.printf("[MESH] DM %08lx temp open failed\n", (unsigned long)peer); return false; }
+    bool ok = f.write((const uint8_t*)&DM_MAGIC_V2, 4) == 4 &&
+              f.write(n) == 1;
+    if (n && buf) {
+        for (uint8_t i = 0; i < n; i++) {
+            Msg copy = buf[i];
+            copy.text[MAX_TEXT_BYTES] = 0;
+            copy.fromName[7] = 0;
+            ok = f.write((const uint8_t*)&copy, sizeof(copy)) == sizeof(copy) && ok;
+        }
+    } else if (n) {
+        ok = false;
+    }
+    if (!finishAtomicWrite(f, path, temp, backup, ok)) {
+        Serial.printf("[MESH] DM %08lx save failed\n", (unsigned long)peer);
+        return false;
+    }
+    return true;
 }
 
-static void rememberDm(uint32_t peer, const Msg& m);
+static bool rememberDm(uint32_t peer, const Msg& m);
 
 static Msg s_dmPend[8];
 static uint8_t s_dmPendN = 0;
@@ -640,11 +760,15 @@ static void queueDm(const Msg& m) {
 }
 
 static void flushPendingDm() {
-    for (uint8_t i = 0; i < s_dmPendN; i++) {
-        uint32_t peer = (s_dmPend[i].from == s_nodeNum) ? s_dmPend[i].to : s_dmPend[i].from;
-        rememberDm(peer, s_dmPend[i]);
+    while (s_dmPendN) {
+        uint32_t peer = (s_dmPend[0].from == s_nodeNum) ? s_dmPend[0].to : s_dmPend[0].from;
+        if (!rememberDm(peer, s_dmPend[0])) {
+            s_dmDirty = true;
+            return;
+        }
+        memmove(s_dmPend, s_dmPend + 1, sizeof(Msg) * (s_dmPendN - 1));
+        s_dmPendN--;
     }
-    s_dmPendN = 0;
 }
 
 static void saveOpenDm() {
@@ -657,15 +781,15 @@ static void saveOpenDm() {
         Msg* m = dmGet(i);
         if (m) buf[i] = *m;
     }
-    writeDmFile(s_dmNode, buf, n);
+    bool saved = writeDmFile(s_dmNode, buf, n);
     delete[] buf;
-    s_dmDirty = false;
+    if (saved) s_dmDirty = false;
 }
 
-static void rememberDm(uint32_t peer, const Msg& m) {
-    if (!peer || peer == BROADCAST_ID) return;
+static bool rememberDm(uint32_t peer, const Msg& m) {
+    if (!peer || peer == BROADCAST_ID) return false;
     Msg* buf = new (std::nothrow) Msg[MAX_DM];
-    if (!buf) return;
+    if (!buf) return false;
     uint8_t n = readDmFile(peer, buf, MAX_DM);
     if (n < MAX_DM) buf[n++] = m;
     else {
@@ -673,8 +797,9 @@ static void rememberDm(uint32_t peer, const Msg& m) {
         buf[MAX_DM - 1] = m;
         n = MAX_DM;
     }
-    writeDmFile(peer, buf, n);
+    bool saved = writeDmFile(peer, buf, n);
     delete[] buf;
+    return saved;
 }
 
 static void removeForgottenDm() {
@@ -702,10 +827,12 @@ void meshFlushDm() {
 
 void meshReloadDm(uint32_t node) {
     if (!s_dm || !node) return;
-    uint8_t n = readDmFile(node, s_dm, MAX_DM);
+    bool repaired = false;
+    uint8_t n = readDmFile(node, s_dm, MAX_DM, &repaired);
     s_dmN = n;
     s_dmHead = (uint8_t)(n % MAX_DM);
     s_dmNew = 0;
+    if (repaired) s_dmDirty = true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -764,10 +891,14 @@ static void freeMeshResources() {
     s_hist = nullptr;
     s_txQ = nullptr;
     s_nodeN = s_chatN = s_chatNew = s_dmN = s_dmNew = s_txN = s_hHead = s_hCnt = 0;
+    s_txInFlightId = 0;
+    s_txInFlightTo = 0;
+    s_txInFlightWantAck = false;
+    memset(s_pendingAcks, 0, sizeof(s_pendingAcks));
 }
 
 static bool allocateMeshResources() {
-    s_nodes = new (std::nothrow) MeshNode[16];
+    s_nodes = new (std::nothrow) MeshNode[MAX_NODES];
     s_chat = new (std::nothrow) Msg[MAX_CHAT];
     s_dm = new (std::nothrow) Msg[MAX_DM];
     s_hist = new (std::nothrow) PktRecord[PACKET_HISTORY_SIZE];
@@ -812,7 +943,8 @@ static uint8_t clampHop(uint8_t hop) {
     return hop;
 }
 
-static bool buildEnq(uint32_t to, const uint8_t* pb, uint8_t pbLen, TxPri prio, bool wantAck, uint8_t hop=0xFF){
+static bool buildEnq(uint32_t to, const uint8_t* pb, uint8_t pbLen, TxPri prio,
+                     bool wantAck, uint8_t hop=0xFF, uint32_t* packetIdOut=nullptr){
     hop = clampHop(hop);
     if(pbLen>240) return false;
     uint32_t id=nextId();
@@ -823,13 +955,16 @@ static bool buildEnq(uint32_t to, const uint8_t* pb, uint8_t pbLen, TxPri prio, 
     raw[12]=(hop&FLAGS_HOP_MASK)|(wantAck?FLAGS_WANT_ACK:0)|((hop&7)<<FLAGS_HOPSTART_SHF);
     raw[13]=s_chanHash; raw[14]=0; raw[15]=(uint8_t)(s_nodeNum&0xFF);
     memcpy(raw+HDR_SZ,enc,pbLen);
-    return txEnq(raw,(uint16_t)(HDR_SZ+pbLen),prio);
+    bool queued = txEnq(raw,(uint16_t)(HDR_SZ+pbLen),prio);
+    if (queued && packetIdOut) *packetIdOut = id;
+    return queued;
 }
 
 // Direct message: hash 0, AES-256-CCM, 8-byte tag, 4-byte extra nonce.
 // Nonce is 13 bytes: packet id, extra nonce at byte 4, sender at byte 8.
 static bool buildPkiEnq(uint32_t to, const uint8_t theirPub[32],
-                        const uint8_t* pb, uint8_t pbLen, TxPri prio, bool wantAck, uint8_t hop=0xFF){
+                        const uint8_t* pb, uint8_t pbLen, TxPri prio, bool wantAck,
+                        uint8_t hop=0xFF, uint32_t* packetIdOut=nullptr){
     hop = clampHop(hop);
     if (!s_pkiReady || pbLen > 220) return false;
     uint8_t aes[32];
@@ -860,7 +995,9 @@ static bool buildPkiEnq(uint32_t to, const uint8_t theirPub[32],
     raw[14] = 0;
     raw[15] = (uint8_t)(s_nodeNum & 0xFF);
     memcpy(raw + HDR_SZ, enc, body);
-    return txEnq(raw, (uint16_t)(HDR_SZ + body), prio);
+    bool queued = txEnq(raw, (uint16_t)(HDR_SZ + body), prio);
+    if (queued && packetIdOut) *packetIdOut = id;
+    return queued;
 }
 
 static bool pkiDecrypt(uint32_t from, uint32_t pktId, const uint8_t theirPub[32],
@@ -889,10 +1026,10 @@ static bool pkiDecrypt(uint32_t from, uint32_t pktId, const uint8_t theirPub[32]
 }
 
 static void sendAck(uint32_t to, uint32_t reqId, bool pki){
-    uint8_t pb[12]; PbW w{pb,sizeof(pb)};
-    w.vi(1,reqId);
+    uint8_t pb[4]; PbW w{pb,sizeof(pb)};
+    w.vi(3,0);
     uint8_t data[20]; PbW d{data,sizeof(data)};
-    d.vi(1,PORT_ROUTING); d.by(2,pb,w.len);
+    d.vi(1,PORT_ROUTING); d.by(2,pb,w.len); d.vi(6,reqId);
     if (!w.ok || !d.ok) return;
     if (pki) {
         MeshNode* peer = nodeByNum(to);
@@ -981,25 +1118,153 @@ static void noteMessage(const Msg& m){
     }
 }
 
-static void handleText(uint32_t from, uint32_t to, int16_t rssi, int8_t snr, const uint8_t* b, uint16_t l){
+static bool pauseRadioForSd();
+static void resumeRadioAfterSd(bool paused);
+
+static void setTrackedStatus(uint32_t packetId, uint32_t peer, TxStatus status) {
+    bool found = false;
+    for (uint8_t i = 0; i < s_chatN; i++) {
+        Msg* m = chatGet(i);
+        if (m && m->packetId == packetId) {
+            m->delivery = status;
+            s_chatDirty = true;
+            found = true;
+        }
+    }
+    for (uint8_t i = 0; i < s_dmN; i++) {
+        Msg* m = dmGet(i);
+        if (m && m->packetId == packetId) {
+            m->delivery = status;
+            s_dmDirty = true;
+            found = true;
+        }
+    }
+    for (uint8_t i = 0; i < s_dmPendN; i++) {
+        if (s_dmPend[i].packetId == packetId) {
+            s_dmPend[i].delivery = status;
+            s_dmDirty = true;
+            found = true;
+        }
+    }
+    if (found || !peer || !Storage::available()) return;
+
+    if (s_run && s_radio && s_rs == RS_TX) return;
+    Msg* buf = new (std::nothrow) Msg[MAX_DM];
+    if (!buf) {
+        Serial.println("[MESH] no memory to update saved DM status");
+        return;
+    }
+    bool paused = pauseRadioForSd();
+    uint8_t n = readDmFile(peer, buf, MAX_DM);
+    for (uint8_t i = 0; i < n; i++) {
+        if (buf[i].packetId != packetId) continue;
+        buf[i].delivery = status;
+        writeDmFile(peer, buf, n);
+        delete[] buf;
+        resumeRadioAfterSd(paused);
+        return;
+    }
+    delete[] buf;
+    resumeRadioAfterSd(paused);
+}
+
+static void markPacketTransmitted(uint32_t packetId, uint32_t to,
+                                  bool wantAck, uint32_t now) {
+    if (!packetId) return;
+    if (!wantAck) {
+        setTrackedStatus(packetId, to == BROADCAST_ID ? 0 : to, TX_SENT);
+        return;
+    }
+    for (uint8_t i = 0; i < MAX_PENDING_ACKS; i++) {
+        if (s_pendingAcks[i].active) continue;
+        s_pendingAcks[i] = { packetId, to, now, true };
+        setTrackedStatus(packetId, to, TX_WAITING);
+        return;
+    }
+    setTrackedStatus(packetId, to, TX_FAILED);
+    Serial.println("[MESH] ACK tracking full");
+}
+
+static void expirePendingAcks(uint32_t now) {
+    for (uint8_t i = 0; i < MAX_PENDING_ACKS; i++) {
+        PendingAck& pending = s_pendingAcks[i];
+        if (!pending.active || (uint32_t)(now - pending.sentAt) < ACK_TIMEOUT_MS) continue;
+        setTrackedStatus(pending.packetId, pending.peer, TX_FAILED);
+        pending.active = false;
+    }
+}
+
+static void handleRouting(uint32_t from, uint32_t requestId,
+                          const uint8_t* payload, uint16_t payloadLen) {
+    if (!requestId || !payload) return;
+    PbR r{payload, payloadLen};
+    uint8_t error = 0;
+    while (!r.done()) {
+        uint8_t field, wire;
+        if (!r.tag(field, wire)) return;
+        if (field == 3 && wire == WT_VARINT) {
+            uint64_t value;
+            if (!r.vi(value)) return;
+            error = value ? 1 : 0;
+        } else if (!r.skip(wire)) {
+            return;
+        }
+    }
+    for (uint8_t i = 0; i < MAX_PENDING_ACKS; i++) {
+        PendingAck& pending = s_pendingAcks[i];
+        if (!pending.active || pending.packetId != requestId || pending.peer != from) continue;
+        setTrackedStatus(requestId, from, error == 0 ? TX_ACKED : TX_FAILED);
+        pending.active = false;
+        return;
+    }
+}
+
+static uint16_t utf8BoundedPrefix(const uint8_t* text, uint16_t length,
+                                 uint16_t capacity) {
+    uint16_t i = 0;
+    if (length > capacity) length = capacity;
+    while (i < length) {
+        uint8_t c = text[i];
+        uint8_t count = 1;
+        if ((c & 0xE0) == 0xC0) count = 2;
+        else if ((c & 0xF0) == 0xE0) count = 3;
+        else if ((c & 0xF8) == 0xF0) count = 4;
+        if (i + count > length) break;
+        bool valid = count == 1;
+        if (count > 1) {
+            valid = true;
+            for (uint8_t j = 1; j < count; j++)
+                if ((text[i + j] & 0xC0) != 0x80) valid = false;
+        }
+        i += valid ? count : 1;
+    }
+    return i;
+}
+
+static void handleText(uint32_t from, uint32_t to, int16_t rssi, int8_t snr,
+                       const uint8_t* b, uint16_t l, uint8_t hops){
     if(!l) return;
     Msg m{}; m.from=from; m.to=to; m.timeMs=(uint32_t)millis(); m.sent=false;
-    uint8_t cp=l<47?l:47; memcpy(m.text,b,cp); m.text[cp]=0;
+    m.hops = hops > 7 ? 0 : hops;
+    uint16_t cp = utf8BoundedPrefix(b, l, MAX_TEXT_BYTES);
+    memcpy(m.text,b,cp); m.text[cp]=0;
     strncpy(m.fromName,nodeName(from),7); m.fromName[7]=0;
     if(to==BROADCAST_ID || to==s_nodeNum || from==s_nodeNum) noteMessage(m);
 }
 
 static void dispatch(uint32_t from, uint32_t to, uint32_t pktId,
                      bool wantAck, bool pki, int16_t rssi, float snrF,
-                     const uint8_t* pb, uint16_t pbLen)
+                     const uint8_t* pb, uint16_t pbLen, uint8_t hops)
 {
     PbR r{pb,pbLen}; uint8_t port=0;
     const uint8_t* payload=nullptr; uint16_t payLen=0;
+    uint32_t requestId=0;
     bool wantResp=false;
     while(!r.done()){ uint8_t f,wt; if(!r.tag(f,wt)) break;
         if(f==1&&wt==WT_VARINT){uint64_t v;r.vi(v);port=(uint8_t)v;}
         else if(f==2&&wt==WT_LEN){r.ld(payload,payLen);}
         else if(f==3&&wt==WT_VARINT){uint64_t v; if(!r.vi(v)) break; wantResp=(v!=0);}
+        else if(f==6&&wt==WT_VARINT){uint64_t v; if(!r.vi(v)) break; if(v<=0xFFFFFFFFu) requestId=(uint32_t)v;}
         else r.skip(wt);
     }
     if(wantAck && from!=BROADCAST_ID && from!=s_nodeNum) sendAck(from,pktId,pki);
@@ -1011,9 +1276,10 @@ static void dispatch(uint32_t from, uint32_t to, uint32_t pktId,
     if(!payload) return;
     int8_t snr=(int8_t)snrF;
     switch(port){
-        case PORT_TEXT:    handleText(from,to,rssi,snr,payload,payLen); break;
+        case PORT_TEXT:    handleText(from,to,rssi,snr,payload,payLen,hops); break;
         case PORT_POSITION:handlePos(from,rssi,snr,payload,payLen); break;
         case PORT_NODEINFO:handleNI(from,rssi,snr,payload,payLen); break;
+        case PORT_ROUTING: handleRouting(from,requestId,payload,payLen); break;
         default: break;
     }
 }
@@ -1034,6 +1300,8 @@ static void decodePacket(const uint8_t* raw, uint16_t rawLen, int16_t rssi, floa
     memcpy(&to,raw+0,4); memcpy(&from,raw+4,4); memcpy(&pktId,raw+8,4);
     uint8_t flags=raw[12], chanHash=raw[13];
     uint8_t hop=flags&FLAGS_HOP_MASK;
+    uint8_t hopStart=(uint8_t)((flags>>FLAGS_HOPSTART_SHF)&7);
+    uint8_t hopsTaken=(hopStart>=hop)?(uint8_t)(hopStart-hop):0;
     bool wantAck=(flags&FLAGS_WANT_ACK)!=0;
     bool forUs=(to==BROADCAST_ID || to==s_nodeNum);
     bool pki=(chanHash==0 && to==s_nodeNum);
@@ -1071,7 +1339,7 @@ static void decodePacket(const uint8_t* raw, uint16_t rawLen, int16_t rssi, floa
     n->lastSeen=(uint32_t)millis(); n->rssi=rssi; n->snr=(int8_t)snr;
     if(!known) s_nodesDirty = true;
     s_lastRssi=rssi; s_lastSnr=(int8_t)snr; s_haveSig=true; s_rxPkts++;
-    dispatch(from,to,pktId,wantAck,pki,rssi,snr,plain,plainLen);
+    dispatch(from,to,pktId,wantAck,pki,rssi,snr,plain,plainLen,hopsTaken);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1191,8 +1459,15 @@ bool planRadio(const MeshConfig& mc, float& freq, float& bw, uint8_t& sf, uint8_
     uint32_t slot = mc.freqSlot ? (uint32_t)(mc.freqSlot - 1) : hashChannelName(mc.channel);
     slot %= numCh;
     freq = band.start + (bw / 2000.0f) + slot * (bw / 1000.0f);
-    if (mc.freqOverride && mc.freqKHz >= 137000u && mc.freqKHz <= 960000u)
-        freq = (float)mc.freqKHz / 1000.0f;
+    if (mc.freqOverride) {
+        if (mc.freqKHz < 137000u || mc.freqKHz > 960000u) return false;
+        float custom = (float)mc.freqKHz / 1000.0f;
+        float halfBw = bw / 2000.0f;
+        if (custom - halfBw < band.start - 0.0001f ||
+            custom + halfBw > band.end + 0.0001f)
+            return false;
+        freq = custom;
+    }
     power = mc.txPower;
     if (power < 2) power = 2;
     if (power > 22) power = 22;
@@ -1208,7 +1483,8 @@ static bool radioInit(){
     uint8_t sf = 11, cr = 5;
     int8_t power = 22;
     if (!planRadio(mc, freq, bw, sf, cr, power))
-        return radioInitFailed("2.4GHz unsupported on SX1262");
+        return radioInitFailed(mc.freqOverride ? "FREQ OUT OF REGION" :
+                                                 "2.4GHz unsupported on SX1262");
 
     // Same SPI wires as the SD slot (SCK 40, MISO 39, MOSI 14).
     // Hold the card's CS high so it does not answer LoRa commands.
@@ -1397,13 +1673,22 @@ void syncStoredCfg() {
     mc.channel[sizeof(mc.channel) - 1] = 0;
     mc.psk[sizeof(mc.psk) - 1] = 0;
     mc.shortName[sizeof(mc.shortName) - 1] = 0;
+    if (mc.freqOverride) {
+        float freq = 0, bw = 0;
+        uint8_t sf = 0, cr = 0;
+        int8_t power = 0;
+        if (!planRadio(mc, freq, bw, sf, cr, power)) {
+            mc.freqOverride = false;
+            Serial.println("[MESH] stored frequency outside region; using automatic channel");
+        }
+    }
     Config::save();
 }
 
 
 size_t heapHeld() {
     size_t n = 0;
-    if (s_nodes) n += 16 * sizeof(MeshNode);
+    if (s_nodes) n += (size_t)MAX_NODES * sizeof(MeshNode);
     if (s_chat) n += (size_t)MAX_CHAT * sizeof(Msg);
     if (s_dm) n += (size_t)MAX_DM * sizeof(Msg);
     if (s_hist) n += (size_t)PACKET_HISTORY_SIZE * sizeof(PktRecord);
@@ -1454,6 +1739,10 @@ void start(){
     s_nodeN=0; s_chatN=0; s_chatHead=0; s_chatNew=0;
     s_dmN=0; s_dmHead=0; s_dmNew=0; s_dmNode=0;
     s_txN=0; s_hHead=0; s_hCnt=0;
+    s_txInFlightId=0;
+    s_txInFlightTo=0;
+    s_txInFlightWantAck=false;
+    memset(s_pendingAcks,0,sizeof(s_pendingAcks));
     s_pktId=esp_random() | 1u; uiReset(); uiClearNav();
     s_rs=RS_IDLE; s_rxFlag=false; s_txFlag=false;
     s_seenEver=0; s_rxPkts=0; s_txPkts=0; s_haveSig=false; s_lastRssi=0; s_lastSnr=0;
@@ -1574,9 +1863,30 @@ void update(){
     }
 
     // TX done
-    if(s_txFlag){ s_txFlag=false; s_radio->setPacketReceivedAction(onRx); s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE; }
+    if(s_txFlag){
+        s_txFlag=false;
+        uint32_t packetId = s_txInFlightId;
+        uint32_t to = s_txInFlightTo;
+        bool wantAck = s_txInFlightWantAck;
+        s_txInFlightId=0;
+        s_txInFlightTo=0;
+        s_txInFlightWantAck=false;
+        s_radio->setPacketReceivedAction(onRx);
+        s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE;
+        markPacketTransmitted(packetId, to, wantAck, now);
+    }
     // TX watchdog
-    if(s_rs==RS_TX&&now-s_txStartMs>5000){ s_radio->setPacketReceivedAction(onRx); s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE; }
+    if(s_rs==RS_TX&&now-s_txStartMs>5000){
+        uint32_t packetId = s_txInFlightId;
+        uint32_t to = s_txInFlightTo;
+        bool wantAck = s_txInFlightWantAck;
+        s_txInFlightId=0;
+        s_txInFlightTo=0;
+        s_txInFlightWantAck=false;
+        s_radio->setPacketReceivedAction(onRx);
+        s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE;
+        if (packetId && wantAck) setTrackedStatus(packetId, to, TX_FAILED);
+    }
     // Recover transient receive failures without resetting the application.
     static uint32_t lastRecovery = 0;
     if (s_rs == RS_IDLE && (uint32_t)(now-lastRecovery) >= 1000) {
@@ -1593,10 +1903,17 @@ void update(){
         lastTxAttempt = now;
         TxPkt pkt = s_txQ[0]; {
             s_radio->setPacketSentAction(onTx);
-            if(s_radio->startTransmit(pkt.data,pkt.len)==RADIOLIB_ERR_NONE){ txDeq(pkt); s_rs=RS_TX; s_txStartMs=now; s_txPkts++; }
+            if(s_radio->startTransmit(pkt.data,pkt.len)==RADIOLIB_ERR_NONE){
+                txDeq(pkt);
+                memcpy(&s_txInFlightId, pkt.data + 8, sizeof(s_txInFlightId));
+                memcpy(&s_txInFlightTo, pkt.data, sizeof(s_txInFlightTo));
+                s_txInFlightWantAck = (pkt.data[12] & FLAGS_WANT_ACK) != 0;
+                s_rs=RS_TX; s_txStartMs=now; s_txPkts++;
+            }
             else { s_radio->setPacketReceivedAction(onRx); s_rs=(s_radio->startReceive()==RADIOLIB_ERR_NONE)?RS_RX:RS_IDLE; }
         }
     }
+    if (s_rs == RS_RX) expirePendingAcks(now);
 
     const MeshConfig& mc=Config::mesh();
     float freq=0, bw=0; uint8_t sf=0, cr=0; int8_t power=0;
@@ -1607,25 +1924,28 @@ void update(){
 
 bool sendText(const char* text, uint32_t to){
     if(!s_run||!s_radioOk||!text||!text[0]) return false;
-    int fit = utf8Fit(text, 47);
+    int fit = utf8Fit(text, MAX_TEXT_BYTES);
     if (fit <= 0) return false;
     uint8_t tl = (uint8_t)fit;
-    uint8_t data[64]; PbW d{data,sizeof(data)};
+    uint8_t data[224]; PbW d{data,sizeof(data)};
     d.vi(1,PORT_TEXT); d.by(2,(const uint8_t*)text,tl);
     if (!d.ok) return false;
     bool ok = false;
+    uint32_t packetId = 0;
     if (to != BROADCAST_ID) {
         MeshNode* peer = nodeByNum(to);
         if (keyLive(peer))
-            ok = buildPkiEnq(to, peer->pubKey, data, d.len, PRI_DEFAULT, true);
+            ok = buildPkiEnq(to, peer->pubKey, data, d.len, PRI_DEFAULT, true,
+                             0xFF, &packetId);
         else
-            ok = buildEnq(to, data, d.len, PRI_DEFAULT, true);
+            ok = buildEnq(to, data, d.len, PRI_DEFAULT, true, 0xFF, &packetId);
     } else {
-        ok = buildEnq(to, data, d.len, PRI_DEFAULT, false);
+        ok = buildEnq(to, data, d.len, PRI_DEFAULT, false, 0xFF, &packetId);
     }
     if(ok){
-        Msg m{}; m.from=s_nodeNum; m.to=to; m.timeMs=(uint32_t)millis(); m.sent=true;
-        uint8_t cp=tl<47?tl:47; memcpy(m.text,text,cp); m.text[cp]=0;
+        Msg m{}; m.from=s_nodeNum; m.to=to; m.timeMs=(uint32_t)millis(); m.sent=true; m.hops=0;
+        m.packetId=packetId; m.delivery=TX_QUEUED;
+        memcpy(m.text,text,tl); m.text[tl]=0;
         strncpy(m.fromName,Config::mesh().shortName,7); m.fromName[7]=0;
         if(to==BROADCAST_ID){ chatAdd(m); s_chatDirty=true; }
         else noteDm(m);
